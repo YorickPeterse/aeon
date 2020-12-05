@@ -38,6 +38,7 @@ pub mod numeric;
 pub mod object;
 pub mod object_pointer;
 pub mod object_value;
+pub mod objects;
 pub mod platform;
 pub mod process;
 pub mod process_status;
