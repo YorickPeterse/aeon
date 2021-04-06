@@ -145,6 +145,9 @@ pub struct State {
     /// The prototype to use for child processes.
     pub child_process_prototype: ObjectPointer,
 
+    /// The prototype to use for futures.
+    pub future_prototype: ObjectPointer,
+
     /// The commandline arguments passed to an Inko program.
     pub arguments: Vec<ObjectPointer>,
 
@@ -197,6 +200,7 @@ impl State {
         let generator_prototype = perm_alloc.allocate_empty();
         let trait_prototype = perm_alloc.allocate_empty();
         let child_process_prototype = perm_alloc.allocate_empty();
+        let future_prototype = perm_alloc.allocate_empty();
 
         nil_obj.set_prototype(nil_proto);
         true_obj.set_prototype(boolean_proto);
@@ -240,6 +244,7 @@ impl State {
             generator_prototype,
             trait_prototype,
             child_process_prototype,
+            future_prototype,
             network_poller: NetworkPoller::new(),
             modules: Mutex::new(Modules::new()),
             external_functions,

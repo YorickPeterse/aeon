@@ -22,6 +22,9 @@ enum Status {
 
     /// The generator finished without yielding a value.
     Finished,
+
+    /// The generator threw a value.
+    Thrown,
 }
 
 /// The mutable state of a generator.
@@ -182,6 +185,27 @@ impl Generator {
         self.inner_mut().result = value;
     }
 
+    pub fn set_throw_value(&self, value: ObjectPointer) {
+        let inner = self.inner_mut();
+
+        inner.result = value;
+        inner.status = Status::Thrown;
+    }
+
+    pub fn set_return_value(&self, value: ObjectPointer) {
+        let inner = self.inner_mut();
+
+        inner.result = value;
+        inner.status = Status::Finished;
+    }
+
+    pub fn result_thrown(&self) -> bool {
+        match self.inner().status {
+            Status::Thrown => true,
+            _ => false,
+        }
+    }
+
     pub fn take_result(&self) -> Option<ObjectPointer> {
         let inner = self.inner_mut();
         let result = inner.result;
@@ -235,5 +259,16 @@ impl Generator {
 
     fn inner(&self) -> &GeneratorInner {
         unsafe { &*self.inner.get() }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::mem::size_of;
+
+    #[test]
+    fn test_generator_inner_type_size() {
+        assert_eq!(size_of::<GeneratorInner>(), 32);
     }
 }

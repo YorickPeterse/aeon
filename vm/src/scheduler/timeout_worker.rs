@@ -40,15 +40,14 @@ struct Inner {
 /// ## Cleaning up of invalid timeouts
 ///
 /// Processes will reschedule other processes when they send a message, and the
-/// receiving process is suspended. When a timeout is used, the sending process
-/// will invalidate it. This can result in the internal list of timeouts
-/// building up lots of invalidated timeouts over time, depending on the
-/// expiration time of timeouts that preceed these invalidated timeouts.
+/// receiving process is suspended. When a timeout is used, the sending process will
+/// invalidate it. This can result in the internal list of timeouts building up
+/// lots of invalidated timeouts over time, depending on the expiration time of
+/// timeouts that preceed these invalidated timeouts.
 ///
 /// To resolve this, the internal list of timeouts is cleaned up periodically.
-/// This is done by the timeout worker itself, not by processes sending
-/// messages. This ensures this cleanup work does not impact threads running
-/// processes.
+/// This is done by the timeout worker itself, not by processes sending messages.
+/// This ensures this cleanup work does not impact threads running processes.
 pub struct TimeoutWorker {
     /// The inner part of the rescheduler that can only be used by the thread
     /// that reschedules processes.
@@ -82,14 +81,18 @@ impl TimeoutWorker {
         }
     }
 
-    pub fn suspend(&self, process: RcProcess, duration: Duration) {
+    pub fn park(&self, process: RcProcess, duration: Duration) {
         let timeout = Timeout::with_rc(duration);
 
-        process.suspend_with_timeout(timeout.clone());
+        process.shared_data().park(timeout.clone());
+        self.suspend(process, timeout);
+    }
 
-        self.sender
-            .send(Message::Suspend(process, timeout))
-            .expect("Failed to suspend because the channel was closed");
+    pub fn park_for_future(&self, process: RcProcess, duration: Duration) {
+        let timeout = Timeout::with_rc(duration);
+
+        process.shared_data().park_for_future(Some(timeout.clone()));
+        self.suspend(process, timeout);
     }
 
     pub fn terminate(&self) {
@@ -126,6 +129,16 @@ impl TimeoutWorker {
                 self.wait_for_message();
             }
         }
+    }
+
+    pub fn suspend(
+        &self,
+        process: RcProcess,
+        timeout: ArcWithoutWeak<Timeout>,
+    ) {
+        self.sender
+            .send(Message::Suspend(process, timeout))
+            .expect("Failed to suspend because the channel was closed");
     }
 
     fn reschedule_expired_processes(
@@ -239,10 +252,9 @@ mod tests {
         let worker = TimeoutWorker::new();
         let (_machine, _block, process) = setup();
 
-        worker.suspend(process.clone(), Duration::from_secs(1));
+        worker.suspend(process, Timeout::with_rc(Duration::from_secs(1)));
 
         assert!(worker.inner().receiver.recv().is_ok());
-        assert!(process.acquire_rescheduling_rights().are_acquired());
     }
 
     #[test]
@@ -269,12 +281,8 @@ mod tests {
         let scheduler = ProcessScheduler::new(1, 1);
         let (_machine, _block, process) = setup();
 
-        worker.suspend(process.clone(), Duration::from_secs(10));
-
-        // This drops the old timeout so we don't leak it.
-        process.acquire_rescheduling_rights();
-
-        worker.suspend(process.clone(), Duration::from_secs(5));
+        worker.park_for_future(process.clone(), Duration::from_secs(10));
+        worker.park_for_future(process, Duration::from_secs(5));
         worker.increase_expired_timeouts();
 
         // This makes sure the timeouts are present before we start the run
@@ -295,7 +303,7 @@ mod tests {
         let scheduler = ProcessScheduler::new(1, 1);
         let (_machine, _block, process) = setup();
 
-        worker.suspend(process.clone(), Duration::from_secs(10));
+        worker.park_for_future(process.clone(), Duration::from_secs(10));
         worker.terminate();
         worker.run(&scheduler);
 
@@ -308,7 +316,7 @@ mod tests {
         let scheduler = ArcWithoutWeak::new(ProcessScheduler::new(1, 1));
         let (_machine, _block, process) = setup();
 
-        worker.suspend(process.clone(), Duration::from_millis(50));
+        worker.park_for_future(process.clone(), Duration::from_millis(50));
 
         let handle = {
             let worker_clone = worker.clone();
@@ -349,7 +357,7 @@ mod tests {
         let scheduler = ProcessScheduler::new(1, 1);
         let (_machine, _block, process) = setup();
 
-        worker.suspend(process.clone(), Duration::from_secs(0));
+        worker.park_for_future(process.clone(), Duration::from_secs(0));
         worker.wait_for_message();
         worker.reschedule_expired_processes(&scheduler);
 
@@ -362,7 +370,7 @@ mod tests {
         let scheduler = ProcessScheduler::new(1, 1);
         let (_machine, _block, process) = setup();
 
-        worker.suspend(process.clone(), Duration::from_secs(5));
+        worker.park_for_future(process.clone(), Duration::from_secs(5));
         worker.reschedule_expired_processes(&scheduler);
 
         assert!(scheduler.primary_pool.state.pop_global().is_none());
@@ -459,12 +467,8 @@ mod tests {
 
         assert_eq!(worker.heap_is_fragmented(), false);
 
-        worker.suspend(process.clone(), Duration::from_secs(1));
-
-        // This drops the old timeout so we don't leak it.
-        process.acquire_rescheduling_rights();
-
-        worker.suspend(process.clone(), Duration::from_secs(2));
+        worker.park_for_future(process.clone(), Duration::from_secs(1));
+        worker.park_for_future(process.clone(), Duration::from_secs(2));
         worker.increase_expired_timeouts();
 
         worker.wait_for_message();
@@ -478,7 +482,7 @@ mod tests {
         let worker = TimeoutWorker::new();
         let (_machine, _block, process) = setup();
 
-        worker.suspend(process, Duration::from_secs(1));
+        worker.park_for_future(process, Duration::from_secs(1));
         worker.wait_for_message();
         worker.defragment_heap();
 
@@ -491,12 +495,8 @@ mod tests {
         let worker = TimeoutWorker::new();
         let (_machine, _block, process) = setup();
 
-        worker.suspend(process.clone(), Duration::from_secs(1));
-
-        // This drops the old timeout so we don't leak it.
-        process.acquire_rescheduling_rights();
-
-        worker.suspend(process, Duration::from_secs(1));
+        worker.park_for_future(process.clone(), Duration::from_secs(1));
+        worker.park_for_future(process, Duration::from_secs(1));
         worker.increase_expired_timeouts();
 
         worker.wait_for_message();

@@ -1,7 +1,6 @@
 use crate::chunk::Chunk;
 use crate::immix::copy_object::CopyObject;
 use crate::object_pointer::{ObjectPointer, ObjectPointerPointer};
-use crate::runtime_error::RuntimeError;
 use std::cell::UnsafeCell;
 use std::rc::Rc;
 
@@ -121,7 +120,7 @@ impl Binding {
     pub fn clone_to<H: CopyObject>(
         &self,
         heap: &mut H,
-    ) -> Result<RcBinding, RuntimeError> {
+    ) -> Result<RcBinding, String> {
         let parent = if let Some(ref bind) = self.parent {
             Some(bind.clone_to(heap)?)
         } else {

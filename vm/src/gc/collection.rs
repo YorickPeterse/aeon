@@ -1,8 +1,7 @@
 //! Functions for garbage collecting a process.
 use crate::gc::statistics::{CollectionStatistics, TraceStatistics};
 use crate::gc::tracer::Pool;
-use crate::mailbox::Mailbox;
-use crate::process::RcProcess;
+use crate::process::{Mailbox, RcProcess};
 use crate::vm::state::State;
 use std::time::Instant;
 
@@ -16,13 +15,12 @@ pub fn collect(
 
     // We must lock the mailbox before performing any work, as otherwise new
     // objects may be allocated during garbage collection.
-    let local_data = process.local_data_mut();
-    let mut mailbox = local_data.mailbox.lock();
+    let mut shared_data = process.shared_data();
     let collect_mature = process.should_collect_mature_generation();
     let move_objects = process.prepare_for_collection(collect_mature);
     let trace_stats = trace(
         &process,
-        &mut mailbox,
+        shared_data.mailbox_mut(),
         move_objects,
         collect_mature,
         tracers,

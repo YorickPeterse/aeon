@@ -7,7 +7,6 @@ use crate::object::{AttributesMap, Object};
 use crate::object_pointer::ObjectPointer;
 use crate::object_value;
 use crate::object_value::ObjectValue;
-use crate::runtime_error::RuntimeError;
 
 pub trait CopyObject: Sized {
     /// Allocates a copied object.
@@ -19,7 +18,7 @@ pub trait CopyObject: Sized {
     fn copy_object(
         &mut self,
         to_copy_ptr: ObjectPointer,
-    ) -> Result<ObjectPointer, RuntimeError> {
+    ) -> Result<ObjectPointer, String> {
         if to_copy_ptr.is_permanent() {
             return Ok(to_copy_ptr);
         }
@@ -94,15 +93,16 @@ pub trait CopyObject: Sized {
                 ObjectValue::Module(module.clone())
             }
             ObjectValue::Generator(_) => {
-                return Err(RuntimeError::from(
-                    "Generator objects can't be copied",
-                ));
+                return Err("Generator objects can't be copied".to_string());
+            }
+            ObjectValue::Future(_) => {
+                return Err("Future objects can't be copied".to_string());
             }
             ObjectValue::ExternalFunction(fun) => {
                 ObjectValue::ExternalFunction(fun)
             }
             ObjectValue::Command(_) => {
-                return Err(RuntimeError::from("Commands can't be copied"));
+                return Err("Commands can't be copied".to_string());
             }
         };
 

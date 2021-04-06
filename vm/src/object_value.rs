@@ -14,7 +14,7 @@ use crate::hasher::Hasher;
 use crate::immutable_string::ImmutableString;
 use crate::module::Module;
 use crate::object_pointer::ObjectPointer;
-use crate::process::RcProcess;
+use crate::process::{FutureConsumer, RcProcess};
 use crate::socket::Socket;
 use num_bigint::BigInt;
 use std::mem;
@@ -77,6 +77,9 @@ pub enum ObjectValue {
 
     /// An OS command.
     Command(Box<Child>),
+
+    /// A future created in response to a message being sent.
+    Future(Box<FutureConsumer>),
 }
 
 impl ObjectValue {
@@ -393,6 +396,16 @@ impl ObjectValue {
         }
     }
 
+    pub fn as_future(&self) -> Result<&FutureConsumer, String> {
+        match *self {
+            ObjectValue::Future(ref fut) => Ok(fut),
+            _ => {
+                Err("ObjectValue::as_future() called on a non future"
+                    .to_string())
+            }
+        }
+    }
+
     pub fn take(&mut self) -> ObjectValue {
         mem::replace(self, ObjectValue::None)
     }
@@ -421,7 +434,8 @@ impl ObjectValue {
             | ObjectValue::Socket(_)
             | ObjectValue::Generator(_)
             | ObjectValue::Command(_)
-            | ObjectValue::ExternalFunction(_) => true,
+            | ObjectValue::ExternalFunction(_)
+            | ObjectValue::Future(_) => true,
             _ => false,
         }
     }
@@ -448,6 +462,7 @@ impl ObjectValue {
             ObjectValue::Generator(_) => "Generator",
             ObjectValue::ExternalFunction(_) => "BuiltinFunction",
             ObjectValue::Command(_) => "Command",
+            ObjectValue::Future(_) => "Future",
         }
     }
 
@@ -547,6 +562,10 @@ pub fn external_function(value: ExternalFunction) -> ObjectValue {
 
 pub fn command(command: Child) -> ObjectValue {
     ObjectValue::Command(Box::new(command))
+}
+
+pub fn future(value: FutureConsumer) -> ObjectValue {
+    ObjectValue::Future(Box::new(value))
 }
 
 #[cfg(test)]

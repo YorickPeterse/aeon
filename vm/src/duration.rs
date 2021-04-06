@@ -11,19 +11,13 @@ pub fn to_f64(value: Option<Duration>) -> f64 {
 }
 
 /// Converts an f64 (in seconds) to a Duration.
-pub fn from_f64(value: f64) -> Result<Option<Duration>, String> {
-    if value < 0.0 {
-        return Err(format!("{} is not a valid time duration", value));
-    }
-
-    let result = if value == 0.0 {
+pub fn from_f64(value: f64) -> Option<Duration> {
+    if value <= 0.0 {
         None
     } else {
         let secs = value.trunc() as u64;
         let nanos = (value.fract() * 1_000_000_000.0) as u32;
 
         Some(Duration::new(secs, nanos))
-    };
-
-    Ok(result)
+    }
 }

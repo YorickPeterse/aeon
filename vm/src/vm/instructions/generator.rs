@@ -46,10 +46,7 @@ pub fn resume(
 }
 
 #[inline(always)]
-pub fn value(
-    state: &RcState,
-    gen_ptr: ObjectPointer,
-) -> Result<ObjectPointer, RuntimeError> {
+pub fn value(gen_ptr: ObjectPointer) -> Result<ObjectPointer, RuntimeError> {
     let gen = gen_ptr.generator_value()?;
 
     // If the generator finished or returned early, the process result is
@@ -64,7 +61,7 @@ pub fn value(
     } else {
         // This case is quite common, and we only throw so the standard library
         // can more easily decide what alternative value to produce. As such, we
-        // just throw Nil, because we don't use it.
-        Err(RuntimeError::Error(state.nil_object))
+        // just throw NULL, because we don't use it.
+        Err(RuntimeError::Error(ObjectPointer::null()))
     }
 }

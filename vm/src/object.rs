@@ -272,6 +272,13 @@ impl Object {
             ObjectValue::Generator(ref gen) => {
                 gen.each_pointer(|v| callback(v));
             }
+            ObjectValue::Future(ref future) => {
+                if let Some(ptr) = future.lock().result_pointer_pointer() {
+                    callback(ptr);
+                }
+            }
+            // Processes are not traced here, as otherwise we may end up tracing
+            // processes other than the one that's being garbage collected.
             _ => {}
         }
     }

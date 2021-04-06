@@ -5,7 +5,7 @@ use std::cmp;
 use std::collections::BinaryHeap;
 use std::time::{Duration, Instant};
 
-/// A process that should be resumed after a certain point in time.
+/// An process that should be resumed after a certain point in time.
 pub struct Timeout {
     /// The time after which the timeout expires.
     resume_after: Instant,
@@ -35,9 +35,9 @@ impl Timeout {
 
 /// A Timeout and a Process to store in the timeout heap.
 ///
-/// Since the Timeout is also stored in a process we can't also store a Process
-/// in a Timeout, as this would result in cyclic references. To work around
-/// this, we store the two values in this separate TimeoutEntry structure.
+/// Since the Timeout is also stored in an process we can't also store an process in
+/// a Timeout, as this would result in cyclic references. To work around this,
+/// we store the two values in this separate TimeoutEntry structure.
 struct TimeoutEntry {
     timeout: ArcWithoutWeak<Timeout>,
     process: RcProcess,
@@ -46,14 +46,6 @@ struct TimeoutEntry {
 impl TimeoutEntry {
     pub fn new(process: RcProcess, timeout: ArcWithoutWeak<Timeout>) -> Self {
         TimeoutEntry { process, timeout }
-    }
-
-    fn is_valid(&self) -> bool {
-        self.process.is_suspended_with_timeout(&self.timeout)
-    }
-
-    fn acquire_rescheduling_rights(&self) -> bool {
-        self.process.acquire_rescheduling_rights().are_acquired()
     }
 }
 
@@ -127,7 +119,8 @@ impl Timeouts {
             .timeouts
             .drain()
             .filter(|entry| {
-                if entry.is_valid() {
+                if entry.process.shared_data().has_same_timeout(&entry.timeout)
+                {
                     true
                 } else {
                     removed += 1;
@@ -148,11 +141,14 @@ impl Timeouts {
         let mut time_until_expiration = None;
 
         while let Some(entry) = self.timeouts.pop() {
-            if !entry.is_valid() {
+            let mut shared = entry.process.shared_data();
+
+            if !shared.has_same_timeout(&entry.timeout) {
                 continue;
             }
 
             if let Some(duration) = entry.timeout.remaining_time() {
+                drop(shared);
                 self.timeouts.push(entry);
 
                 time_until_expiration = Some(duration);
@@ -162,7 +158,8 @@ impl Timeouts {
                 break;
             }
 
-            if entry.acquire_rescheduling_rights() {
+            if shared.try_reschedule_after_timeout().are_acquired() {
+                drop(shared);
                 reschedule.push(entry.process);
             }
         }
@@ -219,31 +216,6 @@ mod tests {
         use super::*;
         use crate::vm::test::setup;
         use std::cmp;
-
-        #[test]
-        fn test_valid() {
-            let (_machine, _block, process) = setup();
-            let timeout = Timeout::with_rc(Duration::from_secs(1));
-            let entry = TimeoutEntry::new(process.clone(), timeout.clone());
-
-            assert_eq!(entry.is_valid(), false);
-
-            process.suspend_with_timeout(timeout);
-
-            assert!(entry.is_valid());
-        }
-
-        #[test]
-        fn test_acquire_rescheduling_rights() {
-            let (_machine, _block, process) = setup();
-            let timeout = Timeout::with_rc(Duration::from_secs(1));
-            let entry = TimeoutEntry::new(process.clone(), timeout.clone());
-
-            process.suspend_with_timeout(timeout);
-
-            assert_eq!(entry.acquire_rescheduling_rights(), true);
-            assert_eq!(entry.acquire_rescheduling_rights(), false);
-        }
 
         #[test]
         fn test_partial_cmp() {
@@ -333,7 +305,7 @@ mod tests {
             let mut timeouts = Timeouts::new();
             let timeout = Timeout::with_rc(Duration::from_secs(10));
 
-            process.suspend_with_timeout(timeout.clone());
+            process.shared_data().park_for_future(Some(timeout.clone()));
             timeouts.insert(process, timeout);
 
             assert_eq!(timeouts.remove_invalid_entries(), 0);
@@ -372,7 +344,7 @@ mod tests {
             let mut timeouts = Timeouts::new();
             let timeout = Timeout::with_rc(Duration::from_secs(10));
 
-            process.suspend_with_timeout(timeout.clone());
+            process.shared_data().park_for_future(Some(timeout.clone()));
             timeouts.insert(process.clone(), timeout);
 
             let (reschedule, expiration) = timeouts.processes_to_reschedule();
@@ -388,7 +360,7 @@ mod tests {
             let mut timeouts = Timeouts::new();
             let timeout = Timeout::with_rc(Duration::from_secs(0));
 
-            process.suspend_with_timeout(timeout.clone());
+            process.shared_data().park_for_future(Some(timeout.clone()));
             timeouts.insert(process.clone(), timeout);
 
             let (reschedule, expiration) = timeouts.processes_to_reschedule();

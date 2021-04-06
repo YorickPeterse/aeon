@@ -53,7 +53,7 @@ macro_rules! socket_u32_getter {
 macro_rules! socket_duration_setter {
     ($setter:ident) => {
         pub fn $setter(&self, value: f64) -> Result<(), RuntimeError> {
-            let dur = duration::from_f64(value)?;
+            let dur = duration::from_f64(value);
 
             self.inner.$setter(dur)?;
 

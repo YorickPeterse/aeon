@@ -127,6 +127,12 @@ impl<T: PartialEq> PartialEq for ArcWithoutWeak<T> {
 
 impl<T: Eq> Eq for ArcWithoutWeak<T> {}
 
+impl<T> From<&ArcWithoutWeak<T>> for ArcWithoutWeak<T> {
+    fn from(arc: &ArcWithoutWeak<T>) -> Self {
+        arc.clone()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -188,7 +194,8 @@ mod tests {
     }
 
     #[test]
-    fn test_optional_type_type() {
+    fn test_type_size() {
         assert_eq!(mem::size_of::<ArcWithoutWeak<()>>(), 8);
+        assert_eq!(mem::size_of::<Option<ArcWithoutWeak<()>>>(), 8);
     }
 }

@@ -74,9 +74,7 @@ pub enum Opcode {
     ObjectEquals,
     Panic,
     ProcessAddDeferToCaller,
-    ProcessCurrent,
     ProcessIdentifier,
-    ProcessReceiveMessage,
     ProcessSendMessage,
     ProcessSetBlocking,
     ProcessSetPinned,
@@ -100,6 +98,10 @@ pub enum Opcode {
     StringSize,
     TailCall,
     Throw,
+    FutureGet,
+    FutureReady,
+    FutureWait,
+    IsNull,
 }
 
 /// A fixed-width VM instruction.

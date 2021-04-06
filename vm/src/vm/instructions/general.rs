@@ -114,3 +114,12 @@ pub fn move_result(process: &RcProcess) -> Result<ObjectPointer, String> {
         "The last instruction didn't produce a result".to_string()
     })
 }
+
+#[inline(always)]
+pub fn is_null(state: &RcState, value: ObjectPointer) -> ObjectPointer {
+    if value.is_null() {
+        state.true_object
+    } else {
+        state.false_object
+    }
+}

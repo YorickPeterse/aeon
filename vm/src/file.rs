@@ -83,7 +83,7 @@ impl File {
     pub fn clone_to<H: CopyObject>(
         &self,
         heap: &mut H,
-    ) -> Result<Self, RuntimeError> {
+    ) -> Result<Self, String> {
         Ok(File {
             inner: self.inner.try_clone()?,
             path: heap.copy_object(self.path)?,

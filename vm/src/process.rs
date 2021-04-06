@@ -1,5 +1,6 @@
+//! Lightweight, isolated processes for running code concurrently.
 use crate::arc_without_weak::ArcWithoutWeak;
-use crate::block::Block;
+use crate::chunk::Chunk;
 use crate::config::Config;
 use crate::execution_context::ExecutionContext;
 use crate::generator::{Generator, RcGenerator};
@@ -7,32 +8,379 @@ use crate::immix::block_list::BlockList;
 use crate::immix::copy_object::CopyObject;
 use crate::immix::global_allocator::RcGlobalAllocator;
 use crate::immix::local_allocator::LocalAllocator;
-use crate::mailbox::Mailbox;
 use crate::object_pointer::{ObjectPointer, ObjectPointerPointer};
 use crate::object_value;
-use crate::process_status::ProcessStatus;
 use crate::runtime_error::RuntimeError;
 use crate::scheduler::timeouts::Timeout;
-use crate::tagged_pointer::{self, TaggedPointer};
 use crate::vm::state::State;
 use num_bigint::BigInt;
 use num_traits::FromPrimitive;
-use parking_lot::Mutex;
+use parking_lot::{Mutex, MutexGuard};
 use std::cell::UnsafeCell;
+use std::collections::VecDeque;
 use std::i64;
 use std::mem;
 use std::ops::Drop;
-use std::panic::RefUnwindSafe;
-use std::ptr;
-use std::sync::atomic::{AtomicBool, Ordering};
 
-pub type RcProcess = ArcWithoutWeak<Process>;
+/// A one-time single-producer single-consumer queue used for storing the result
+/// of an process message.
+pub struct Future {
+    /// The process that owns the future.
+    ///
+    /// When writing the result to a future, this process may need to be woken
+    /// up if it's waiting for the result.
+    reply_to: RcProcess,
 
-/// The bit that is set to mark a process as being suspended.
-const SUSPENDED_BIT: usize = 0;
+    /// A boolean indicating if the consuming side of the future has been
+    /// dropped.
+    disconnected: bool,
+
+    /// A boolean indicating that the process is waiting for this future to be
+    /// completed.
+    ///
+    /// When set to `true`, the `reply_to` process must be rescheduled.
+    waiting: bool,
+
+    /// A boolean indicating that the result was produced by throwing an error,
+    /// instead of returning it.
+    thrown: bool,
+
+    /// The result of a message, owned by the process to reply to.
+    ///
+    /// This pointer is NULL when the result isn't available yet.
+    result: ObjectPointer,
+}
+
+pub type RcFuture = ArcWithoutWeak<Mutex<Future>>;
+
+impl Future {
+    pub fn new(reply_to: RcProcess) -> (FutureProducer, FutureConsumer) {
+        let future = ArcWithoutWeak::new(Mutex::new(Self {
+            reply_to,
+            disconnected: false,
+            waiting: false,
+            thrown: false,
+            result: ObjectPointer::null(),
+        }));
+
+        (
+            FutureProducer {
+                future: future.clone(),
+            },
+            FutureConsumer { future },
+        )
+    }
+
+    pub fn no_longer_waiting(&mut self) {
+        self.waiting = false;
+    }
+
+    pub fn waiting(&mut self) {
+        if self.result.is_null() {
+            self.waiting = true;
+        }
+    }
+
+    pub fn result(&self) -> Option<ObjectPointer> {
+        if self.result.is_null() {
+            None
+        } else {
+            Some(self.result)
+        }
+    }
+
+    pub fn result_pointer_pointer(&self) -> Option<ObjectPointerPointer> {
+        if self.result.is_null() {
+            None
+        } else {
+            Some(self.result.pointer())
+        }
+    }
+}
+
+/// The consuming side of a future.
+///
+/// The consumer is owned/used by the process that originally sent the message,
+/// and eventually wants the result.
+pub struct FutureConsumer {
+    future: RcFuture,
+}
+
+impl FutureConsumer {
+    pub fn lock(&self) -> MutexGuard<Future> {
+        self.future.lock()
+    }
+}
+
+impl Drop for FutureConsumer {
+    fn drop(&mut self) {
+        self.lock().disconnected = true;
+    }
+}
+
+/// The producing side of a future.
+///
+/// The producer is owned/used by the process that produces a result in response a
+/// message.
+pub struct FutureProducer {
+    future: RcFuture,
+}
+
+impl FutureProducer {
+    pub fn set_result(
+        &self,
+        producer: &RcProcess,
+        result: ObjectPointer,
+        thrown: bool,
+    ) -> Result<Option<(RescheduleRights, RcProcess)>, String> {
+        let mut future = self.future.lock();
+
+        // If the consumer has been dropped, there's no point in sending the
+        // result back.
+        if future.disconnected {
+            return Ok(None);
+        }
+
+        future.thrown = thrown;
+
+        // When the writing process owns the future, there's no need for copying
+        // or rescheduling.
+        if producer == &future.reply_to {
+            future.result = result;
+
+            return Ok(None);
+        }
+
+        // We lock the shared data first so our objects don't get garbage
+        // collected while we're copying them to the target process.
+        let reply_to = future.reply_to.clone();
+        let resched = {
+            let mut shared = reply_to.shared_data.lock();
+
+            future.result = future
+                .reply_to
+                .local_data_mut()
+                .allocator
+                .copy_object(result)?;
+
+            shared.try_reschedule_for_future()
+        };
+
+        Ok(Some((resched, reply_to)))
+    }
+}
+
+/// A message and its arguments to send to an process.
+pub struct Message {
+    /// The method to run.
+    method: ObjectPointer,
+
+    /// The future to write the result back to.
+    future: FutureProducer,
+
+    /// The arguments to pass to the method. These have already been copied onto
+    /// the process's heap.
+    arguments: Chunk<ObjectPointer>,
+}
+
+impl Message {
+    pub fn new(
+        method: ObjectPointer,
+        arguments: Chunk<ObjectPointer>,
+        future: FutureProducer,
+    ) -> Self {
+        Message {
+            method,
+            arguments,
+            future,
+        }
+    }
+}
+
+/// A message that is being acted upon/executed.
+pub struct Request {
+    /// The future to write the result to.
+    future: FutureProducer,
+
+    /// The generator currently running for this request.
+    generator: RcGenerator,
+}
+
+impl Request {
+    pub fn from_message(
+        message: Message,
+        receiver: ObjectPointer,
+    ) -> Result<Request, String> {
+        let block = message.method.block_value()?;
+        let mut context =
+            ExecutionContext::from_block_with_receiver(&block, receiver);
+
+        for index in 0..message.arguments.len() {
+            context.set_local(index as u16, message.arguments[index]);
+        }
+
+        let generator = Generator::running(Box::new(context));
+        let future = message.future;
+
+        Ok(Self { future, generator })
+    }
+}
+
+pub struct Mailbox {
+    /// The messages stored in this mailbox.
+    messages: VecDeque<Message>,
+}
+
+impl Mailbox {
+    pub fn new() -> Self {
+        Mailbox {
+            messages: VecDeque::new(),
+        }
+    }
+
+    pub fn send(&mut self, message: Message) {
+        self.messages.push_back(message);
+    }
+
+    pub fn receive(&mut self) -> Option<Message> {
+        self.messages.pop_front()
+    }
+
+    pub fn each_pointer<F>(&self, mut callback: F)
+    where
+        F: FnMut(ObjectPointerPointer),
+    {
+        for message in &self.messages {
+            for index in 0..message.arguments.len() {
+                callback(message.arguments[index].pointer());
+            }
+        }
+    }
+}
+
+/// The status of a process, represented as a set of bits.
+// TODO: use the bitflags crate
+pub struct ProcessStatus {
+    /// The bits used to indicate the status of the process.
+    ///
+    /// Multiple bits may be set in order to combine different statuses. For
+    /// example, if the main process is blocking it will set both bits.
+    bits: u8,
+}
+
+impl ProcessStatus {
+    /// A regular process.
+    const NORMAL: u8 = 0b0;
+
+    /// The main process.
+    const MAIN: u8 = 0b1;
+
+    /// The process is performing a blocking operation.
+    const BLOCKING: u8 = 0b10;
+
+    /// The process is terminated.
+    const TERMINATED: u8 = 0b100;
+
+    /// The process is waiting for a message.
+    const WAITING_FOR_MESSAGE: u8 = 0b1000;
+
+    /// The process is waiting for a future.
+    const WAITING_FOR_FUTURE: u8 = 0b10000;
+
+    /// The process is simply sleeping for a certain amount of time.
+    const SLEEPING: u8 = 0b100000;
+
+    /// The process was rescheduled after a timeout expired.
+    const TIMEOUT_EXPIRED: u8 = 0b1000000;
+
+    /// The process is waiting for something, or suspended for a period of time
+    const WAITING: u8 =
+        Self::WAITING_FOR_FUTURE | Self::WAITING_FOR_MESSAGE | Self::SLEEPING;
+
+    pub fn new() -> Self {
+        Self { bits: Self::NORMAL }
+    }
+
+    fn set_main(&mut self) {
+        self.update_bits(Self::MAIN, true);
+    }
+
+    fn is_main(&self) -> bool {
+        self.bit_is_set(Self::MAIN)
+    }
+
+    fn set_blocking(&mut self, enable: bool) {
+        self.update_bits(Self::BLOCKING, enable);
+    }
+
+    fn is_blocking(&self) -> bool {
+        self.bit_is_set(Self::BLOCKING)
+    }
+
+    fn set_terminated(&mut self) {
+        self.update_bits(Self::TERMINATED, true);
+    }
+
+    fn is_terminated(&self) -> bool {
+        self.bit_is_set(Self::TERMINATED)
+    }
+
+    fn set_waiting_for_message(&mut self, enable: bool) {
+        self.update_bits(Self::WAITING_FOR_MESSAGE, enable);
+    }
+
+    fn is_waiting_for_message(&self) -> bool {
+        self.bit_is_set(Self::WAITING_FOR_MESSAGE)
+    }
+
+    fn set_waiting_for_future(&mut self, enable: bool) {
+        self.update_bits(Self::WAITING_FOR_FUTURE, enable);
+    }
+
+    fn is_waiting_for_future(&self) -> bool {
+        self.bit_is_set(Self::WAITING_FOR_FUTURE)
+    }
+
+    fn is_waiting(&self) -> bool {
+        (self.bits & Self::WAITING) != 0
+    }
+
+    fn no_longer_waiting(&mut self) {
+        self.update_bits(Self::WAITING, false);
+    }
+
+    fn set_timeout_expired(&mut self, enable: bool) {
+        self.update_bits(Self::TIMEOUT_EXPIRED, enable)
+    }
+
+    fn set_sleeping(&mut self, enable: bool) {
+        self.update_bits(Self::SLEEPING, enable);
+    }
+
+    fn is_sleeping(&self) -> bool {
+        self.bit_is_set(Self::SLEEPING)
+    }
+
+    fn timeout_expired(&self) -> bool {
+        self.bit_is_set(Self::TIMEOUT_EXPIRED)
+    }
+
+    fn update_bits(&mut self, mask: u8, enable: bool) {
+        self.bits = if enable {
+            self.bits | mask
+        } else {
+            self.bits & !mask
+        };
+    }
+
+    fn bit_is_set(&self, bit: u8) -> bool {
+        self.bits & bit == bit
+    }
+}
 
 /// An enum describing what rights a thread was given when trying to reschedule
 /// a process.
+#[derive(PartialEq, Eq)]
 pub enum RescheduleRights {
     /// The rescheduling rights were not obtained.
     Failed,
@@ -42,7 +390,7 @@ pub enum RescheduleRights {
 
     /// The rescheduling rights were obtained, and the process was using a
     /// timeout.
-    AcquiredWithTimeout(ArcWithoutWeak<Timeout>),
+    AcquiredWithTimeout,
 }
 
 impl RescheduleRights {
@@ -52,120 +400,177 @@ impl RescheduleRights {
             _ => true,
         }
     }
-
-    pub fn process_had_timeout(&self) -> bool {
-        match self {
-            RescheduleRights::AcquiredWithTimeout(_) => true,
-            _ => false,
-        }
-    }
 }
 
 pub struct LocalData {
     /// The process-local memory allocator.
     pub allocator: LocalAllocator,
 
-    /// The mailbox of this process.
+    /// The heap allocated object wrapping this process.
     ///
-    /// We store this in LocalData so that we can borrow fields from LocalData
-    /// while also borrowing the mailbox.
-    pub mailbox: Mutex<Mailbox>,
+    /// This object is used as `self` for the process itself. Since this object
+    /// depends on the process itself, it must be set manually after allocating
+    /// an process.
+    self_object: ObjectPointer,
 
-    /// The currently running generator.
-    pub generator: RcGenerator,
+    /// The request that's currently being executed.
+    request: Option<Request>,
 
     /// The ID of the thread this process is pinned to.
-    pub thread_id: Option<u8>,
+    thread_id: Option<u8>,
+}
+
+pub struct SharedData {
+    /// The mailbox of this process.
+    mailbox: Mailbox,
 
     /// The status of the process.
     status: ProcessStatus,
+
+    /// The timeout this process is suspended with, if any.
+    ///
+    /// If missing and the process is suspended, it means the process is suspended
+    /// indefinitely.
+    timeout: Option<ArcWithoutWeak<Timeout>>,
 }
+
+impl SharedData {
+    pub fn mailbox_mut(&mut self) -> &mut Mailbox {
+        &mut self.mailbox
+    }
+
+    pub fn has_same_timeout(&self, timeout: &ArcWithoutWeak<Timeout>) -> bool {
+        self.timeout
+            .as_ref()
+            .map(|t| t.as_ptr() == timeout.as_ptr())
+            .unwrap_or(false)
+    }
+
+    pub fn timeout_expired(&mut self) -> bool {
+        if self.status.timeout_expired() {
+            self.status.set_timeout_expired(false);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn park_for_future(
+        &mut self,
+        timeout: Option<ArcWithoutWeak<Timeout>>,
+    ) {
+        self.timeout = timeout;
+        self.status.set_waiting_for_future(true);
+    }
+
+    pub fn park_for_message(&mut self) {
+        self.status.set_waiting_for_message(true);
+    }
+
+    pub fn park(&mut self, timeout: ArcWithoutWeak<Timeout>) {
+        self.timeout = Some(timeout);
+        self.status.set_sleeping(true);
+    }
+
+    pub fn try_reschedule_after_timeout(&mut self) -> RescheduleRights {
+        if !self.status.is_waiting() {
+            return RescheduleRights::Failed;
+        }
+
+        if !self.status.is_sleeping() {
+            // If the process was waiting for something (e.g. a future), we need
+            // to mark it as expired. If the process simply paused itself for a
+            // period of time, this is unnecessary.
+            self.status.set_timeout_expired(true);
+        }
+
+        self.status.no_longer_waiting();
+
+        if self.timeout.take().is_some() {
+            RescheduleRights::AcquiredWithTimeout
+        } else {
+            RescheduleRights::Acquired
+        }
+    }
+
+    fn try_reschedule_for_message(&mut self) -> RescheduleRights {
+        if !self.status.is_waiting_for_message() {
+            return RescheduleRights::Failed;
+        }
+
+        self.status.set_waiting_for_message(false);
+        RescheduleRights::Acquired
+    }
+
+    fn try_reschedule_for_future(&mut self) -> RescheduleRights {
+        if !self.status.is_waiting_for_future() {
+            return RescheduleRights::Failed;
+        }
+
+        self.status.set_waiting_for_future(false);
+
+        if self.timeout.take().is_some() {
+            RescheduleRights::AcquiredWithTimeout
+        } else {
+            RescheduleRights::Acquired
+        }
+    }
+}
+
+pub type RcProcess = ArcWithoutWeak<Process>;
 
 pub struct Process {
     /// Data stored in a process that should only be modified by a single thread
     /// at once.
     local_data: UnsafeCell<LocalData>,
 
-    /// If the process is waiting for a message.
-    waiting_for_message: AtomicBool,
-
-    /// A marker indicating if a process is suspened, optionally including the
-    /// pointer to the timeout.
-    ///
-    /// When this value is NULL, the process is not suspended.
-    ///
-    /// When the lowest bit is set to 1, the pointer may point to (after
-    /// unsetting the bit) to one of the following:
-    ///
-    /// 1. NULL, meaning the process is suspended indefinitely.
-    /// 2. A Timeout, meaning the process is suspended until the timeout
-    ///    expires.
-    ///
-    /// While the type here uses a `TaggedPointer`, in reality the type is an
-    /// `ArcWithoutWeak<Timeout>`. This trick is needed to allow for atomic
-    /// operations and tagging, something which isn't possible using an
-    /// `Option<T>`.
-    suspended: TaggedPointer<Timeout>,
+    /// Data that can be accessed by multiple threads, but only by one thread at
+    /// a time.
+    shared_data: Mutex<SharedData>,
 }
 
-unsafe impl Sync for LocalData {}
-unsafe impl Send for LocalData {}
-unsafe impl Sync for Process {}
-impl RefUnwindSafe for Process {}
-
 impl Process {
-    pub fn with_rc(
-        context: ExecutionContext,
+    pub fn new(
         global_allocator: RcGlobalAllocator,
         config: &Config,
     ) -> RcProcess {
         let local_data = LocalData {
             allocator: LocalAllocator::new(global_allocator, config),
-            generator: Generator::running(Box::new(context)),
+            request: None,
+            self_object: ObjectPointer::null(),
             thread_id: None,
-            mailbox: Mutex::new(Mailbox::new()),
+        };
+
+        let shared_data = SharedData {
+            mailbox: Mailbox::new(),
             status: ProcessStatus::new(),
+            timeout: None,
         };
 
         ArcWithoutWeak::new(Process {
             local_data: UnsafeCell::new(local_data),
-            waiting_for_message: AtomicBool::new(false),
-            suspended: TaggedPointer::null(),
+            shared_data: Mutex::new(shared_data),
         })
     }
 
-    pub fn from_block(
-        block: &Block,
-        global_allocator: RcGlobalAllocator,
-        config: &Config,
-    ) -> RcProcess {
-        let context = ExecutionContext::from_block(block);
-
-        Process::with_rc(context, global_allocator, config)
-    }
-
     pub fn set_main(&self) {
-        self.local_data_mut().status.set_main();
+        self.shared_data.lock().status.set_main();
     }
 
     pub fn is_main(&self) -> bool {
-        self.local_data().status.is_main()
+        self.shared_data.lock().status.is_main()
     }
 
     pub fn set_blocking(&self, enable: bool) {
-        self.local_data_mut().status.set_blocking(enable);
+        self.shared_data.lock().status.set_blocking(enable);
     }
 
     pub fn is_blocking(&self) -> bool {
-        self.local_data().status.is_blocking()
-    }
-
-    pub fn set_terminated(&self) {
-        self.local_data_mut().status.set_terminated();
+        self.shared_data.lock().status.is_blocking()
     }
 
     pub fn is_terminated(&self) -> bool {
-        self.local_data().status.is_terminated()
+        self.shared_data.lock().status.is_terminated()
     }
 
     pub fn thread_id(&self) -> Option<u8> {
@@ -184,50 +589,6 @@ impl Process {
         self.thread_id().is_some()
     }
 
-    pub fn suspend_with_timeout(&self, timeout: ArcWithoutWeak<Timeout>) {
-        let pointer = ArcWithoutWeak::into_raw(timeout);
-        let tagged = tagged_pointer::with_bit(pointer, SUSPENDED_BIT);
-
-        self.suspended.atomic_store(tagged);
-    }
-
-    pub fn suspend_without_timeout(&self) {
-        let pointer = ptr::null_mut();
-        let tagged = tagged_pointer::with_bit(pointer, SUSPENDED_BIT);
-
-        self.suspended.atomic_store(tagged);
-    }
-
-    pub fn is_suspended_with_timeout(
-        &self,
-        timeout: &ArcWithoutWeak<Timeout>,
-    ) -> bool {
-        let pointer = self.suspended.atomic_load();
-
-        tagged_pointer::untagged(pointer) == timeout.as_ptr()
-    }
-
-    /// Attempts to acquire the rights to reschedule this process.
-    pub fn acquire_rescheduling_rights(&self) -> RescheduleRights {
-        let current = self.suspended.atomic_load();
-
-        if current.is_null() {
-            RescheduleRights::Failed
-        } else if self.suspended.compare_and_swap(current, ptr::null_mut()) {
-            let untagged = tagged_pointer::untagged(current);
-
-            if untagged.is_null() {
-                RescheduleRights::Acquired
-            } else {
-                let timeout = unsafe { ArcWithoutWeak::from_raw(untagged) };
-
-                RescheduleRights::AcquiredWithTimeout(timeout)
-            }
-        } else {
-            RescheduleRights::Failed
-        }
-    }
-
     #[cfg_attr(feature = "cargo-clippy", allow(mut_from_ref))]
     pub fn local_data_mut(&self) -> &mut LocalData {
         unsafe { &mut *self.local_data.get() }
@@ -237,16 +598,27 @@ impl Process {
         unsafe { &*self.local_data.get() }
     }
 
+    pub fn shared_data(&self) -> MutexGuard<SharedData> {
+        self.shared_data.lock()
+    }
+
     pub fn push_context(&self, context: ExecutionContext) {
-        self.local_data_mut().generator.push_context(context);
+        self.local_data_mut()
+            .generator
+            .as_mut()
+            .expect("Can't push an execution context without a generator")
+            .push_context(context);
     }
 
     pub fn resume_generator(&self, mut generator: RcGenerator) {
         let local_data = self.local_data_mut();
-        let target = &mut local_data.generator;
 
-        mem::swap(target, &mut generator);
-        target.set_parent(generator);
+        if let Some(target) = local_data.generator.as_mut() {
+            mem::swap(target, &mut generator);
+            target.set_parent(generator);
+        } else {
+            local_data.generator = Some(generator);
+        }
     }
 
     /// Pops an execution context.
@@ -255,15 +627,21 @@ impl Process {
     /// stack.
     pub fn pop_context(&self) -> bool {
         let local_data = self.local_data_mut();
-        let gen = &mut local_data.generator;
+
+        let gen = if let Some(gen) = local_data.generator.as_mut() {
+            gen
+        } else {
+            return true;
+        };
 
         if gen.pop_context() {
             gen.set_finished();
 
             if let Some(parent) = gen.take_parent() {
-                local_data.generator = parent;
+                local_data.generator = Some(parent);
                 false
             } else {
+                local_data.generator = None;
                 true
             }
         } else {
@@ -271,14 +649,21 @@ impl Process {
         }
     }
 
+    /// Yields a value to the generator.
+    ///
+    /// If a value is yielded, `true` is returned.
     pub fn yield_value(&self, value: ObjectPointer) -> bool {
         let local_data = self.local_data_mut();
-        let gen = &mut local_data.generator;
+        let gen = if let Some(gen) = local_data.generator.as_mut() {
+            gen
+        } else {
+            return false;
+        };
 
         gen.yield_value(value);
 
         if let Some(parent) = gen.take_parent() {
-            local_data.generator = parent;
+            local_data.generator = Some(parent);
 
             true
         } else {
@@ -376,44 +761,91 @@ impl Process {
 
     pub fn send_message_from_external_process(
         &self,
-        message_to_copy: ObjectPointer,
-    ) -> Result<(), RuntimeError> {
+        sender: RcProcess,
+        method: ObjectPointer,
+        mut arguments: Chunk<ObjectPointer>,
+    ) -> Result<(FutureConsumer, RescheduleRights), RuntimeError> {
+        // The lock must be acquired first, otherwise we may end up copying data
+        // during garbage collection.
+        let mut shared_data = self.shared_data.lock();
         let local_data = self.local_data_mut();
+        let (producer, consumer) = Future::new(sender);
 
-        // The lock must be acquired first, as the receiving process may be
-        // garbage collected at this time.
-        let mut mailbox = local_data.mailbox.lock();
-
-        // When a process terminates it will acquire the mailbox lock first.
-        // Checking the status after acquiring the lock allows us to obtain a
-        // stable view of the status.
-        if self.is_terminated() {
-            return Ok(());
+        if shared_data.status.is_terminated() {
+            return Ok((consumer, RescheduleRights::Failed));
         }
 
-        mailbox.send(local_data.allocator.copy_object(message_to_copy)?);
-        Ok(())
+        // Update the arguments in-place with their copies. Updating in-place
+        // saves us an extra Chunk allocation.
+        for index in 0..arguments.len() {
+            arguments[index] =
+                local_data.allocator.copy_object(arguments[index])?;
+        }
+
+        let message = Message::new(method, arguments, producer);
+        let resched = shared_data.try_reschedule_for_message();
+
+        shared_data.mailbox.send(message);
+        Ok((consumer, resched))
     }
 
-    pub fn send_message_from_self(&self, message: ObjectPointer) {
-        self.local_data_mut().mailbox.lock().send(message);
+    pub fn send_message_from_self(
+        &self,
+        sender: RcProcess,
+        method: ObjectPointer,
+        arguments: Chunk<ObjectPointer>,
+    ) -> FutureConsumer {
+        let mut shared_data = self.shared_data.lock();
+        let (producer, consumer) = Future::new(sender);
+        let message = Message::new(method, arguments, producer);
+
+        shared_data.mailbox.send(message);
+        consumer
     }
 
-    pub fn receive_message(&self) -> Option<ObjectPointer> {
-        self.local_data_mut().mailbox.lock().receive()
+    pub fn schedule_next_message(&self) -> Result<bool, String> {
+        let mut shared_data = self.shared_data.lock();
+        let local_data = self.local_data_mut();
+
+        if let Some(message) = shared_data.mailbox.receive() {
+            let block = message.method.block_value()?;
+            let mut context = ExecutionContext::from_block_with_receiver(
+                &block,
+                local_data.self_object,
+            );
+
+            for index in 0..message.arguments.len() {
+                context.set_local(index as u16, message.arguments[index]);
+            }
+
+            local_data.generator = Some(Generator::running(Box::new(context)));
+            local_data.future = Some(message.future);
+
+            Ok(true)
+        } else {
+            Ok(false)
+        }
     }
 
     pub fn context(&self) -> &ExecutionContext {
-        self.local_data().generator.context()
+        self.local_data()
+            .generator
+            .as_ref()
+            .expect("Can't get an ExecutionContext without a generator")
+            .context()
     }
 
     #[cfg_attr(feature = "cargo-clippy", allow(mut_from_ref))]
     pub fn context_mut(&self) -> &mut ExecutionContext {
-        self.local_data_mut().generator.context_mut()
+        self.local_data_mut()
+            .generator
+            .as_mut()
+            .expect("Can't get an ExecutionContext without a generator")
+            .context_mut()
     }
 
     pub fn has_messages(&self) -> bool {
-        self.local_data().mailbox.lock().has_messages()
+        !self.shared_data.lock().mailbox.messages.is_empty()
     }
 
     pub fn should_collect_young_generation(&self) -> bool {
@@ -425,7 +857,11 @@ impl Process {
     }
 
     pub fn contexts(&self) -> Vec<&ExecutionContext> {
-        self.local_data().generator.contexts()
+        self.local_data()
+            .generator
+            .as_ref()
+            .expect("Can't get an ExecutionContext without a generator")
+            .contexts()
     }
 
     /// Write barrier for tracking cross generation writes.
@@ -467,35 +903,39 @@ impl Process {
         blocks
     }
 
-    pub fn terminate(&self, state: &State) {
-        // The mailbox lock _must_ be acquired first, otherwise we may end up
-        // reclaiming blocks while another process is allocating message into
+    pub fn terminate(&self) {
+        // The shared data lock _must_ be acquired first, otherwise we may end
+        // up reclaiming blocks while another process is allocating message into
         // them.
-        let _mailbox = self.local_data_mut().mailbox.lock();
-        let mut blocks = self.reclaim_all_blocks();
+        let mut shared = self.shared_data.lock();
 
         // Once terminated we don't want to receive any messages any more, as
         // they will never be received and thus lead to an increase in memory.
         // Thus, we mark the process as terminated. We must do this _after_
         // acquiring the lock to ensure other processes sending messages will
         // observe the right value.
-        self.set_terminated();
+        shared.status.set_terminated();
+        self.release_all_blocks();
+    }
 
-        for block in blocks.iter_mut() {
-            block.reset();
-            block.finalize();
-        }
-
-        state.global_allocator.add_blocks(&mut blocks);
+    pub fn set_self_object(&self, object: ObjectPointer) {
+        self.local_data_mut().self_object = object;
     }
 
     pub fn each_global_pointer<F>(&self, mut callback: F)
     where
         F: FnMut(ObjectPointerPointer),
     {
-        if let Some(ptr) = self.local_data().generator.result_pointer_pointer()
-        {
-            callback(ptr);
+        let local_data = self.local_data();
+
+        if let Some(gen) = local_data.generator.as_ref() {
+            if let Some(ptr) = gen.result_pointer_pointer() {
+                callback(ptr);
+            }
+        }
+
+        if !local_data.self_object.is_null() {
+            callback(local_data.self_object.pointer());
         }
     }
 
@@ -517,31 +957,58 @@ impl Process {
     }
 
     pub fn waiting_for_message(&self) {
-        self.waiting_for_message.store(true, Ordering::Release);
+        self.shared_data.lock().status.set_waiting_for_message(true);
     }
 
     pub fn no_longer_waiting_for_message(&self) {
-        self.waiting_for_message.store(false, Ordering::Release);
+        self.shared_data
+            .lock()
+            .status
+            .set_waiting_for_message(false);
     }
 
     pub fn is_waiting_for_message(&self) -> bool {
-        self.waiting_for_message.load(Ordering::Acquire)
+        self.shared_data.lock().status.is_waiting_for_message()
     }
 
     pub fn set_result(&self, result: ObjectPointer) {
-        self.local_data().generator.set_result(result);
+        self.local_data_mut()
+            .generator
+            .as_mut()
+            .expect("Can't set the result without a generator")
+            .set_result(result);
     }
 
     pub fn take_result(&self) -> Option<ObjectPointer> {
-        self.local_data().generator.take_result()
+        self.local_data()
+            .generator
+            .as_ref()
+            .expect("Can't take the result without a generator")
+            .take_result()
+    }
+
+    pub fn take_future(&self) -> Option<FutureProducer> {
+        self.local_data_mut().future.take()
+    }
+
+    fn release_all_blocks(&self) {
+        let mut blocks = self.reclaim_all_blocks();
+
+        for block in blocks.iter_mut() {
+            block.reset();
+            block.finalize();
+        }
+
+        self.local_data()
+            .allocator
+            .global_allocator
+            .add_blocks(&mut blocks);
     }
 }
 
 impl Drop for Process {
     fn drop(&mut self) {
-        // This ensures the timeout is dropped if it's present, without having
-        // to duplicate the dropping logic.
-        self.acquire_rescheduling_rights();
+        self.release_all_blocks();
     }
 }
 
@@ -563,7 +1030,7 @@ impl Eq for RcProcess {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::object_value;
+    use crate::object_pointer::ObjectPointer;
     use crate::vm::test::setup;
     use num_bigint::BigInt;
     use std::f64;
@@ -614,44 +1081,6 @@ mod tests {
 
         assert_eq!(local_data.allocator.young_config.block_allocations, 0);
         assert_eq!(local_data.allocator.mature_config.block_allocations, 0);
-    }
-
-    #[test]
-    fn test_receive_message() {
-        let (machine, _block, process) = setup();
-
-        let input_message = process
-            .allocate(object_value::integer(14), process.allocate_empty());
-
-        let attr = machine.state.intern_string("hello".to_string());
-
-        input_message.add_attribute(&process, attr, attr);
-
-        process
-            .send_message_from_external_process(input_message)
-            .unwrap();
-
-        let received = process.receive_message().unwrap();
-
-        assert!(received.is_young());
-        assert!(received.get().value.is_integer());
-        assert!(received.get().prototype().is_some());
-        assert!(received.get().attributes_map().is_some());
-        assert!(received.is_finalizable());
-        assert!(received.raw.raw != input_message.raw.raw);
-    }
-
-    #[test]
-    fn test_send_message_from_external_process_with_closed_mailbox() {
-        let (_machine, _block, process) = setup();
-
-        let message = process
-            .allocate(object_value::integer(14), process.allocate_empty());
-
-        process.set_terminated();
-        process.send_message_from_external_process(message).unwrap();
-
-        assert!(process.receive_message().is_none());
     }
 
     #[test]
@@ -723,10 +1152,12 @@ mod tests {
     }
 
     #[test]
-    fn test_process_type_size() {
+    fn test_type_sizes() {
         // This test is put in place to ensure the type size doesn't change
         // unintentionally.
-        assert_eq!(mem::size_of::<Process>(), 352);
+        assert_eq!(mem::size_of::<Process>(), 376);
+        assert_eq!(mem::size_of::<Message>(), 32);
+        assert_eq!(mem::size_of::<Future>(), 24);
     }
 
     #[test]
@@ -761,6 +1192,277 @@ mod tests {
 
         process.each_global_pointer(|ptr| pointers.push(ptr));
 
-        assert_eq!(pointers.len(), 1);
+        assert_eq!(pointers.len(), 3);
+    }
+
+    #[test]
+    fn test_status_new_status() {
+        let status = ProcessStatus::new();
+
+        assert_eq!(status.is_main(), false);
+        assert_eq!(status.is_blocking(), false);
+        assert_eq!(status.is_terminated(), false);
+    }
+
+    #[test]
+    fn test_status_set_main() {
+        let mut status = ProcessStatus::new();
+
+        assert_eq!(status.is_main(), false);
+
+        status.set_main();
+
+        assert!(status.is_main());
+    }
+
+    #[test]
+    fn test_status_set_blocking() {
+        let mut status = ProcessStatus::new();
+
+        assert_eq!(status.is_blocking(), false);
+
+        status.set_blocking(true);
+
+        assert!(status.is_blocking());
+
+        status.set_blocking(false);
+
+        assert_eq!(status.is_blocking(), false);
+    }
+
+    #[test]
+    fn test_status_set_multiple() {
+        let mut status = ProcessStatus::new();
+
+        status.set_main();
+        status.set_blocking(true);
+        status.set_waiting_for_message(true);
+
+        assert!(status.is_main());
+        assert!(status.is_blocking());
+        assert!(status.is_waiting_for_message());
+    }
+
+    #[test]
+    fn test_status_set_terminated() {
+        let mut status = ProcessStatus::new();
+
+        assert_eq!(status.is_terminated(), false);
+
+        status.set_terminated();
+
+        assert!(status.is_terminated());
+    }
+
+    #[test]
+    fn test_status_is_waiting() {
+        let mut status = ProcessStatus::new();
+
+        status.set_waiting_for_message(true);
+
+        assert!(status.is_waiting());
+
+        status.set_waiting_for_message(false);
+        status.set_waiting_for_future(true);
+
+        assert!(status.is_waiting());
+
+        status.set_waiting_for_message(true);
+
+        assert!(status.is_waiting());
+
+        status.no_longer_waiting();
+
+        assert_eq!(status.is_waiting(), false);
+    }
+
+    #[test]
+    fn test_mailbox_send_receive() {
+        let (_machine, _block, process) = setup();
+        let mut mailbox = Mailbox::new();
+        let (prod, _) = Future::new(process);
+
+        mailbox.send(Message::new(ObjectPointer::null(), Chunk::new(0), prod));
+
+        assert!(mailbox.receive().is_some());
+    }
+
+    #[test]
+    fn test_mailbox_each_pointer() {
+        let (_machine, _block, process) = setup();
+        let mut mailbox = Mailbox::new();
+        let (prod, _) = Future::new(process);
+        let mut args = Chunk::new(1);
+
+        args[0] = ObjectPointer::new(0x1 as _);
+
+        mailbox.send(Message::new(ObjectPointer::null(), args, prod));
+
+        let mut pointers = Vec::new();
+
+        mailbox.each_pointer(|ptr| pointers.push(ptr));
+
+        while let Some(ptr) = pointers.pop() {
+            ptr.get_mut().raw.raw = 0x4 as _;
+        }
+
+        let received = mailbox.receive().unwrap();
+
+        assert!(received.arguments[0] == ObjectPointer::new(0x4 as _));
+    }
+
+    #[test]
+    fn test_future_new() {
+        let (_machine, _block, process) = setup();
+        let (_, consumer) = Future::new(process);
+        let lock = consumer.lock();
+
+        assert_eq!(lock.disconnected, false);
+        assert_eq!(lock.waiting, false);
+        assert!(lock.result.is_null());
+    }
+
+    #[test]
+    fn test_future_waiting() {
+        let (_machine, _block, process) = setup();
+        let (_, consumer) = Future::new(process);
+        let mut lock = consumer.lock();
+
+        lock.waiting();
+
+        assert!(lock.waiting);
+
+        lock.no_longer_waiting();
+
+        assert_eq!(lock.waiting, false);
+    }
+
+    #[test]
+    fn test_future_waiting_with_result() {
+        let (_machine, _block, process) = setup();
+        let (_, consumer) = Future::new(process);
+        let mut lock = consumer.lock();
+
+        lock.result = ObjectPointer::new(0x4 as _);
+
+        lock.waiting();
+
+        assert_eq!(lock.waiting, false);
+    }
+
+    #[test]
+    fn test_future_result() {
+        let (_machine, _block, process) = setup();
+        let (_, consumer) = Future::new(process);
+        let mut lock = consumer.lock();
+
+        assert!(lock.result().is_none());
+
+        lock.result = ObjectPointer::new(0x4 as _);
+
+        assert!(lock.result().is_some());
+    }
+
+    #[test]
+    fn test_future_result_pointer_pointer() {
+        let (_machine, _block, process) = setup();
+        let (_, consumer) = Future::new(process);
+        let mut lock = consumer.lock();
+
+        lock.result = ObjectPointer::new(0x4 as _);
+
+        assert_eq!(
+            lock.result_pointer_pointer().unwrap().get().raw.raw as usize,
+            0x4
+        );
+    }
+
+    #[test]
+    fn test_future_consumer_drop() {
+        let (_machine, _block, process) = setup();
+        let (producer, consumer) = Future::new(process);
+
+        drop(consumer);
+
+        assert!(producer.future.lock().disconnected);
+    }
+
+    #[test]
+    fn test_future_producer_set_result_disconnected() {
+        let (_machine, _block, process) = setup();
+        let (producer, consumer) = Future::new(process.clone());
+        let res_ptr = ObjectPointer::integer(42);
+
+        drop(consumer);
+
+        let result = producer.set_result(&process, res_ptr, false);
+
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+        assert!(producer.future.lock().result.is_null());
+    }
+
+    #[test]
+    fn test_future_producer_set_result_from_same_process() {
+        let (_machine, _block, process) = setup();
+        let (producer, _consumer) = Future::new(process.clone());
+        let res_ptr = ObjectPointer::integer(42);
+        let result = producer.set_result(&process, res_ptr, false);
+
+        assert!(result.is_ok());
+        assert_eq!(producer.future.lock().result.integer_value().unwrap(), 42);
+    }
+
+    #[test]
+    fn test_future_producer_set_result_thrown() {
+        let (_machine, _block, process) = setup();
+        let (producer, _consumer) = Future::new(process.clone());
+        let res_ptr = ObjectPointer::integer(42);
+        let result = producer.set_result(&process, res_ptr, true);
+
+        assert!(result.is_ok());
+        assert!(producer.future.lock().thrown);
+    }
+
+    #[test]
+    fn test_future_producer_set_result_from_different_process() {
+        let (machine, _block, process) = setup();
+        let (producer, _consumer) = Future::new(process.clone());
+        let sender = Process::new(
+            machine.state.global_allocator.clone(),
+            &machine.state.config,
+        );
+
+        let res_ptr =
+            process.allocate_without_prototype(object_value::float(1.2));
+        let result = producer.set_result(&sender, res_ptr, false);
+
+        assert!(result.is_ok());
+        assert!(result.unwrap() == Some((RescheduleRights::Failed, process)));
+
+        // The data is copied, so the pointer is different.
+        assert_eq!(producer.future.lock().result.float_value().unwrap(), 1.2);
+    }
+
+    #[test]
+    fn test_future_producer_set_result_from_different_process_with_waiting() {
+        let (machine, _block, process) = setup();
+        let (producer, _consumer) = Future::new(process.clone());
+        let sender = Process::new(
+            machine.state.global_allocator.clone(),
+            &machine.state.config,
+        );
+
+        process.shared_data().park_for_future(None);
+
+        let res_ptr =
+            process.allocate_without_prototype(object_value::float(1.2));
+        let result = producer.set_result(&sender, res_ptr, false);
+
+        assert!(result.is_ok());
+        assert!(result.unwrap() == Some((RescheduleRights::Acquired, process)));
+
+        // The data is copied, so the pointer is different.
+        assert_eq!(producer.future.lock().result.float_value().unwrap(), 1.2);
     }
 }

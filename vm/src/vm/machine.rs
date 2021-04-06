@@ -408,9 +408,16 @@ impl Machine {
                     }
 
                     // Once we're at the top-level _and_ we have no more
-                    // instructions to process we'll bail out of the main
-                    // execution loop.
+                    // instructions to process, we'll write the result to a
+                    // future and bail out the execution loop.
                     if process.pop_context() {
+                        process::future_set_result(
+                            &self.state,
+                            process,
+                            res,
+                            false,
+                        )?;
+
                         break 'exec_loop;
                     }
 
@@ -734,9 +741,9 @@ impl Machine {
                 }
                 Opcode::ProcessSpawn => {
                     let reg = instruction.arg(0);
-                    let block = context.get_register(instruction.arg(1));
+                    let rec = context.get_register(instruction.arg(1));
                     let res =
-                        process::process_spawn(&self.state, process, block)?;
+                        process::process_spawn(&self.state, process, rec)?;
 
                     context.set_register(reg, res);
                 }
@@ -744,12 +751,17 @@ impl Machine {
                     let reg = instruction.arg(0);
                     let rec = context.get_register(instruction.arg(1));
                     let msg = context.get_register(instruction.arg(2));
+                    let start = instruction.arg(3);
+                    let args = instruction.arg(4);
                     let res = try_error!(
                         process::process_send_message(
                             &self.state,
+                            context,
                             process,
                             rec,
                             msg,
+                            start,
+                            args
                         ),
                         self,
                         process,
@@ -758,39 +770,6 @@ impl Machine {
                     );
 
                     context.set_register(reg, res);
-                }
-                Opcode::ProcessReceiveMessage => {
-                    let reg = instruction.arg(0);
-                    let time = context.get_register(instruction.arg(1));
-
-                    match process::process_receive_message(&self.state, process)
-                    {
-                        Ok(Some(message)) => {
-                            context.set_register(reg, message);
-                            continue;
-                        }
-                        Ok(None) => {}
-                        Err(err) => {
-                            throw_value!(self, process, err, context, index);
-                        }
-                    }
-
-                    // We *must* save the instruction index first. If we save
-                    // this later on, a copy of this process scheduled by
-                    // another thread (because it sent the process a message)
-                    // may end up running the wrong instructions and/or corrupt
-                    // registers in the process.
-                    context.instruction_index = index - 1;
-
-                    process::wait_for_message(&self.state, process, time)?;
-
-                    return Ok(());
-                }
-                Opcode::ProcessCurrent => {
-                    let reg = instruction.arg(0);
-                    let obj = process::process_current(&self.state, process);
-
-                    context.set_register(reg, obj);
                 }
                 Opcode::ProcessSuspendCurrent => {
                     let time = context.get_register(instruction.arg(0));
@@ -930,8 +909,8 @@ impl Machine {
                     context.instruction_index = index;
 
                     // After this we can _not_ perform any operations on the
-                    // process any more as it might be concurrently modified
-                    // by the pool we just moved it to.
+                    // process any more as it might be concurrently modified by
+                    // the pool we just moved it to.
                     self.state.scheduler.schedule(process.clone());
 
                     return Ok(());
@@ -1159,7 +1138,7 @@ impl Machine {
                     let reg = instruction.arg(0);
                     let gen = context.get_register(instruction.arg(1));
                     let res = try_error!(
-                        generator::value(&self.state, gen),
+                        generator::value(gen),
                         self,
                         process,
                         context,
@@ -1200,25 +1179,80 @@ impl Machine {
 
                     context.set_register(reg, res);
                 }
+                Opcode::FutureGet => {
+                    let reg = instruction.arg(0);
+                    let fut = context.get_register(instruction.arg(1));
+                    let time = context.get_register(instruction.arg(2));
+
+                    // Save the instruction offset first, so rescheduled copies
+                    // of our process start off at the right instruction.
+                    context.instruction_index = index - 1;
+
+                    let res = try_error!(
+                        process::future_get(&self.state, process, fut, time),
+                        self,
+                        process,
+                        context,
+                        index
+                    );
+
+                    if let Some(message) = res {
+                        context.instruction_index = index;
+
+                        context.set_register(reg, message);
+                    } else {
+                        return Ok(());
+                    }
+                }
+                Opcode::FutureReady => {
+                    let reg = instruction.arg(0);
+                    let fut = context.get_register(instruction.arg(1));
+                    let res = try_error!(
+                        process::future_ready(&self.state, fut),
+                        self,
+                        process,
+                        context,
+                        index
+                    );
+
+                    context.set_register(reg, res);
+                }
+                Opcode::FutureWait => {
+                    let reg = instruction.arg(0);
+                    let poll = context.get_register(instruction.arg(1));
+                    let time = context.get_register(instruction.arg(2));
+
+                    // Save the instruction offset first, so rescheduled copies
+                    // of our process start off at the right instruction.
+                    context.instruction_index = index - 1;
+
+                    let res = try_error!(
+                        process::future_wait(&self.state, process, poll, time),
+                        self,
+                        process,
+                        context,
+                        index
+                    );
+
+                    if let Some(amount) = res {
+                        context.instruction_index = index;
+
+                        context.set_register(reg, amount);
+                    } else {
+                        return Ok(());
+                    }
+                }
+                Opcode::IsNull => {
+                    let reg = instruction.arg(0);
+                    let ptr = context.get_register(1);
+                    let res = general::is_null(&self.state, ptr);
+
+                    context.set_register(reg, res);
+                }
             };
         }
 
-        if process.is_pinned() {
-            // A pinned process can only run on the corresponding worker.
-            // Because pinned workers won't run already unpinned processes, and
-            // because processes can't be pinned until they run, this means
-            // there will only ever be one process that triggers this code.
-            worker.leave_exclusive_mode();
-        }
-
-        process.terminate(&self.state);
-
-        // Terminate once the main process has finished execution.
-        if process.is_main() {
-            self.state.terminate(0);
-        }
-
-        Ok(())
+        process::process_finish_message(&self.state, worker, process)
     }
 
     /// Checks if a garbage collection run should be performed for the given
@@ -1270,10 +1304,27 @@ impl Machine {
             }
 
             if process.pop_context() {
-                return Err(format!(
-                    "A thrown value reached the top-level in process {:#x}",
-                    process.identifier()
-                ));
+                // Move all the pending deferred blocks from previous frames
+                // into the top-level frame. These will be scheduled once we
+                // return from the panic handler.
+                process.context_mut().append_deferred_blocks(&mut deferred);
+
+                // TODO: this will discard the pending deferred blocks.
+                // TODO: rip out unwinding. Or maybe turn throws into a return
+                // with a flag set, then add an instruction that checks and
+                // consumes that flag, then combine that with a jump in the
+                // compiler.
+                if !process::future_set_result(
+                    &self.state,
+                    process,
+                    value,
+                    true,
+                )? {
+                    return Err(format!(
+                        "A thrown value reached the top-level in process {:#x}",
+                        process.identifier()
+                    ));
+                }
             }
         }
     }
