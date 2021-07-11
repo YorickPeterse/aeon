@@ -1,84 +1,73 @@
-import std::hash::DefaultHasher
+import std::hash::Hasher
 import std::pair::*
 import std::test::*
 
-def tests(t: Tests) {
-  t.group('std::pair::Pair.first') do (g) {
+def tests(t: ref Tests) {
+  t.group('std::pair::Pair.0') do (g) {
     g.test('Obtaining the first value of a Pair') {
-      try assert_equal(Pair.new(first: 10, second: 20).first, 10)
+      try assert_equal(Pair.new(10, 20).0, 10)
     }
   }
 
-  t.group('std::pair::Pair.second') do (g) {
+  t.group('std::pair::Pair.1') do (g) {
     g.test('Obtaining the second value of a Pair') {
-      try assert_equal(Pair.new(first: 10, second: 20).second, 20)
+      try assert_equal(Pair.new(10, 20).1, 20)
     }
   }
 
   t.group('std::pair::Pair.==') do (g) {
     g.test('Comparing two Pair objects for equality') {
-      try assert_not_equal(
-        Pair.new(first: 1, second: 2),
-        Pair.new(first: 2, second: 3)
-      )
-
-      try assert_equal(Pair.new(first: 1, second: 1), Pair.new(first: 1, second: 1))
+      try assert_not_equal(Pair.new(1, 2), Pair.new(2, 3))
+      try assert_equal(Pair.new(1, 1), Pair.new(1, 1))
     }
   }
 
   t.group('std::pair::Pair.hash') do (g) {
     g.test('Hashing a Pair') {
-      let hasher1 = DefaultHasher.new(1, 2)
-      let hasher2 = DefaultHasher.new(1, 2)
-      let pair = Pair.new(first: 1, second: 2)
+      let hasher1 = Hasher.new(1, 2)
+      let hasher2 = Hasher.new(1, 2)
+      let pair = Pair.new(1, 2)
 
-      pair.hash(hasher1)
-      pair.hash(hasher2)
+      pair.hash(ref hasher1)
+      pair.hash(ref hasher2)
 
       try assert_equal(hasher1.to_hash, hasher2.to_hash)
     }
   }
 
-  t.group('std::pair::Triple.first') do (g) {
+  t.group('std::pair::Triple.0') do (g) {
     g.test('Obtaining the first value of a Triple') {
-      try assert_equal(Triple.new(first: 10, second: 20, third: 30).first, 10)
+      try assert_equal(Triple.new(10, 20, 30).0, 10)
     }
   }
 
-  t.group('std::pair::Triple.second') do (g) {
+  t.group('std::pair::Triple.1') do (g) {
     g.test('Obtaining the second value of a Triple') {
-      try assert_equal(Triple.new(first: 10, second: 20, third: 30).second, 20)
+      try assert_equal(Triple.new(10, 20, 30).1, 20)
     }
   }
 
-  t.group('std::pair::Triple.third') do (g) {
+  t.group('std::pair::Triple.2') do (g) {
     g.test('Obtaining the third value of a Triple') {
-      try assert_equal(Triple.new(first: 10, second: 20, third: 30).third, 30)
+      try assert_equal(Triple.new(10, 20, 30).2, 30)
     }
   }
 
   t.group('std::pair::Triple.==') do (g) {
     g.test('Comparing two Triple objects for equality') {
-      try assert_not_equal(
-        Triple.new(first: 1, second: 2, third: 3),
-        Triple.new(first: 2, second: 3, third: 4)
-      )
-
-      try assert_equal(
-        Triple.new(first: 1, second: 1, third: 1),
-        Triple.new(first: 1, second: 1, third: 1)
-      )
+      try assert_not_equal(Triple.new(1, 2, 3), Triple.new(2, 3, 4))
+      try assert_equal(Triple.new(1, 1, 1), Triple.new(1, 1, 1))
     }
   }
 
   t.group('std::pair::Triple.hash') do (g) {
     g.test('Hashing a Triple') {
-      let hasher1 = DefaultHasher.new(1, 2)
-      let hasher2 = DefaultHasher.new(1, 2)
-      let triple = Triple.new(first: 1, second: 2, third: 3)
+      let hasher1 = Hasher.new(1, 2)
+      let hasher2 = Hasher.new(1, 2)
+      let triple = Triple.new(1, 2, 3)
 
-      triple.hash(hasher1)
-      triple.hash(hasher2)
+      triple.hash(ref hasher1)
+      triple.hash(ref hasher2)
 
       try assert_equal(hasher1.to_hash, hasher2.to_hash)
     }

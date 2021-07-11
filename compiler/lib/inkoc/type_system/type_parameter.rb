@@ -64,6 +64,7 @@ module Inkoc
       end
 
       def type_compatible?(other, state)
+        return type_compatible?(other.type, state) if other.reference?
         return true if other.any? || self == other
 
         if other.type_parameter?
@@ -114,13 +115,13 @@ module Inkoc
         block_type.method_bounds[name] || self
       end
 
-      def resolve_type_parameter_with_self(self_type, method_type)
-        method_type.lookup_type_parameter_instance(self) ||
+      def resolve_type_parameter_with_self(self_type, method_type = nil)
+        method_type&.lookup_type_parameter_instance(self) ||
           self_type.lookup_type_parameter_instance(self) ||
           self
       end
 
-      def resolve_type_parameters(self_type, method_type)
+      def resolve_type_parameters(self_type, method_type = nil)
         resolve_type_parameter_with_self(self_type, method_type)
       end
 

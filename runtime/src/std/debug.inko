@@ -2,14 +2,13 @@
 #
 # This module provides various facilities for debugging programs during
 # runtime, such as obtaining stack traces.
-import std::fs::path::(Path, ToPath)
+import std::fs::path::(IntoPath, Path)
 import std::hash::Hash
-import std::loop::(while)
 import std::operators::Equal
 
 extern def process_stacktrace(
-  limit: Integer,
-  skip: Integer
+  limit: ref Int,
+  skip: ref Int
 ) -> Array!(Array!(Any))
 
 # Details of a single stack frame in a stack trace.
@@ -21,25 +20,25 @@ class StackFrame {
   @name: String
 
   # The line number the stack frame originates from.
-  @line: Integer
+  @line: Int
 
-  static def new(path: ToPath, name: String, line: Integer) -> Self {
-    Self { @path = path.to_path, @name = name, @line = line }
+  static def new(path: IntoPath, name: String, line: Int) -> Self {
+    Self { @path = path.into_path, @name = name, @line = line }
   }
 
   # Returns the path of the file the frame belongs to.
-  def path -> Path {
+  def path -> ref Path {
     @path
   }
 
   # Returns the name of the block of code the frame belongs to.
   def name -> String {
-    @name
+    @name.clone
   }
 
   # Returns the line number of the frame.
-  def line -> Integer {
-    @line
+  def line -> Int {
+    @line.clone
   }
 }
 
@@ -73,53 +72,22 @@ class StackFrame {
 #     }
 #
 #     def second -> StackFrame {
-#       debug.stacktrace[-1]
+#       debug.stacktrace(skip: 1, limit: 0)[-1]
 #     }
 #
 #     first.name # => 'second'
 #     first.line # => 8
-def stacktrace(skip = 1, limit = 0) -> Array!(StackFrame) {
+def stacktrace(skip: Int, limit: Int) -> Array!(StackFrame) {
   let mut raw_frames = process_stacktrace(limit, skip)
   let mut frames = Array.new
 
-  raw_frames.each do (raw_frame) {
-    frames.push(
-      StackFrame.new(
-        path: (raw_frame[0] as String).to_path,
-        name: raw_frame[1] as String,
-        line: raw_frame[2] as Integer,
-      ),
-    )
+  for raw_frame in raw_frames.into_iter {
+    let (path: String, name: String, line: Int) = raw_frame
+
+    frames.push(StackFrame.new(path, name, line))
   }
 
   frames
-}
-
-# Returns the last `StackFrame` originating from the given `Path`.
-#
-# # Examples
-#
-# Obtaining the last `StackFrame` from a given file:
-#
-#     import std::debug
-def last_call_frame_in(file: ToPath) -> StackFrame {
-  let frames = stacktrace(skip: 1)
-  let default = frames[-1]
-  let path = file.to_path
-
-  # The last StackFrame is the default, and will point to this method itself.
-  # This means we don't need to check that frame.
-  let mut index = frames.length - 2
-
-  while({ index >= 0 }) {
-    let frame = frames[index]
-
-    (frame.path == path).if_true { return frame }
-
-    index -= 1
-  }
-
-  default
 }
 
 impl Equal for StackFrame {}

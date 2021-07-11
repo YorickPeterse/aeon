@@ -10,6 +10,8 @@ module Inkoc
       attr_reader :arguments, :body, :throws, :returns, :location,
                   :type_parameters, :signature
 
+      attr_accessor :type_scope, :moving
+
       # targs - The type arguments of this block.
       # arguments - The arguments of the block.
       # body - The body of the block as a Body node.
@@ -26,6 +28,8 @@ module Inkoc
         @location = loc
         @signature = signature
         @lambda = false
+        @type_scope = nil
+        @moving = false
       end
 
       def infer_as_lambda

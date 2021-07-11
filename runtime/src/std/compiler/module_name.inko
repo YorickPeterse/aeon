@@ -2,7 +2,7 @@
 import std::compiler::config::SOURCE_EXTENSION
 import std::compiler::source_location::SourceLocation
 import std::conversion::ToString
-import std::fs::path::(Path, ToPath, SEPARATOR)
+import std::fs::path::(Path, SEPARATOR)
 import std::hash::(Hash, Hasher)
 import std::operators::Equal
 import std::option::Option
@@ -20,7 +20,7 @@ class ModuleName {
   }
 
   # The components that make up the name of a module
-  def components -> Array!(String) {
+  def components -> ref Array!(String) {
     @components
   }
 
@@ -33,12 +33,10 @@ class ModuleName {
   def absolute_source_path(directories: Array!(Path)) -> ?Path {
     let rel_path = relative_source_path
 
-    directories.each do (directory) {
+    for directory in directories {
       let source_path = directory.join(rel_path)
 
-      source_path.file?.if_true {
-        return Option.some(source_path)
-      }
+      if source_path.file? { return Option.some(source_path) }
     }
 
     Option.none
@@ -57,11 +55,11 @@ class ModuleName {
   }
 
   def head -> String {
-    @components[0]
+    @components[0].clone
   }
 
   def tail -> String {
-    @components[-1]
+    @components[-1].clone
   }
 }
 
@@ -78,7 +76,7 @@ impl Equal for ModuleName {
 }
 
 impl Hash for ModuleName {
-  def hash(hasher: Hasher) {
+  def hash(hasher: ref Hasher) {
     @components.hash(hasher)
   }
 }

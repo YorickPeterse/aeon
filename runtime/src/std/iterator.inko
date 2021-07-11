@@ -31,7 +31,6 @@
 # returns the characters in a `String`.
 import std::conversion::ToString
 import std::hash::Hash
-import std::map::Map
 import std::operators::Equal
 import std::option::Option
 import std::pair::Pair
@@ -64,6 +63,17 @@ impl Generator {
     # Obtaining the value throws when there is no value, which happens when a
     # generator finishes.
     try Option.some(_INKOC.generator_value(self) as T) else Option.none
+
+    # TODO: use this new approach
+    # _INKOC.generator_resume(self)
+
+    # let value = try _INKOC.generator_value(self) else (error) throw error
+
+    # if value == _INKOC.undefined {
+    #   Option.none
+    # } else {
+    #   Option.some(value as T)
+    # }
   }
 }
 
@@ -83,43 +93,23 @@ trait Iterator!(T, E) {
   # be returned.
   def next !! E -> ?T
 
-  # Yields all the values in this iterator to the supplied `Block`.
-  #
-  # This method will advance the `Iterator` to the end.
-  #
-  # # Examples
-  #
-  # Iterating over all the values in an `Array`:
-  #
-  #     import std::stdio::stdout
-  #
-  #     Array.new(10, 20, 30).iter.each do (number) {
-  #       stdout.print(number)
-  #     }
-  def each(block: do (T)) !! E {
-    try { next }.let(block).else { return }
-    try each(block)
-  }
-
-  # Yields all the values and their indexes in this `Iterator` to the supplied
-  # `Block`.
+  # Returns an `Iterator` that yields pairs of indexes and values. The first
+  # value of the pair is the current index (0, 1, 2, etc), the second value is
+  # the iteration value.
   #
   # # Examples
   #
-  # Iterating over the values of an `Iterator` and their indexes:
+  #     let vals = Array.new('foo', 'bar')
+  #     let iter = vals.iter.with_index
   #
-  #     import std::stdio::stdout
-  #
-  #     let iter = Array.new(10, 20, 30).iter
-  #
-  #     iter.each_with_index do (number, index) {
-  #       stdout.print(index) # => 0, 1, 2
-  #     }
-  def each_with_index(block: do (T, Integer)) !! E {
+  #     iter.next # => Option.some(Pair.new(0, 'foo'))
+  #     iter.next # => Option.some(Pair.new(1, 'bar'))
+  move def with_index !! E => Pair!(Int, T) {
     let mut index = 0
 
-    try each do (value: T) {
-      block.call(value, index)
+    for value in try self {
+      yield Pair.new(index, value)
+
       index += 1
     }
   }
@@ -136,8 +126,8 @@ trait Iterator!(T, E) {
   #       .map do (number) { number * 2 }
   #
   #     iter.to_array # => Array.new(2, 4, 6)
-  def map!(R)(block: do (T) -> R) !! E => R {
-    try each do (value) { yield block.call(value) }
+  move def map!(R)(block: do (T) -> R) !! E => R {
+    for value in try self { yield block.call(value) }
   }
 
   # Returns the first value for which the supplied `Block` returns `True`.
@@ -152,9 +142,9 @@ trait Iterator!(T, E) {
   #     let numbers = Array.new(10, 20, 50, 80)
   #
   #     numbers.iter.find do (number) { number > 50 } # => 80
-  def find(block: do (T) -> Boolean) !! E -> ?T {
-    try each do (value) {
-      block.call(value).if_true { return Option.some(value) }
+  def find(block: do (ref T) -> Boolean) !! E -> ?T {
+    for value in try self {
+      if block.call(value) { return Option.some(value) }
     }
 
     Option.none
@@ -169,10 +159,10 @@ trait Iterator!(T, E) {
   #
   #     numbers.iter.find_some do (num) { Option.some(num) } # => Option.some(10)
   def find_some!(R)(block: do (T) -> ?R) !! E -> ?R {
-    try each do (value) {
+    for value in try self {
       let opt = block.call(value)
 
-      opt.if_true { return opt }
+      if opt { return opt }
     }
 
     Option.none
@@ -189,8 +179,8 @@ trait Iterator!(T, E) {
   #
   #     Array.new(10, 20, 30).iter.any? do (value) { value >= 20 } # => True
   def any?(block: do (T) -> Boolean) !! E -> Boolean {
-    try each do (value) {
-      block.call(value).if_true { return True }
+    for value in try self {
+      if block.call(value) { return True }
     }
 
     False
@@ -207,9 +197,9 @@ trait Iterator!(T, E) {
   #       .iter
   #       .select do (value) { value > 10 }
   #       .to_array # => Array.new(20, 30)
-  def select(block: do (T) -> Boolean) !! E => T {
-    try each do (value) {
-      block.call(value).if_true { yield value }
+  move def select(block: do (ref T) -> Boolean) !! E => T {
+    for value in try self {
+      if block.call(value) { yield value }
     }
   }
 
@@ -226,19 +216,19 @@ trait Iterator!(T, E) {
   #     let values = Array.new(10, 20, 30, 40, 50)
   #     let pair = values.iter.partition do (value) { value >= 30 }
   #
-  #     pair.first  # => Array.new(30, 40, 50)
-  #     pair.second # => Array.new(10, 20)
-  def partition(block: do (T) -> Boolean) !! E -> Pair!(Array!(T), Array!(T)) {
+  #     pair.0 # => Array.new(30, 40, 50)
+  #     pair.1 # => Array.new(10, 20)
+  move def partition(
+    block: do (ref T) -> Boolean
+  ) !! E -> Pair!(Array!(T), Array!(T)) {
     let true = Array.new
     let false = Array.new
 
-    try each do (value) {
-      block
-        .call(value)
-        .if(true: { true.push(value) }, false: { false.push(value) })
+    for value in try self {
+      if block.call(value) { true.push(value) } else { false.push(value) }
     }
 
-    Pair.new(first: true, second: false)
+    Pair.new(true, false)
   }
 
   # Returns `True` if the supplied block returns `True` for _all_ values in
@@ -254,10 +244,8 @@ trait Iterator!(T, E) {
   #     Array.new(10, 20).iter.all? do (value) { value.positive? } # => True
   #     Array.new(-1, 20).iter.all? do (value) { value.positive? } # => False
   def all?(block: do (T) -> Boolean) !! E -> Boolean {
-    try each do (value) {
-      block.call(value).if_false {
-        return False
-      }
+    for value in try self {
+      if not block.call(value) { return False }
     }
 
     True
@@ -286,11 +274,11 @@ trait Iterator!(T, E) {
   #     let zip = a.iter.zip(b.iter)
   #
   #     zip.next # => Pair.new(10, 40)
-  def zip!(U)(other: Iterator!(U, E)) !! E => Pair!(T, U) {
-    try each do (ours) {
-      try { other.next }
-        .let do (theirs) { yield Pair.new(ours, theirs) }
-        .else { return }
+  move def zip!(U)(other: Iterator!(U, E)) !! E => Pair!(T, U) {
+    for ours in try self {
+      let theirs = try other.next
+
+      yield Pair.new(ours, try theirs.get else return)
     }
   }
 
@@ -305,15 +293,15 @@ trait Iterator!(T, E) {
   # Joining an `Iterator` with multiple values:
   #
   #     Array.new(10, 20, 30).iter.join(',') # => '10,20,30'
-  def join(separator: String) !! E -> String when T: ToString {
+  move def join(separator: String) !! E -> String when T: ToString {
     let buffer = StringBuffer.new
+    let mut index = 0
 
-    try each_with_index do (value, index) {
-      index.positive?.if_true {
-        buffer.push(separator)
-      }
+    for value in try self {
+      if index.positive? { buffer.push(separator.clone) }
 
       buffer.push(value.to_string)
+      index += 1
     }
 
     buffer.to_string
@@ -353,12 +341,10 @@ trait Iterator!(T, E) {
   #
   # For the last element the return value is `6`, so the return value of the
   # reduce method is also `6`.
-  def reduce!(A)(accumulator: A, block: do (A, T) -> A) !! E -> A {
+  move def reduce!(A)(accumulator: A, block: do (A, T) -> A) !! E -> A {
     let mut result = accumulator
 
-    try each do (value) {
-      result = block.call(result, value)
-    }
+    for value in try self { result = block.call(result, value) }
 
     result
   }
@@ -368,23 +354,22 @@ trait Iterator!(T, E) {
   # Each chunk is up to the amount specified by the `size` argument. If the
   # number of values can't be evenly divided, the last chunk may contain fewer
   # than `size` elements.
-  def chunks(size: Integer) !! E => Array!(T) {
+  move def chunks(size: Int) !! E => Array!(T) {
     let mut chunk = Array.new
 
-    try each do (value) {
-      (chunk.length == size).if(
-        true: {
-          yield chunk
+    for value in try self {
+      if chunk.length == size {
+        yield chunk
 
-          # The supplied block may decide to continue using the Array, so we
-          # can't clear it and reuse it; instead we must create a new one.
-          chunk = Array.new(value)
-        },
-        false: { chunk.push(value) }
-      )
+        # The supplied block may decide to continue using the Array, so we can't
+        # clear it and reuse it; instead we must create a new one.
+        chunk = Array.new(value)
+      } else {
+        chunk.push(value)
+      }
     }
 
-    chunk.empty?.if_false { yield chunk }
+    if not chunk.empty? { yield chunk }
   }
 
   # Transforms the `Iterator` into an `Array`.
@@ -396,10 +381,10 @@ trait Iterator!(T, E) {
   # Transforming an `Iterator` back into an `Array`:
   #
   #     Array.new(1, 2, 3).iter.to_array # => Array.new(1, 2, 3)
-  def to_array !! E -> Array!(T) {
+  move def to_array !! E -> Array!(T) {
     let mut values = Array.new
 
-    try each do (value) { values.push(value) }
+    for value in try self { values.push(value) }
 
     values
   }
@@ -409,4 +394,10 @@ impl Iterator!(T, E) for Generator {
   def next !! E -> ?T {
     try resume
   }
+}
+
+# A type an `Iterator` can be created for.
+trait ToIterator!(T, E) {
+  # Returns an `Iterator` for the values in `self`.
+  def iter !! E => T
 }

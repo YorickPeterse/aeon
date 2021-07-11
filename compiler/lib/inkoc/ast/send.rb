@@ -9,7 +9,8 @@ module Inkoc
 
       attr_reader :name, :receiver, :arguments, :type_arguments, :location
 
-      attr_accessor :receiver_type, :block_type, :throw_type, :imported
+      attr_accessor :receiver_type, :block_type, :throw_type, :imported,
+                    :create_iterator
 
       # name - The name of the message as a String.
       # receiver - The object to send the message to.
@@ -25,6 +26,7 @@ module Inkoc
         @receiver_type = nil
         @method_type = nil
         @throw_type = nil
+        @create_iterator = false
       end
 
       def send?
@@ -42,12 +44,6 @@ module Inkoc
       def raw_instruction?
         receiver&.constant? &&
           receiver&.name == Config::RAW_INSTRUCTION_RECEIVER
-      end
-
-      def array_literal?
-        receiver&.global? &&
-          receiver&.name == Config::ARRAY_CONST &&
-          name == Config::NEW_MESSAGE
       end
 
       def raw_instruction_visitor_method

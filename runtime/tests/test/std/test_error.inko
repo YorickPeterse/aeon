@@ -1,7 +1,7 @@
 import std::error::StandardError
 import std::test::*
 
-def tests(t: Tests) {
+def tests(t: ref Tests) {
   t.group('std::error::StandardError.to_string') do (g) {
     g.test('Converting a StandardError to a String') {
       let error = StandardError.new('hello')

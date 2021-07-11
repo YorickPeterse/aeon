@@ -11,7 +11,8 @@ import std::compiler::types::(BOOTSTRAP_MODULE, OBJECT_TRAIT)
 import std::test::*
 
 def parse(input: String) -> Body {
-  let parser = Parser.new(input: input, file: 'test.inko')
+  let parser =
+    Parser.new(input: input, file: 'test.inko', parse_comments: False)
 
   try! parser.parse
 }
@@ -28,7 +29,7 @@ def module_name(*components: String) -> ModuleName {
   ModuleName.new(components)
 }
 
-def tests(t: Tests) {
+def tests(t: ref Tests) {
   t.group('std::compiler::desugar.add_object_implementation') do (g) {
     g.test('Adding the implementation of the Object trait') {
       let body = parse('class A {}')

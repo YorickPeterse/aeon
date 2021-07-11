@@ -7,8 +7,6 @@ def prelude -> Array!(Pair!(String, String)) {
   Array.new(
     Pair.new('option', 'Option'),
     Pair.new('map', 'Map'),
-    Pair.new('range', 'Range'),
-    Pair.new('loop', 'loop'),
-    Pair.new('loop', 'while'),
+    Pair.new('range', 'Range')
   )
 }

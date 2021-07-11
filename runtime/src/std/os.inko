@@ -19,43 +19,46 @@ let STREAM_PIPED = 2
 
 extern def env_platform_name -> String
 extern def child_process_spawn(
-  path: String,
-  arguments: Array!(String),
-  variables: Array!(String),
-  stdin: Integer,
-  stdout: Integer,
-  stderr: Integer,
-  directory: String
-) !! Integer -> ChildProcess
+  path: ref String,
+  arguments: ref Array!(ref String),
+  variables: ref Array!(ref String),
+  stdin: ref Int,
+  stdout: ref Int,
+  stderr: ref Int,
+  directory: ref String
+) !! Int -> ChildProcess
 
-extern def child_process_wait(process: ChildProcess) !! Integer -> Integer
-extern def child_process_try_wait(process: ChildProcess) !! Integer -> Integer
+extern def child_process_wait(process: ref ChildProcess) !! Int -> Int
+extern def child_process_try_wait(
+  process: ref ChildProcess
+) !! Int -> Int
+
 extern def child_process_stdout_read(
-  process: ChildProcess,
-  bytes: ByteArray,
-  size: Integer
-) !! Integer -> Integer
+  process: ref ChildProcess,
+  bytes: ref ByteArray,
+  size: ref Int
+) !! Int -> Int
 
 extern def child_process_stderr_read(
-  process: ChildProcess,
-  bytes: ByteArray,
-  size: Integer
-) !! Integer -> Integer
+  process: ref ChildProcess,
+  bytes: ref ByteArray,
+  size: ref Int
+) !! Int -> Int
 
-extern def child_process_stdout_close(process: ChildProcess)
-extern def child_process_stderr_close(process: ChildProcess)
-extern def child_process_stdin_close(process: ChildProcess)
+extern def child_process_stdout_close(process: ref ChildProcess)
+extern def child_process_stderr_close(process: ref ChildProcess)
+extern def child_process_stdin_close(process: ref ChildProcess)
 extern def child_process_stdin_write_bytes(
-  process: ChildProcess,
-  bytes: ByteArray
-) !! Integer -> Integer
+  process: ref ChildProcess,
+  bytes: ref ByteArray
+) !! Int -> Int
 
 extern def child_process_stdin_write_string(
-  process: ChildProcess,
-  string: String
-) !! Integer -> Integer
+  process: ref ChildProcess,
+  string: ref String
+) !! Int -> Int
 
-extern def child_process_stdin_flush(process: ChildProcess) !! Integer
+extern def child_process_stdin_flush(process: ref ChildProcess) !! Int
 
 # Returns a `String` describing the current platform.
 #
@@ -109,7 +112,7 @@ def mac? -> Boolean {
 }
 
 # The newline separator to use on the current platform.
-let NEWLINE = windows?.if(true: { "\r\n" }, false: { "\n" })
+let NEWLINE = if windows? { "\r\n" } else { "\n" }
 
 # A builder type for a `ChildProcess`.
 #
@@ -167,13 +170,13 @@ class Command {
   @program: String
 
   # What to do with the STDIN stream.
-  @stdin: Integer
+  @stdin: Int
 
   # What to do with the STDOUT stream.
-  @stdout: Integer
+  @stdout: Int
 
   # What to do with the STDERR stream.
-  @stderr: Integer
+  @stderr: Int
 
   # The arguments to pass to the command.
   @arguments: Array!(String)
@@ -208,7 +211,7 @@ class Command {
   #     import std::os::Command
   #
   #     Command.new('/usr/bin/ls')
-  static def new(program: ToString) -> Self {
+  static def new(program: ref ToString) -> Self {
     Self {
       @program = program.to_string,
       @stdin = STREAM_INHERIT,
@@ -222,7 +225,7 @@ class Command {
 
   # Returns the program to start.
   def program -> String {
-    @program
+    @program.clone
   }
 
   # Adds a single argument to the command.
@@ -232,7 +235,7 @@ class Command {
   #     import std::os::Command
   #
   #     Command.new('ls').argument('/tmp')
-  def argument(value: String) -> Self {
+  move def argument(value: String) -> Self {
     @arguments.push(value)
     self
   }
@@ -244,13 +247,13 @@ class Command {
   #     import std::os::Command
   #
   #     Command.new('ls').arguments(Array.new('/tmp', '/usr'))
-  def arguments(values: Array!(String)) -> Self {
+  move def arguments(values: Array!(String)) -> Self {
     @arguments.append(values)
     self
   }
 
   # Returns the arguments added so far.
-  def current_arguments -> Array!(String) {
+  def current_arguments -> ref Array!(String) {
     @arguments
   }
 
@@ -261,7 +264,7 @@ class Command {
   #     import std::os::Command
   #
   #     Command.new('env').variable(name: 'FOO', value: 'bar')
-  def variable(name: String, value: String) -> Self {
+  move def variable(name: String, value: String) -> Self {
     @variables[name] = value
     self
   }
@@ -277,69 +280,66 @@ class Command {
   #     vars['FOO'] = 'bar'
   #
   #     Command.new('env').variables(vars)
-  def variables(values: Map!(String, String)) -> Self {
-    values.each do (key, value) {
-      @variables[key] = value
-    }
-
+  move def variables(values: Map!(String, String)) -> Self {
+    @variables.merge(values)
     self
   }
 
   # Returns the variables added so far.
-  def current_variables -> Map!(String, String) {
+  def current_variables -> ref Map!(String, String) {
     @variables
   }
 
   # Redirects STDIN to the null device.
-  def ignore_stdin -> Self {
+  move def ignore_stdin -> Self {
     @stdin = STREAM_NULL
     self
   }
 
   # Redirects STDOUT to the null device.
-  def ignore_stdout -> Self {
+  move def ignore_stdout -> Self {
     @stdout = STREAM_NULL
     self
   }
 
   # Redirects STDERR to the null device.
-  def ignore_stderr -> Self {
+  move def ignore_stderr -> Self {
     @stderr = STREAM_NULL
     self
   }
 
   # Inherits STDIN from the parent process.
-  def inherit_stdin -> Self {
+  move def inherit_stdin -> Self {
     @stdin = STREAM_INHERIT
     self
   }
 
   # Inherits STDOUT from the parent process.
-  def inherit_stdout -> Self {
+  move def inherit_stdout -> Self {
     @stdout = STREAM_INHERIT
     self
   }
 
   # Inherits STDERR from the parent process.
-  def inherit_stderr -> Self {
+  move def inherit_stderr -> Self {
     @stderr = STREAM_INHERIT
     self
   }
 
   # Pipes STDIN to a buffer.
-  def pipe_stdin -> Self {
+  move def pipe_stdin -> Self {
     @stdin = STREAM_PIPED
     self
   }
 
   # Pipes STDOUT to a buffer.
-  def pipe_stdout -> Self {
+  move def pipe_stdout -> Self {
     @stdout = STREAM_PIPED
     self
   }
 
   # Pipes STDERR to a buffer.
-  def pipe_stderr -> Self {
+  move def pipe_stderr -> Self {
     @stderr = STREAM_PIPED
     self
   }
@@ -353,10 +353,10 @@ class Command {
   #     let child = try! Command.new('ls').spawn
   #
   #     try! child.wait
-  def spawn !! Error -> ChildProcess {
+  move def spawn !! Error -> ChildProcess {
     let vars = Array.new
 
-    @variables.each do (key, value) {
+    for (key, value) in @variables {
       vars.push(key)
       vars.push(value)
     }
@@ -369,7 +369,7 @@ class Command {
         @stdin,
         @stdout,
         @stderr,
-        @directory.get_or('')
+        try @directory.get else ''
       )
     } else (code) {
       throw Error.new(code)
@@ -380,9 +380,9 @@ class Command {
 # The status of a process after it terminated.
 class ExitStatus {
   # The raw exit code.
-  @code: Integer
+  @code: Int
 
-  static def new(code: Integer) -> Self {
+  static def new(code: Int) -> Self {
     Self { @code = code }
   }
 
@@ -393,8 +393,8 @@ class ExitStatus {
   #     import std::os::ExitStatus
   #
   #     ExitStatus.new(4).code # => 4
-  def code -> Integer {
-    @code
+  def code -> Int {
+    @code.clone
   }
 
   # Returns `True` if the status signals success.
@@ -413,27 +413,31 @@ class ExitStatus {
 # The standard input stream.
 class Stdin {
   # The child process the stream is connected to.
-  @process: ChildProcess
+  @process: ref ChildProcess
 
-  static def new(process: ChildProcess) -> Self {
+  static def new(process: ref ChildProcess) -> Self {
     Self { @process = process }
   }
 }
 
 impl Write for Stdin {
-  def write_bytes(bytes: ByteArray) !! Error -> Integer {
-    try {
-      child_process_stdin_write_bytes(@process, bytes)
-    } else (code) {
-      throw Error.new(code)
+  def write_bytes(bytes: ref ByteArray) !! Error -> Int {
+    try blocking {
+      try {
+        child_process_stdin_write_bytes(@process, bytes)
+      } else (code) {
+        throw Error.new(code)
+      }
     }
   }
 
-  def write_string(string: ToString) !! Error -> Integer {
-    try {
-      child_process_stdin_write_string(@process, string.to_string)
-    } else (code) {
-      throw Error.new(code)
+  def write_string(string: ref ToString) !! Error -> Int {
+    try blocking {
+      try {
+        child_process_stdin_write_string(@process, string.to_string)
+      } else (code) {
+        throw Error.new(code)
+      }
     }
   }
 
@@ -443,7 +447,7 @@ impl Write for Stdin {
 }
 
 impl Close for Stdin {
-  def close {
+  move def close {
     child_process_stdin_close(@process)
   }
 }
@@ -451,18 +455,18 @@ impl Close for Stdin {
 # The standard output stream.
 class Stdout {
   # The child process the stream is connected to.
-  @process: ChildProcess
+  @process: ref ChildProcess
 
-  static def new(process: ChildProcess) -> Self {
+  static def new(process: ref ChildProcess) -> Self {
     Self { @process = process }
   }
 }
 
 impl Read for Stdout {
-  def read_bytes(bytes: ByteArray, size = 0) !! Error -> Integer {
-    blocking {
+  def read(into: ref ByteArray, size: Int) !! Error -> Int {
+    try blocking {
       try {
-        child_process_stdout_read(@process, bytes, size)
+        child_process_stdout_read(@process, into, size)
       } else (code) {
         throw Error.new(code)
       }
@@ -471,7 +475,7 @@ impl Read for Stdout {
 }
 
 impl Close for Stdout {
-  def close {
+  move def close {
     child_process_stdout_close(@process)
   }
 }
@@ -479,18 +483,18 @@ impl Close for Stdout {
 # The standard error output stream.
 class Stderr {
   # The child process the stream is connected to.
-  @process: ChildProcess
+  @process: ref ChildProcess
 
-  static def new(process: ChildProcess) -> Self {
+  static def new(process: ref ChildProcess) -> Self {
     Self { @process = process }
   }
 }
 
 impl Read for Stderr {
-  def read_bytes(bytes: ByteArray, size = 0) !! Error -> Integer {
-    blocking {
+  def read(into: ref ByteArray, size: Int) !! Error -> Int {
+    try blocking {
       try {
-        child_process_stderr_read(@process, bytes, size)
+        child_process_stderr_read(@process, into, size)
       } else (code) {
         throw Error.new(code)
       }
@@ -499,7 +503,7 @@ impl Read for Stderr {
 }
 
 impl Close for Stderr {
-  def close {
+  move def close {
     child_process_stderr_close(@process)
   }
 }
@@ -524,7 +528,7 @@ impl ChildProcess {
   #
   # The STDIN stream is closed before waiting.
   def wait !! Error -> ExitStatus {
-    let id = blocking {
+    let id = try blocking {
       try child_process_wait(self) else (code) throw Error.new(code)
     }
 
@@ -539,7 +543,6 @@ impl ChildProcess {
   def try_wait !! Error -> ?ExitStatus {
     let id = try child_process_try_wait(self) else (code) throw Error.new(code)
 
-    (id == -1)
-      .if(true: { Option.none }, false: { Option.some(ExitStatus.new(id)) })
+    if id == -1 { Option.none } else { Option.some(ExitStatus.new(id)) }
   }
 }

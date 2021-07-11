@@ -33,32 +33,32 @@ let CYAN = '36'
 # The code for the color yellow.
 let YELLOW = '33'
 
-# Wraps a `ToString` in an ANSI escape sequence.
-def wrap(string: ToString, code: String) -> String {
+# Wraps a `String` in an ANSI escape sequence.
+def wrap(string: ref ToString, code: String) -> String {
   `{START}{code}m{string}{RESET}`
 }
 
-# Makes the `ToString` bold.
-def bold(string: ToString) -> String {
+# Makes the `String` bold.
+def bold(string: ref ToString) -> String {
   wrap(string: string, code: BOLD)
 }
 
-# Applies the color red to the given `ToString`.
-def red(string: ToString) -> String {
+# Applies the color red to the given `String`.
+def red(string: ref ToString) -> String {
   wrap(string: string, code: RED)
 }
 
-# Applies the color green to the given `ToString`.
-def green(string: ToString) -> String {
+# Applies the color green to the given `String`.
+def green(string: ref ToString) -> String {
   wrap(string: string, code: GREEN)
 }
 
-# Applies the color cyan to the given `ToString`.
-def cyan(string: ToString) -> String {
+# Applies the color cyan to the given `String`.
+def cyan(string: ref ToString) -> String {
   wrap(string: string, code: CYAN)
 }
 
-# Applies the color yellow to the given `ToString`.
-def yellow(string: ToString) -> String {
+# Applies the color yellow to the given `String`.
+def yellow(string: ref ToString) -> String {
   wrap(string: string, code: YELLOW)
 }

@@ -1,6 +1,6 @@
 import std::test::*
 
-def tests(t: Tests) {
+def tests(t: ref Tests) {
   t.group('std::byte_array::ByteArray.new') do (g) {
     g.test('Creating a new ByteArray') {
       let bytes = ByteArray.new(10)
@@ -77,35 +77,6 @@ def tests(t: Tests) {
 
       try assert_equal(bytes.remove_at(-2), 10)
       try assert_equal(bytes, ByteArray.new(20))
-    }
-  }
-
-  t.group('std::byte_array::ByteArray.each') do (g) {
-    g.test('Iterating over the values in a ByteArray') {
-      let input = ByteArray.new(10, 20, 30)
-      let output = Array.new
-
-      input.each do (byte) {
-        output.push(byte)
-      }
-
-      try assert_equal(output, Array.new(10, 20, 30))
-    }
-  }
-
-  t.group('std::byte_array::ByteArray.each_with_index') do (g) {
-    g.test('Iterating over the values and indexes in a ByteArray') {
-      let input = ByteArray.new(10, 20, 30)
-      let values = Array.new
-      let indexes = Array.new
-
-      input.each_with_index do (byte, index) {
-        values.push(byte)
-        indexes.push(index)
-      }
-
-      try assert_equal(values, Array.new(10, 20, 30))
-      try assert_equal(indexes, Array.new(0, 1, 2))
     }
   }
 

@@ -1,13 +1,13 @@
 import std::compiler::module_name::ModuleName
 import std::fs::dir
 import std::fs::file::WriteOnlyFile
-import std::hash::DefaultHasher
+import std::hash::Hasher
 import std::os
 import std::process
 import std::test::*
 import test::fixtures
 
-def tests(t: Tests) {
+def tests(t: ref Tests) {
   t.group('std::compiler::module_name::ModuleName.components') do (g) {
     g.test('Obtaining the components of a module name') {
       let name = ModuleName.new(Array.new('std', 'foo'))
@@ -19,10 +19,8 @@ def tests(t: Tests) {
   t.group('std::compiler::module_name::ModuleName.relative_source_path') do (g) {
     g.test('Obtaining the source path of a module') {
       let name = ModuleName.new(Array.new('std', 'foo'))
-      let expected = os
-        .windows?
-        .if(true: { 'std\\foo.inko' }, false: { 'std/foo.inko' })
-        .to_path
+      let expected =
+        if os.windows? { 'std\\foo.inko' } else { 'std/foo.inko' }.into_path
 
       try assert_equal(name.relative_source_path, expected)
     }
@@ -40,7 +38,7 @@ def tests(t: Tests) {
 
       try! dir.create(path: directory)
 
-      let handle = try! WriteOnlyFile.new(source_path)
+      let handle = try! WriteOnlyFile.new(source_path.clone)
 
       process.defer {
         handle.close
@@ -79,22 +77,23 @@ def tests(t: Tests) {
   t.group('std::compiler::module_name::ModuleName.hash') do (g) {
     g.test('Hashing a ModuleName') {
       let name = ModuleName.new(Array.new('std', 'foo'))
-      let hasher1 = DefaultHasher.new(1, 2)
-      let hasher2 = DefaultHasher.new(1, 2)
+      let hasher1 = Hasher.new(1, 2)
+      let hasher2 = Hasher.new(1, 2)
 
-      name.hash(hasher1)
-      name.hash(hasher2)
+      name.hash(ref hasher1)
+      name.hash(ref hasher2)
 
       try assert_equal(hasher1.to_hash, hasher2.to_hash)
     }
 
     g.test('Looking up a HashMap value using a ModuleName as the key') {
       let map = Map.new
-      let name = ModuleName.new(Array.new('std', 'foo'))
+      let name1 = ModuleName.new(Array.new('std', 'foo'))
+      let name2 = ModuleName.new(Array.new('std', 'foo'))
 
-      map[name] = 10
+      map[name1] = 10
 
-      try assert_equal(map[name], 10)
+      try assert_equal(map[name2], 10)
     }
   }
 

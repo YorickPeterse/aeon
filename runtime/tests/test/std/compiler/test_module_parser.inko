@@ -9,9 +9,10 @@ import std::fs::file::(self, WriteOnlyFile)
 import std::process
 import std::test::*
 import test::fixtures::(self, RUNTIME_DIRECTORY, VALID_FILE)
+import std::stdio::stdout
 
 def parse(input: String) -> Body {
-  try! Parser.new(input: input, file: 'test.inko').parse
+  try! Parser.new(input: input, file: 'test.inko', parse_comments: False).parse
 }
 
 def config -> Config {
@@ -61,10 +62,10 @@ def tests(t: Tests) {
 
       let pair = process.receive as Pair!(ParsedModule, Diagnostics)
 
-      try assert_equal(pair.first.name.to_string, 'foo')
-      try assert_equal(pair.first.location.file.to_string, 'test.inko')
-      try assert_true(pair.first.ast.children.length > 1)
-      try assert_false(pair.second.errors?)
+      try assert_equal(pair.0.name.to_string, 'foo')
+      try assert_equal(pair.0.location.file.to_string, 'test.inko')
+      try assert_true(pair.0.ast.children.length > 1)
+      try assert_false(pair.1.errors?)
     }
 
     g.test('Parsing an invalid source snippet') {
@@ -74,10 +75,10 @@ def tests(t: Tests) {
 
       let pair = process.receive as Pair!(ParsedModule, Diagnostics)
 
-      try assert_equal(pair.first.name.to_string, 'foo')
-      try assert_equal(pair.first.location.file.to_string, 'test.inko')
-      try assert_true(pair.first.ast.children.empty?)
-      try assert_true(pair.second.errors?)
+      try assert_equal(pair.0.name.to_string, 'foo')
+      try assert_equal(pair.0.location.file.to_string, 'test.inko')
+      try assert_true(pair.0.ast.children.empty?)
+      try assert_true(pair.1.errors?)
     }
   }
 
@@ -128,10 +129,10 @@ def tests(t: Tests) {
 
       let pair = process.receive as Pair!(ParsedModule, Diagnostics)
 
-      try assert_equal(pair.first.name.to_string, 'foo')
-      try assert_equal(pair.first.location.file, VALID_FILE)
-      try assert_true(pair.first.ast.children.length > 1)
-      try assert_false(pair.second.errors?)
+      try assert_equal(pair.0.name.to_string, 'foo')
+      try assert_equal(pair.0.location.file, VALID_FILE)
+      try assert_true(pair.0.ast.children.length > 1)
+      try assert_false(pair.1.errors?)
     }
 
     g.test('Parsing an invalid file') {
@@ -141,10 +142,10 @@ def tests(t: Tests) {
 
       let pair = process.receive as Pair!(ParsedModule, Diagnostics)
 
-      try assert_equal(pair.first.name.to_string, 'foo')
-      try assert_equal(pair.first.location.file.to_string, 'kittens.inko')
-      try assert_true(pair.first.ast.children.empty?)
-      try assert_true(pair.second.errors?)
+      try assert_equal(pair.0.name.to_string, 'foo')
+      try assert_equal(pair.0.location.file.to_string, 'kittens.inko')
+      try assert_true(pair.0.ast.children.empty?)
+      try assert_true(pair.1.errors?)
     }
   }
 
@@ -206,8 +207,8 @@ def tests(t: Tests) {
       let modules =
         parser.parse_source(name: name, source: '10', path: 'test.inko')
 
-      try assert_true(modules.second.length > 1)
-      try assert_equal(modules.first.name, name)
+      try assert_true(modules.1.length > 1)
+      try assert_equal(modules.0.name, name)
       try assert_false(diagnostics.errors?)
     }
 
@@ -219,7 +220,7 @@ def tests(t: Tests) {
       let modules =
         parser.parse_source(name: name, source: 'import 10', path: 'test.inko')
 
-      try assert_true(modules.second.empty?)
+      try assert_true(modules.1.empty?)
       try assert_true(diagnostics.errors?)
     }
   }
@@ -240,8 +241,8 @@ def tests(t: Tests) {
       let name = ModuleName.new(Array.new('foo'))
       let modules = parser.parse_file(name: name, path: file_path)
 
-      try assert_true(modules.second.length > 1)
-      try assert_equal(modules.first.name, name)
+      try assert_true(modules.1.length > 1)
+      try assert_equal(modules.0.name, name)
       try assert_false(diagnostics.errors?)
     }
 
@@ -260,7 +261,7 @@ def tests(t: Tests) {
       let name = ModuleName.new(Array.new('foo'))
       let modules = parser.parse_file(name: name, path: file_path)
 
-      try assert_true(modules.second.empty?)
+      try assert_true(modules.1.empty?)
       try assert_true(diagnostics.errors?)
     }
   }

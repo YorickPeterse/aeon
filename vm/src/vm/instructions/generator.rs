@@ -1,70 +1,68 @@
 use crate::execution_context::ExecutionContext;
-use crate::generator::Generator;
-use crate::object_pointer::ObjectPointer;
-use crate::object_value;
-use crate::process::RcProcess;
+use crate::indexes::MethodIndex;
+use crate::mem::allocator::Pointer;
+use crate::mem::generator::{Generator, GeneratorPointer};
+use crate::mem::objects::Class;
+use crate::mem::process::ServerPointer;
 use crate::runtime_error::RuntimeError;
-use crate::vm::state::RcState;
+use crate::scheduler::process_worker::ProcessWorker;
+use crate::vm::state::State;
 
 #[inline(always)]
 pub fn allocate(
-    state: &RcState,
-    process: &RcProcess,
-    context: &ExecutionContext,
-    block_ptr: ObjectPointer,
-    receiver_ptr: ObjectPointer,
+    state: &State,
+    worker: &mut ProcessWorker,
+    generator: GeneratorPointer,
+    receiver_ptr: Pointer,
+    method_idx: u16,
     start_reg: u16,
     amount: u16,
-) -> Result<ObjectPointer, String> {
-    let block = block_ptr.block_value()?;
-    let mut new_context =
-        ExecutionContext::from_block_with_receiver(&block, receiver_ptr);
+) -> Pointer {
+    let method = Class::of(&state.permanent_space, receiver_ptr)
+        .get_method(unsafe { MethodIndex::new(method_idx) });
 
-    prepare_block_arguments!(context, new_context, start_reg, amount);
+    let mut new_context = ExecutionContext::for_method(method);
 
-    let gen = Generator::created(Box::new(new_context));
-    let ptr = process
-        .allocate(object_value::generator(gen), state.generator_prototype);
+    new_context
+        .set_registers(generator.context.get_registers(start_reg, amount));
 
-    Ok(ptr)
+    Generator::alloc(
+        worker.allocator(),
+        state.permanent_space.generator_class(),
+        new_context,
+    )
+    .as_pointer()
 }
 
 #[inline(always)]
 pub fn resume(
-    process: &RcProcess,
-    gen_ptr: ObjectPointer,
+    mut process: ServerPointer,
+    gen_ptr: Pointer,
 ) -> Result<(), String> {
-    let gen = gen_ptr.generator_value()?;
+    let mut gen = unsafe { GeneratorPointer::new(gen_ptr) };
 
-    if gen.resume() {
-        gen.set_running();
-        process.resume_generator(gen.clone());
-        Ok(())
-    } else {
-        Err("Finished generators can't be resumed".to_string())
+    if !gen.resume() {
+        return Err("Finished generators can't be resumed".to_string());
     }
+
+    process.resume_generator(gen);
+    Ok(())
 }
 
 #[inline(always)]
-pub fn value(
-    state: &RcState,
-    gen_ptr: ObjectPointer,
-) -> Result<ObjectPointer, RuntimeError> {
-    let gen = gen_ptr.generator_value()?;
+pub fn value(state: &State, gen_ptr: Pointer) -> Result<Pointer, RuntimeError> {
+    let gen = unsafe { GeneratorPointer::new(gen_ptr) };
+    let val = gen.result().ok_or_else(|| {
+        RuntimeError::ErrorMessage(
+            "The generator's result has already been consumed".to_string(),
+        )
+    })?;
 
-    // If the generator finished or returned early, the process result is
-    // written to by the return instruction, but we are only interested in
-    // values explicitly yielded.
     if gen.yielded() {
-        gen.result().ok_or_else(|| {
-            RuntimeError::ErrorMessage(
-                "The generator result has already been consumed".to_string(),
-            )
-        })
+        Ok(val)
+    } else if gen.thrown() {
+        Err(RuntimeError::Error(val))
     } else {
-        // This case is quite common, and we only throw so the standard library
-        // can more easily decide what alternative value to produce. As such, we
-        // just throw Nil, because we don't use it.
-        Err(RuntimeError::Error(state.nil_object))
+        Ok(state.permanent_space.undefined_singleton)
     }
 }

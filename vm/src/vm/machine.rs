@@ -1,108 +1,63 @@
-//! Virtual Machine for running instructions
-use crate::gc::collection::collect as collect_garbage;
-use crate::integer_operations;
+//!  Inko bytecode interpreter.
+use crate::image::Image;
+use crate::mem::generator::GeneratorPointer;
+use crate::mem::objects::{Method, String as InkoString};
+use crate::mem::process::ServerPointer;
 use crate::network_poller::Worker as NetworkPollerWorker;
-use crate::numeric::division::{FlooredDiv, OverflowingFlooredDiv};
-use crate::numeric::modulo::{Modulo, OverflowingModulo};
-use crate::object_pointer::ObjectPointer;
-use crate::object_value;
-use crate::process::RcProcess;
 use crate::runtime_error::RuntimeError;
-use crate::scheduler::join_list::JoinList;
 use crate::scheduler::process_worker::ProcessWorker;
+use crate::vm::instruction::Instruction;
 use crate::vm::instruction::Opcode;
 use crate::vm::instructions::array;
-use crate::vm::instructions::block;
 use crate::vm::instructions::byte_array;
 use crate::vm::instructions::external_functions;
 use crate::vm::instructions::float;
+use crate::vm::instructions::future;
 use crate::vm::instructions::general;
 use crate::vm::instructions::generator;
+use crate::vm::instructions::integer;
 use crate::vm::instructions::module;
 use crate::vm::instructions::object;
 use crate::vm::instructions::process;
 use crate::vm::instructions::string;
-use crate::vm::state::RcState;
-use num_bigint::BigInt;
-use std::i32;
-use std::ops::{Add, Mul, Sub};
+use crate::vm::state::{RcState, State};
 use std::thread;
 
 /// The number of reductions to apply for a method call.
 const METHOD_REDUCTION_COST: usize = 1;
 
-/// The base number of reductions to apply for a garbage collection cycle.
-///
-/// This value is chosen because GC cycles are more expensive than method calls.
-/// Other than that, it's entirely arbitrary.
-const GC_REDUCTION_COST: usize = 100;
-
-macro_rules! reset_context {
-    ($process:expr, $context:ident, $index:ident) => {{
-        $context = $process.context_mut();
-        $index = $context.instruction_index;
-    }};
-}
-
-macro_rules! remember_and_reset {
-    ($process: expr, $context: ident, $index: ident) => {
-        $context.instruction_index = $index - 1;
-
-        reset_context!($process, $context, $index);
-        continue;
-    };
-}
-
 macro_rules! throw_value {
-    (
-        $machine:expr,
-        $process:expr,
-        $value:expr,
-        $context:ident,
-        $index:ident
-    ) => {{
-        $context.instruction_index = $index;
+    ($machine: expr, $generator: expr, $value: expr) => {{
+        $generator.set_throw_value($value);
 
-        $machine.throw($process, $value)?;
+        if $generator.pop_context() {
+            return Err("Can't throw from the root generator".to_string());
+        }
 
-        reset_context!($process, $context, $index);
         continue;
     }};
 }
 
 macro_rules! throw_error_message {
-    (
-        $machine:expr,
-        $process:expr,
-        $message:expr,
-        $context:ident,
-        $index:ident
-    ) => {{
-        let value = $process.allocate(
-            object_value::string($message),
-            $machine.state.string_prototype,
+    ($machine: expr, $worker: expr, $generator: expr, $message: expr) => {{
+        let value = InkoString::alloc(
+            $worker.allocator(),
+            $machine.state.permanent_space.string_class(),
+            $message,
         );
 
-        throw_value!($machine, $process, value, $context, $index);
+        throw_value!($machine, $generator, value);
     }};
 }
 
-macro_rules! enter_context {
-    ($process:expr, $context:ident, $index:ident) => {{
-        $context.instruction_index = $index;
-
-        reset_context!($process, $context, $index);
-    }};
-}
-
-macro_rules! safepoint_and_reduce {
-    ($vm:expr, $worker:expr, $process:expr, $reductions:expr) => {{
-        let reduce_by = $vm.gc_safepoint(&$process, $worker);
+macro_rules! reduce {
+    ($vm:expr, $process:expr, $reductions:expr) => {{
+        let reduce_by = METHOD_REDUCTION_COST;
 
         if $reductions >= reduce_by {
             $reductions -= reduce_by;
         } else {
-            $vm.state.scheduler.schedule($process.clone());
+            $vm.state.scheduler.schedule($process);
             return Ok(());
         }
     }};
@@ -110,7 +65,7 @@ macro_rules! safepoint_and_reduce {
 
 /// Handles an operation that may produce IO errors.
 macro_rules! try_io_error {
-    ($expr:expr, $vm:expr, $proc:expr, $context:ident, $index:ident) => {{
+    ($expr:expr, $vm:expr, $worker:expr, $gen:expr) => {{
         // When an operation would block, the socket is already registered, and
         // the process may already be running again in another thread. This
         // means that when a WouldBlock is produced it is not safe to access any
@@ -118,25 +73,25 @@ macro_rules! try_io_error {
         //
         // To ensure blocking operations are retried properly, we _first_ set
         // the instruction index, then advance it again if it is safe to do so.
-        $context.instruction_index = $index - 1;
+        $gen.context.index -= 1;
 
         match $expr {
             Ok(thing) => {
-                $context.instruction_index = $index;
+                $gen.context.index += 1;
 
                 thing
             }
             Err(RuntimeError::Panic(msg)) => {
-                vm_panic!(msg, $context, $index);
+                vm_panic!(msg, $gen);
             }
             Err(RuntimeError::ErrorMessage(msg)) => {
-                throw_error_message!($vm, $proc, msg, $context, $index);
+                throw_error_message!($vm, $worker, $gen, msg);
             }
             Err(RuntimeError::Error(err)) => {
-                throw_value!($vm, $proc, err, $context, $index);
+                throw_value!($vm, $gen, err);
             }
             Err(RuntimeError::WouldBlock) => {
-                // *DO NOT* use "$context" at this point, as it may have been
+                // *DO NOT* use "$gen" at this point, as it may have been
                 // invalidated if the process is already running again in
                 // another thread.
                 return Ok(());
@@ -147,17 +102,17 @@ macro_rules! try_io_error {
 
 /// Handles a regular runtime error.
 macro_rules! try_error {
-    ($expr:expr, $vm:expr, $proc:expr, $context:ident, $index:ident) => {{
+    ($expr: expr, $vm: expr, $worker: expr, $gen: expr) => {{
         match $expr {
             Ok(thing) => thing,
             Err(RuntimeError::Panic(msg)) => {
-                vm_panic!(msg, $context, $index);
+                vm_panic!(msg, $gen);
             }
             Err(RuntimeError::ErrorMessage(msg)) => {
-                throw_error_message!($vm, $proc, msg, $context, $index);
+                throw_error_message!($vm, $worker, $gen, msg);
             }
             Err(RuntimeError::Error(err)) => {
-                throw_value!($vm, $proc, err, $context, $index);
+                throw_value!($vm, $gen, err);
             }
             _ => unreachable!(),
         }
@@ -165,46 +120,76 @@ macro_rules! try_error {
 }
 
 macro_rules! vm_panic {
-    ($message:expr, $context:expr, $index:expr) => {{
+    ($message: expr, $gen: expr) => {{
         // We subtract one so the instruction pointer points to the current
         // instruction (= the panic), not the one we'd run after that.
-        $context.instruction_index = $index - 1;
+        $gen.context.index -= 1;
 
         return Err($message);
     }};
 }
 
-#[derive(Clone)]
-pub struct Machine {
+pub struct Machine<'a> {
     /// The shared virtual machine state, such as the process pools and built-in
     /// types.
-    pub state: RcState,
+    pub state: &'a State,
 }
 
-impl Machine {
-    pub fn new(state: RcState) -> Self {
+impl<'a> Machine<'a> {
+    pub fn new(state: &'a State) -> Self {
         Machine { state }
     }
 
-    /// Starts the VM
+    /// Boots up the VM and all its thread pools.
     ///
-    /// This method will block the calling thread until the program finishes.
-    pub fn start(&self, path: &str) {
-        self.parse_image(path);
-        self.schedule_main_process();
+    /// This method blocks the calling thread until the Inko program terminates.
+    pub fn boot(image: Image, arguments: &[String]) -> Result<RcState, String> {
+        let state = State::new(image.config, image.permanent_space, arguments);
+        let entry_module =
+            state.permanent_space.get_module(&image.entry_module)?;
 
-        let secondary_guard = self.start_blocking_threads();
-        let timeout_guard = self.start_timeout_worker_thread();
+        let entry_method = Method::lookup(
+            &state.permanent_space,
+            entry_module.as_pointer(),
+            image.entry_method,
+        );
 
-        // The network poller doesn't produce a guard, because there's no
-        // cross-platform way of waking up the system poller, so we just don't
-        // wait for it to finish when terminating.
-        let poller_guard = self.start_network_poller_thread();
+        let secondary_guard =
+            state.scheduler.blocking_pool.start(state.clone());
+
+        let timeout_guard = {
+            let thread_state = state.clone();
+
+            thread::Builder::new()
+                .name("timeout worker".to_string())
+                .spawn(move || {
+                    thread_state.timeout_worker.run(&thread_state.scheduler);
+                })
+                .unwrap()
+        };
+
+        let poller_guard = {
+            let thread_state = state.clone();
+
+            thread::Builder::new()
+                .name("network poller".to_string())
+                .spawn(move || {
+                    NetworkPollerWorker::new(thread_state).run();
+                })
+                .unwrap()
+        };
 
         // Starting the primary threads will block this thread, as the main
         // worker will run directly onto the current thread. As such, we must
         // start these threads last.
-        let primary_guard = self.start_primary_threads();
+        let primary_guard = {
+            let thread_state = state.clone();
+
+            state
+                .scheduler
+                .primary_pool
+                .start_main(thread_state, entry_method)
+        };
 
         // Joining the pools only fails in case of a panic. In this case we
         // don't want to re-panic as this clutters the error output.
@@ -213,747 +198,753 @@ impl Machine {
             || timeout_guard.join().is_err()
             || poller_guard.join().is_err()
         {
-            self.state.set_exit_status(1);
+            state.set_exit_status(1);
+        }
+
+        Ok(state)
+    }
+
+    pub fn run(&self, worker: &mut ProcessWorker, mut process: ServerPointer) {
+        let gen = process.generator_to_run(
+            worker.allocator(),
+            self.state.permanent_space.generator_class(),
+        );
+
+        // When there's no generator to run, clients will try to reschedule the
+        // process after sending it a message. This means we (here) don't need
+        // to do anything extra.
+        if let Some(gen) = gen {
+            if let Err(message) = self.run_generator(worker, process, gen) {
+                self.panic(process, gen, &message);
+            }
+        } else {
+            process::finish_generator(&self.state, worker, process);
         }
     }
 
-    fn start_primary_threads(&self) -> JoinList<()> {
-        self.state.scheduler.primary_pool.start_main(self.clone())
-    }
-
-    fn start_blocking_threads(&self) -> JoinList<()> {
-        self.state.scheduler.blocking_pool.start(self.clone())
-    }
-
-    fn start_timeout_worker_thread(&self) -> thread::JoinHandle<()> {
-        let state = self.state.clone();
-
-        thread::Builder::new()
-            .name("timeout worker".to_string())
-            .spawn(move || {
-                state.timeout_worker.run(&state.scheduler);
-            })
-            .unwrap()
-    }
-
-    fn start_network_poller_thread(&self) -> thread::JoinHandle<()> {
-        let state = self.state.clone();
-
-        thread::Builder::new()
-            .name("network poller".to_string())
-            .spawn(move || {
-                NetworkPollerWorker::new(state).run();
-            })
-            .unwrap()
-    }
-
-    fn parse_image(&self, path: &str) {
-        self.state.parse_image(path).unwrap();
-    }
-
-    fn schedule_main_process(&self) {
-        let entry = self
-            .state
-            .modules
-            .lock()
-            .entry_point()
-            .expect("The module entry point is undefined")
-            .clone();
-
-        let process = {
-            let (_, block, _) =
-                module::module_load_string(&self.state, &entry).unwrap();
-
-            process::process_allocate(&self.state, &block)
-        };
-
-        process.set_main();
-        self.state.scheduler.schedule_on_main_thread(process);
-    }
-
-    pub fn run(&mut self, worker: &mut ProcessWorker, process: &RcProcess) {
-        if let Err(message) = self.run_loop(worker, process) {
-            self.panic(process, &message);
-        }
-    }
-
-    #[cfg_attr(
-        feature = "cargo-clippy",
-        allow(cyclomatic_complexity, cognitive_complexity)
-    )]
-    fn run_loop(
-        &mut self,
+    fn run_generator(
+        &self,
         worker: &mut ProcessWorker,
-        process: &RcProcess,
+        mut process: ServerPointer,
+        mut generator: GeneratorPointer,
     ) -> Result<(), String> {
         let mut reductions = self.state.config.reductions;
-        let mut context;
-        let mut index;
-        let mut instruction;
-
-        reset_context!(process, context, index);
 
         'exec_loop: loop {
-            instruction = unsafe { context.code.instruction(index) };
-            index += 1;
+            let instruction = unsafe {
+                let idx = generator.context.index;
+
+                // We need a reference to the instruction, but we also need to
+                // borrow the generator in various places. This is fine because
+                // instructions are stored external to a generator and its
+                // context, but Rust doesn't know this.
+                //
+                // To work around this, we get a reference to the instruction,
+                // turn it into a pointer, then turn it back into a reference.
+                // This way Rust's borrow checker loses track of it, and we can
+                // do whatever we want (with all the risks of doing so of
+                // course).
+                //
+                // Perhaps one day there is a better way of doing this.
+                &*(generator.context.method.instruction(idx)
+                    as *const Instruction)
+            };
+
+            generator.context.index += 1;
 
             match instruction.opcode {
-                Opcode::SetLiteral => {
+                Opcode::GetLiteral => {
                     let reg = instruction.arg(0);
                     let idx = instruction.arg(1);
-                    let res = general::set_literal(context, idx);
+                    let res = general::get_literal(generator, idx);
 
-                    context.set_register(reg, res);
+                    generator.context.set_register(reg, res);
                 }
-                Opcode::SetLiteralWide => {
+                Opcode::GetLiteralWide => {
                     let reg = instruction.arg(0);
                     let arg1 = instruction.arg(1);
                     let arg2 = instruction.arg(2);
-                    let res = general::set_literal_wide(context, arg1, arg2);
+                    let res = general::get_literal_wide(generator, arg1, arg2);
 
-                    context.set_register(reg, res);
+                    generator.context.set_register(reg, res);
                 }
                 Opcode::Allocate => {
                     let reg = instruction.arg(0);
-                    let proto = context.get_register(instruction.arg(1));
-                    let res = object::allocate(process, proto);
+                    let class =
+                        generator.context.get_register(instruction.arg(1));
+                    let res = object::allocate(worker, class);
 
-                    context.set_register(reg, res);
-                }
-                Opcode::AllocatePermanent => {
-                    let reg = instruction.arg(0);
-                    let proto = context.get_register(instruction.arg(1));
-                    let res = try_error!(
-                        object::allocate_permanent(&self.state, proto),
-                        self,
-                        process,
-                        context,
-                        index
-                    );
-
-                    context.set_register(reg, res);
+                    generator.context.set_register(reg, res);
                 }
                 Opcode::ArrayAllocate => {
                     let reg = instruction.arg(0);
                     let start = instruction.arg(1);
                     let len = instruction.arg(2);
-                    let res = array::array_allocate(
+                    let res = array::allocate(
                         &self.state,
-                        process,
-                        context,
+                        worker,
+                        generator,
                         start,
                         len,
                     );
 
-                    context.set_register(reg, res);
-                }
-                Opcode::GetBuiltinPrototype => {
-                    let reg = instruction.arg(0);
-                    let id = context.get_register(instruction.arg(1));
-                    let proto = object::get_builtin_prototype(&self.state, id)?;
-
-                    context.set_register(reg, proto);
+                    generator.context.set_register(reg, res);
                 }
                 Opcode::GetTrue => {
-                    let res = self.state.true_object;
+                    let res = self.state.permanent_space.true_singleton;
 
-                    context.set_register(instruction.arg(0), res);
+                    generator.context.set_register(instruction.arg(0), res);
                 }
                 Opcode::GetFalse => {
-                    let res = self.state.false_object;
+                    let res = self.state.permanent_space.false_singleton;
 
-                    context.set_register(instruction.arg(0), res);
+                    generator.context.set_register(instruction.arg(0), res);
                 }
                 Opcode::SetLocal => {
                     let idx = instruction.arg(0);
-                    let val = context.get_register(instruction.arg(1));
+                    let val =
+                        generator.context.get_register(instruction.arg(1));
 
-                    general::set_local(context, idx, val);
+                    general::set_local(generator, idx, val);
                 }
                 Opcode::GetLocal => {
                     let reg = instruction.arg(0);
                     let idx = instruction.arg(1);
-                    let res = general::get_local(context, idx);
+                    let res = general::get_local(generator, idx);
 
-                    context.set_register(reg, res);
-                }
-                Opcode::SetBlock => {
-                    let reg = instruction.arg(0);
-                    let idx = instruction.arg(1);
-                    let rec = context.get_register(instruction.arg(2));
-                    let res = block::set_block(
-                        &self.state,
-                        process,
-                        context,
-                        idx,
-                        rec,
-                    );
-
-                    context.set_register(reg, res);
+                    generator.context.set_register(reg, res);
                 }
                 Opcode::Return => {
-                    // If there are any pending deferred blocks, execute these
-                    // first, then retry this instruction.
-                    if context.schedule_deferred_blocks(process)? {
-                        remember_and_reset!(process, context, index);
-                    }
+                    let res =
+                        generator.context.get_register(instruction.arg(0));
 
-                    let method_return = instruction.arg(0) == 1;
-                    let res = context.get_register(instruction.arg(1));
-
-                    process.set_result(res);
-
-                    if method_return {
-                        process::process_unwind_until_defining_scope(process);
-                    }
+                    generator.set_result(res);
 
                     // Once we're at the top-level _and_ we have no more
-                    // instructions to process we'll bail out of the main
-                    // execution loop.
-                    if process.pop_context() {
+                    // instructions to process, we'll write the result to a
+                    // future and bail out the execution loop.
+                    if generator.pop_context() {
+                        generator.finish();
+
                         break 'exec_loop;
                     }
 
-                    reset_context!(process, context, index);
-                    safepoint_and_reduce!(self, worker, process, reductions);
+                    reduce!(self, process, reductions);
                 }
                 Opcode::GotoIfFalse => {
-                    let val = context.get_register(instruction.arg(1));
+                    let val =
+                        generator.context.get_register(instruction.arg(1));
 
-                    if is_false!(self.state, val) {
-                        index = instruction.arg(0) as usize;
+                    if val == self.state.permanent_space.false_singleton {
+                        generator.context.index = instruction.arg(0) as usize;
                     }
                 }
                 Opcode::GotoIfTrue => {
-                    let val = context.get_register(instruction.arg(1));
+                    let val =
+                        generator.context.get_register(instruction.arg(1));
 
-                    if !is_false!(self.state, val) {
-                        index = instruction.arg(0) as usize;
+                    if val == self.state.permanent_space.true_singleton {
+                        generator.context.index = instruction.arg(0) as usize;
                     }
                 }
                 Opcode::Goto => {
-                    index = instruction.arg(0) as usize;
+                    generator.context.index = instruction.arg(0) as usize;
                 }
-                Opcode::IntegerAdd => {
-                    integer_overflow_op!(
-                        process,
-                        context,
-                        self.state.integer_prototype,
-                        instruction,
-                        add,
-                        overflowing_add
-                    );
-                }
-                Opcode::IntegerDiv => {
-                    if context
-                        .get_register(instruction.arg(2))
-                        .is_zero_integer()
-                    {
-                        vm_panic!(
-                            "Can not divide an Integer by 0".to_string(),
-                            context,
-                            index
-                        );
+                Opcode::GotoIfThrown => {
+                    if generator.thrown() {
+                        generator.context.index = instruction.arg(0) as usize;
                     }
+                }
+                Opcode::IntAdd => {
+                    let reg = instruction.arg(0);
+                    let a = generator.context.get_register(instruction.arg(1));
+                    let b = generator.context.get_register(instruction.arg(2));
+                    let res = integer::int_add(&self.state, worker, a, b);
 
-                    integer_overflow_op!(
-                        process,
-                        context,
-                        self.state.integer_prototype,
-                        instruction,
-                        floored_division,
-                        overflowing_floored_division
+                    generator.context.set_register(reg, res);
+                }
+                Opcode::IntDiv => {
+                    let reg = instruction.arg(0);
+                    let a = generator.context.get_register(instruction.arg(1));
+                    let b = generator.context.get_register(instruction.arg(2));
+                    let res = try_error!(
+                        integer::int_div(&self.state, worker, a, b),
+                        self,
+                        worker,
+                        generator
                     );
+
+                    generator.context.set_register(reg, res);
                 }
-                Opcode::IntegerMul => {
-                    integer_overflow_op!(
-                        process,
-                        context,
-                        self.state.integer_prototype,
-                        instruction,
-                        mul,
-                        overflowing_mul
+                Opcode::IntMul => {
+                    let reg = instruction.arg(0);
+                    let a = generator.context.get_register(instruction.arg(1));
+                    let b = generator.context.get_register(instruction.arg(2));
+                    let res = integer::int_mul(&self.state, worker, a, b);
+
+                    generator.context.set_register(reg, res);
+                }
+                Opcode::IntSub => {
+                    let reg = instruction.arg(0);
+                    let a = generator.context.get_register(instruction.arg(1));
+                    let b = generator.context.get_register(instruction.arg(2));
+                    let res = integer::int_sub(&self.state, worker, a, b);
+
+                    generator.context.set_register(reg, res);
+                }
+                Opcode::IntMod => {
+                    let reg = instruction.arg(0);
+                    let a = generator.context.get_register(instruction.arg(1));
+                    let b = generator.context.get_register(instruction.arg(2));
+                    let res = integer::int_modulo(&self.state, worker, a, b);
+
+                    generator.context.set_register(reg, res);
+                }
+                Opcode::IntBitwiseAnd => {
+                    let reg = instruction.arg(0);
+                    let a = generator.context.get_register(instruction.arg(1));
+                    let b = generator.context.get_register(instruction.arg(2));
+                    let res = integer::int_and(&self.state, worker, a, b);
+
+                    generator.context.set_register(reg, res);
+                }
+                Opcode::IntBitwiseOr => {
+                    let reg = instruction.arg(0);
+                    let a = generator.context.get_register(instruction.arg(1));
+                    let b = generator.context.get_register(instruction.arg(2));
+                    let res = integer::int_or(&self.state, worker, a, b);
+
+                    generator.context.set_register(reg, res);
+                }
+                Opcode::IntBitwiseXor => {
+                    let reg = instruction.arg(0);
+                    let a = generator.context.get_register(instruction.arg(1));
+                    let b = generator.context.get_register(instruction.arg(2));
+                    let res = integer::int_xor(&self.state, worker, a, b);
+
+                    generator.context.set_register(reg, res);
+                }
+                Opcode::IntShiftLeft => {
+                    let reg = instruction.arg(0);
+                    let a = generator.context.get_register(instruction.arg(1));
+                    let b = generator.context.get_register(instruction.arg(2));
+                    let res = integer::int_shl(&self.state, worker, a, b);
+
+                    generator.context.set_register(reg, res);
+                }
+                Opcode::IntShiftRight => {
+                    let reg = instruction.arg(0);
+                    let a = generator.context.get_register(instruction.arg(1));
+                    let b = generator.context.get_register(instruction.arg(2));
+                    let res = integer::int_shr(&self.state, worker, a, b);
+
+                    generator.context.set_register(reg, res);
+                }
+                Opcode::IntSmaller => {
+                    let reg = instruction.arg(0);
+                    let a = generator.context.get_register(instruction.arg(1));
+                    let b = generator.context.get_register(instruction.arg(2));
+                    let res = integer::int_smaller(&self.state, a, b);
+
+                    generator.context.set_register(reg, res);
+                }
+                Opcode::IntGreater => {
+                    let reg = instruction.arg(0);
+                    let a = generator.context.get_register(instruction.arg(1));
+                    let b = generator.context.get_register(instruction.arg(2));
+                    let res = integer::int_greater(&self.state, a, b);
+
+                    generator.context.set_register(reg, res);
+                }
+                Opcode::IntEquals => {
+                    let reg = instruction.arg(0);
+                    let a = generator.context.get_register(instruction.arg(1));
+                    let b = generator.context.get_register(instruction.arg(2));
+                    let res = integer::int_equals(&self.state, a, b);
+
+                    generator.context.set_register(reg, res);
+                }
+                Opcode::IntGreaterOrEqual => {
+                    let reg = instruction.arg(0);
+                    let a = generator.context.get_register(instruction.arg(1));
+                    let b = generator.context.get_register(instruction.arg(2));
+                    let res = integer::int_greater_or_equal(&self.state, a, b);
+
+                    generator.context.set_register(reg, res);
+                }
+                Opcode::IntSmallerOrEqual => {
+                    let reg = instruction.arg(0);
+                    let a = generator.context.get_register(instruction.arg(1));
+                    let b = generator.context.get_register(instruction.arg(2));
+                    let res = integer::int_smaller_or_equal(&self.state, a, b);
+
+                    generator.context.set_register(reg, res);
+                }
+                Opcode::UnsignedIntAdd => {
+                    let reg = instruction.arg(0);
+                    let a = generator.context.get_register(instruction.arg(1));
+                    let b = generator.context.get_register(instruction.arg(2));
+                    let res =
+                        integer::unsigned_int_add(&self.state, worker, a, b);
+
+                    generator.context.set_register(reg, res);
+                }
+                Opcode::UnsignedIntDiv => {
+                    let reg = instruction.arg(0);
+                    let a = generator.context.get_register(instruction.arg(1));
+                    let b = generator.context.get_register(instruction.arg(2));
+                    let res = try_error!(
+                        integer::unsigned_int_div(&self.state, worker, a, b),
+                        self,
+                        worker,
+                        generator
                     );
+
+                    generator.context.set_register(reg, res);
                 }
-                Opcode::IntegerSub => {
-                    integer_overflow_op!(
-                        process,
-                        context,
-                        self.state.integer_prototype,
-                        instruction,
-                        sub,
-                        overflowing_sub
+                Opcode::UnsignedIntMul => {
+                    let reg = instruction.arg(0);
+                    let a = generator.context.get_register(instruction.arg(1));
+                    let b = generator.context.get_register(instruction.arg(2));
+                    let res =
+                        integer::unsigned_int_mul(&self.state, worker, a, b);
+
+                    generator.context.set_register(reg, res);
+                }
+                Opcode::UnsignedIntSub => {
+                    let reg = instruction.arg(0);
+                    let a = generator.context.get_register(instruction.arg(1));
+                    let b = generator.context.get_register(instruction.arg(2));
+                    let res =
+                        integer::unsigned_int_sub(&self.state, worker, a, b);
+
+                    generator.context.set_register(reg, res);
+                }
+                Opcode::UnsignedIntMod => {
+                    let reg = instruction.arg(0);
+                    let a = generator.context.get_register(instruction.arg(1));
+                    let b = generator.context.get_register(instruction.arg(2));
+                    let res =
+                        integer::unsigned_int_modulo(&self.state, worker, a, b);
+
+                    generator.context.set_register(reg, res);
+                }
+                Opcode::UnsignedIntBitwiseAnd => {
+                    let reg = instruction.arg(0);
+                    let a = generator.context.get_register(instruction.arg(1));
+                    let b = generator.context.get_register(instruction.arg(2));
+                    let res =
+                        integer::unsigned_int_and(&self.state, worker, a, b);
+
+                    generator.context.set_register(reg, res);
+                }
+                Opcode::UnsignedIntBitwiseOr => {
+                    let reg = instruction.arg(0);
+                    let a = generator.context.get_register(instruction.arg(1));
+                    let b = generator.context.get_register(instruction.arg(2));
+                    let res =
+                        integer::unsigned_int_or(&self.state, worker, a, b);
+
+                    generator.context.set_register(reg, res);
+                }
+                Opcode::UnsignedIntBitwiseXor => {
+                    let reg = instruction.arg(0);
+                    let a = generator.context.get_register(instruction.arg(1));
+                    let b = generator.context.get_register(instruction.arg(2));
+                    let res =
+                        integer::unsigned_int_xor(&self.state, worker, a, b);
+
+                    generator.context.set_register(reg, res);
+                }
+                Opcode::UnsignedIntShiftLeft => {
+                    let reg = instruction.arg(0);
+                    let a = generator.context.get_register(instruction.arg(1));
+                    let b = generator.context.get_register(instruction.arg(2));
+                    let res =
+                        integer::unsigned_int_shl(&self.state, worker, a, b);
+
+                    generator.context.set_register(reg, res);
+                }
+                Opcode::UnsignedIntShiftRight => {
+                    let reg = instruction.arg(0);
+                    let a = generator.context.get_register(instruction.arg(1));
+                    let b = generator.context.get_register(instruction.arg(2));
+                    let res =
+                        integer::unsigned_int_shr(&self.state, worker, a, b);
+
+                    generator.context.set_register(reg, res);
+                }
+                Opcode::UnsignedIntSmaller => {
+                    let reg = instruction.arg(0);
+                    let a = generator.context.get_register(instruction.arg(1));
+                    let b = generator.context.get_register(instruction.arg(2));
+                    let res = integer::unsigned_int_smaller(&self.state, a, b);
+
+                    generator.context.set_register(reg, res);
+                }
+                Opcode::UnsignedIntGreater => {
+                    let reg = instruction.arg(0);
+                    let a = generator.context.get_register(instruction.arg(1));
+                    let b = generator.context.get_register(instruction.arg(2));
+                    let res = integer::unsigned_int_greater(&self.state, a, b);
+
+                    generator.context.set_register(reg, res);
+                }
+                Opcode::UnsignedIntEquals => {
+                    let reg = instruction.arg(0);
+                    let a = generator.context.get_register(instruction.arg(1));
+                    let b = generator.context.get_register(instruction.arg(2));
+                    let res = integer::unsigned_int_equals(&self.state, a, b);
+
+                    generator.context.set_register(reg, res);
+                }
+                Opcode::UnsignedIntGreaterOrEqual => {
+                    let reg = instruction.arg(0);
+                    let a = generator.context.get_register(instruction.arg(1));
+                    let b = generator.context.get_register(instruction.arg(2));
+                    let res = integer::unsigned_int_greater_or_equal(
+                        &self.state,
+                        a,
+                        b,
                     );
+
+                    generator.context.set_register(reg, res);
                 }
-                Opcode::IntegerMod => {
-                    integer_overflow_op!(
-                        process,
-                        context,
-                        self.state.integer_prototype,
-                        instruction,
-                        modulo,
-                        overflowing_modulo
+                Opcode::UnsignedIntSmallerOrEqual => {
+                    let reg = instruction.arg(0);
+                    let a = generator.context.get_register(instruction.arg(1));
+                    let b = generator.context.get_register(instruction.arg(2));
+                    let res = integer::unsigned_int_smaller_or_equal(
+                        &self.state,
+                        a,
+                        b,
                     );
-                }
-                Opcode::IntegerBitwiseAnd => {
-                    integer_op!(
-                        process,
-                        context,
-                        self.state.integer_prototype,
-                        instruction,
-                        &
-                    );
-                }
-                Opcode::IntegerBitwiseOr => {
-                    integer_op!(
-                        process,
-                        context,
-                        self.state.integer_prototype,
-                        instruction,
-                        |
-                    );
-                }
-                Opcode::IntegerBitwiseXor => {
-                    integer_op!(
-                        process,
-                        context,
-                        self.state.integer_prototype,
-                        instruction,
-                        ^
-                    );
-                }
-                Opcode::IntegerShiftLeft => {
-                    integer_shift_op!(
-                        process,
-                        context,
-                        self.state.integer_prototype,
-                        instruction,
-                        integer_shift_left,
-                        bigint_shift_left
-                    );
-                }
-                Opcode::IntegerShiftRight => {
-                    integer_shift_op!(
-                        process,
-                        context,
-                        self.state.integer_prototype,
-                        instruction,
-                        integer_shift_right,
-                        bigint_shift_right
-                    );
-                }
-                Opcode::IntegerSmaller => {
-                    integer_bool_op!(self.state, context, instruction, <);
-                }
-                Opcode::IntegerGreater => {
-                    integer_bool_op!(self.state, context, instruction, >);
-                }
-                Opcode::IntegerEquals => {
-                    integer_bool_op!(self.state, context, instruction, ==);
-                }
-                Opcode::IntegerGreaterOrEqual => {
-                    integer_bool_op!(self.state, context, instruction, >=);
-                }
-                Opcode::IntegerSmallerOrEqual => {
-                    integer_bool_op!(self.state, context, instruction, <=);
+
+                    generator.context.set_register(reg, res);
                 }
                 Opcode::FloatAdd => {
-                    float_op!(self.state, process, context, instruction, +);
+                    let reg = instruction.arg(0);
+                    let a = generator.context.get_register(instruction.arg(1));
+                    let b = generator.context.get_register(instruction.arg(2));
+                    let res = float::add(&self.state, worker, a, b);
+
+                    generator.context.set_register(reg, res);
                 }
                 Opcode::FloatMul => {
-                    float_op!(self.state, process, context, instruction, *);
+                    let reg = instruction.arg(0);
+                    let a = generator.context.get_register(instruction.arg(1));
+                    let b = generator.context.get_register(instruction.arg(2));
+                    let res = float::mul(&self.state, worker, a, b);
+
+                    generator.context.set_register(reg, res);
                 }
                 Opcode::FloatDiv => {
-                    float_op!(self.state, process, context, instruction, /);
+                    let reg = instruction.arg(0);
+                    let a = generator.context.get_register(instruction.arg(1));
+                    let b = generator.context.get_register(instruction.arg(2));
+                    let res = float::div(&self.state, worker, a, b);
+
+                    generator.context.set_register(reg, res);
                 }
                 Opcode::FloatSub => {
-                    float_op!(self.state, process, context, instruction, -);
+                    let reg = instruction.arg(0);
+                    let a = generator.context.get_register(instruction.arg(1));
+                    let b = generator.context.get_register(instruction.arg(2));
+                    let res = float::sub(&self.state, worker, a, b);
+
+                    generator.context.set_register(reg, res);
                 }
                 Opcode::FloatMod => {
-                    float_op!(self.state, process, context, instruction, %);
+                    let reg = instruction.arg(0);
+                    let a = generator.context.get_register(instruction.arg(1));
+                    let b = generator.context.get_register(instruction.arg(2));
+                    let res = float::modulo(&self.state, worker, a, b);
+
+                    generator.context.set_register(reg, res);
                 }
                 Opcode::FloatSmaller => {
-                    float_bool_op!(self.state, context, instruction, <);
+                    let reg = instruction.arg(0);
+                    let a = generator.context.get_register(instruction.arg(1));
+                    let b = generator.context.get_register(instruction.arg(2));
+                    let res = float::smaller(&self.state, a, b);
+
+                    generator.context.set_register(reg, res);
                 }
                 Opcode::FloatGreater => {
-                    float_bool_op!(self.state, context, instruction, >);
+                    let reg = instruction.arg(0);
+                    let a = generator.context.get_register(instruction.arg(1));
+                    let b = generator.context.get_register(instruction.arg(2));
+                    let res = float::greater(&self.state, a, b);
+
+                    generator.context.set_register(reg, res);
                 }
                 Opcode::FloatEquals => {
                     let reg = instruction.arg(0);
-                    let cmp = context.get_register(instruction.arg(1));
-                    let cmp_with = context.get_register(instruction.arg(2));
-                    let res = float::float_equals(&self.state, cmp, cmp_with)?;
+                    let a = generator.context.get_register(instruction.arg(1));
+                    let b = generator.context.get_register(instruction.arg(2));
+                    let res = float::equals(&self.state, a, b);
 
-                    context.set_register(reg, res);
+                    generator.context.set_register(reg, res);
                 }
                 Opcode::FloatGreaterOrEqual => {
-                    float_bool_op!(self.state, context, instruction, >=);
+                    let reg = instruction.arg(0);
+                    let a = generator.context.get_register(instruction.arg(1));
+                    let b = generator.context.get_register(instruction.arg(2));
+                    let res = float::greater_or_equal(&self.state, a, b);
+
+                    generator.context.set_register(reg, res);
                 }
                 Opcode::FloatSmallerOrEqual => {
-                    float_bool_op!(self.state, context, instruction, <=);
+                    let reg = instruction.arg(0);
+                    let a = generator.context.get_register(instruction.arg(1));
+                    let b = generator.context.get_register(instruction.arg(2));
+                    let res = float::smaller_or_equal(&self.state, a, b);
+
+                    generator.context.set_register(reg, res);
                 }
                 Opcode::ArraySet => {
-                    let reg = instruction.arg(0);
-                    let ary = context.get_register(instruction.arg(1));
-                    let idx = context.get_register(instruction.arg(2));
-                    let val = context.get_register(instruction.arg(3));
-                    let res = try_error!(
-                        array::array_set(&self.state, process, ary, idx, val),
-                        self,
-                        process,
-                        context,
-                        index
-                    );
+                    let ary =
+                        generator.context.get_register(instruction.arg(0));
+                    let idx =
+                        generator.context.get_register(instruction.arg(1));
+                    let val =
+                        generator.context.get_register(instruction.arg(2));
 
-                    context.set_register(reg, res);
+                    try_error!(
+                        array::set(ary, idx, val),
+                        self,
+                        worker,
+                        generator
+                    );
                 }
-                Opcode::ArrayAt => {
+                Opcode::ArrayGet => {
                     let reg = instruction.arg(0);
-                    let ary = context.get_register(instruction.arg(1));
-                    let idx = context.get_register(instruction.arg(2));
+                    let ary =
+                        generator.context.get_register(instruction.arg(1));
+                    let idx =
+                        generator.context.get_register(instruction.arg(2));
                     let res = try_error!(
-                        array::array_get(ary, idx),
+                        array::get(ary, idx),
                         self,
-                        process,
-                        context,
-                        index
+                        worker,
+                        generator
                     );
 
-                    context.set_register(reg, res);
+                    generator.context.set_register(reg, res);
                 }
                 Opcode::ArrayRemove => {
                     let reg = instruction.arg(0);
-                    let ary = context.get_register(instruction.arg(1));
-                    let idx = context.get_register(instruction.arg(2));
+                    let ary =
+                        generator.context.get_register(instruction.arg(1));
+                    let idx =
+                        generator.context.get_register(instruction.arg(2));
                     let res = try_error!(
-                        array::array_remove(ary, idx),
+                        array::remove(ary, idx),
                         self,
-                        process,
-                        context,
-                        index
+                        worker,
+                        generator
                     );
 
-                    context.set_register(reg, res);
+                    generator.context.set_register(reg, res);
                 }
                 Opcode::ArrayLength => {
                     let reg = instruction.arg(0);
-                    let ary = context.get_register(instruction.arg(1));
-                    let res = array::array_length(&self.state, process, ary)?;
+                    let ary =
+                        generator.context.get_register(instruction.arg(1));
+                    let res = array::length(&self.state, worker, ary);
 
-                    context.set_register(reg, res);
+                    generator.context.set_register(reg, res);
                 }
                 Opcode::StringEquals => {
                     let reg = instruction.arg(0);
-                    let cmp = context.get_register(instruction.arg(1));
-                    let cmp_with = context.get_register(instruction.arg(2));
-                    let res =
-                        string::string_equals(&self.state, cmp, cmp_with)?;
+                    let a = generator.context.get_register(instruction.arg(1));
+                    let b = generator.context.get_register(instruction.arg(2));
+                    let res = string::equals(&self.state, a, b);
 
-                    context.set_register(reg, res);
+                    generator.context.set_register(reg, res);
                 }
                 Opcode::StringLength => {
                     let reg = instruction.arg(0);
-                    let val = context.get_register(instruction.arg(1));
-                    let res = string::string_length(&self.state, process, val)?;
+                    let val =
+                        generator.context.get_register(instruction.arg(1));
+                    let res = string::length(&self.state, worker, val);
 
-                    context.set_register(reg, res);
+                    generator.context.set_register(reg, res);
                 }
                 Opcode::StringSize => {
                     let reg = instruction.arg(0);
-                    let val = context.get_register(instruction.arg(1));
-                    let res = string::string_size(&self.state, process, val)?;
+                    let val =
+                        generator.context.get_register(instruction.arg(1));
+                    let res = string::size(&self.state, worker, val);
 
-                    context.set_register(reg, res);
+                    generator.context.set_register(reg, res);
                 }
-                Opcode::ModuleLoad => {
-                    let reg = instruction.arg(0);
-                    let name = context.get_register(instruction.arg(1));
-                    let res = module::module_load(&self.state, process, name)?;
+                Opcode::LoadModule => {
+                    let mod_reg = instruction.arg(0);
+                    let exe_reg = instruction.arg(1);
+                    let name =
+                        generator.context.get_register(instruction.arg(2));
 
-                    context.set_register(reg, res);
-                    enter_context!(process, context, index);
-                }
-                Opcode::ModuleGet => {
-                    let reg = instruction.arg(0);
-                    let name = context.get_register(instruction.arg(1));
-                    let res = module::module_get(&self.state, name)?;
+                    let (module, exe) = module::load(&self.state, name)?;
 
-                    context.set_register(reg, res);
+                    generator.context.set_register(mod_reg, module);
+                    generator.context.set_register(exe_reg, exe);
                 }
-                Opcode::SetAttribute => {
+                Opcode::GetCurrentModule => {
                     let reg = instruction.arg(0);
-                    let rec = context.get_register(instruction.arg(1));
-                    let name = context.get_register(instruction.arg(2));
-                    let val = context.get_register(instruction.arg(3));
-                    let res = try_error!(
-                        object::set_attribute(
-                            &self.state,
-                            process,
-                            rec,
-                            name,
-                            val,
-                        ),
-                        self,
-                        process,
-                        context,
-                        index
+                    let res = module::current(generator);
+
+                    generator.context.set_register(reg, res);
+                }
+                Opcode::SetField => {
+                    let rec =
+                        generator.context.get_register(instruction.arg(0));
+                    let idx = instruction.arg(1);
+                    let val =
+                        generator.context.get_register(instruction.arg(2));
+
+                    object::set_field(rec, idx, val);
+                }
+                Opcode::GetField => {
+                    let reg = instruction.arg(0);
+                    let rec =
+                        generator.context.get_register(instruction.arg(1));
+                    let idx = instruction.arg(2);
+                    let res = object::get_field(rec, idx);
+
+                    generator.context.set_register(reg, res);
+                }
+                Opcode::GetClass => {
+                    let reg = instruction.arg(0);
+                    let src =
+                        generator.context.get_register(instruction.arg(1));
+                    let res = object::get_class(&self.state, src);
+
+                    generator.context.set_register(reg, res);
+                }
+                Opcode::ProcessAllocate => {
+                    let reg = instruction.arg(0);
+                    let class =
+                        generator.context.get_register(instruction.arg(1));
+                    let start = instruction.arg(2);
+                    let args = instruction.arg(3);
+                    let res = process::allocate(
+                        &self.state,
+                        worker,
+                        generator,
+                        class,
+                        start,
+                        args,
                     );
 
-                    context.set_register(reg, res);
-                }
-                Opcode::GetAttribute => {
-                    let reg = instruction.arg(0);
-                    let rec = context.get_register(instruction.arg(1));
-                    let name = context.get_register(instruction.arg(2));
-                    let res = object::get_attribute(&self.state, rec, name);
-
-                    context.set_register(reg, res);
-                }
-                Opcode::GetAttributeInSelf => {
-                    let reg = instruction.arg(0);
-                    let rec = context.get_register(instruction.arg(1));
-                    let name = context.get_register(instruction.arg(2));
-                    let res =
-                        object::get_attribute_in_self(&self.state, rec, name);
-
-                    context.set_register(reg, res);
-                }
-                Opcode::GetPrototype => {
-                    let reg = instruction.arg(0);
-                    let src = context.get_register(instruction.arg(1));
-                    let res = object::get_prototype(&self.state, src);
-
-                    context.set_register(reg, res);
-                }
-                Opcode::LocalExists => {
-                    let reg = instruction.arg(0);
-                    let idx = instruction.arg(1);
-                    let res = general::local_exists(&self.state, context, idx);
-
-                    context.set_register(reg, res);
-                }
-                Opcode::ProcessSpawn => {
-                    let reg = instruction.arg(0);
-                    let block = context.get_register(instruction.arg(1));
-                    let res =
-                        process::process_spawn(&self.state, process, block)?;
-
-                    context.set_register(reg, res);
+                    generator.context.set_register(reg, res);
                 }
                 Opcode::ProcessSendMessage => {
-                    let reg = instruction.arg(0);
-                    let rec = context.get_register(instruction.arg(1));
-                    let msg = context.get_register(instruction.arg(2));
-                    let res = try_error!(
-                        process::process_send_message(
-                            &self.state,
-                            process,
-                            rec,
-                            msg,
-                        ),
-                        self,
-                        process,
-                        context,
-                        index
-                    );
+                    let client =
+                        generator.context.get_register(instruction.arg(0));
+                    let method = instruction.arg(1);
+                    let start = instruction.arg(2);
+                    let args = instruction.arg(3);
 
-                    context.set_register(reg, res);
-                }
-                Opcode::ProcessReceiveMessage => {
-                    let reg = instruction.arg(0);
-                    let time = context.get_register(instruction.arg(1));
-
-                    match process::process_receive_message(&self.state, process)
-                    {
-                        Ok(Some(message)) => {
-                            context.set_register(reg, message);
-                            continue;
-                        }
-                        Ok(None) => {}
-                        Err(err) => {
-                            throw_value!(self, process, err, context, index);
-                        }
-                    }
-
-                    // We *must* save the instruction index first. If we save
-                    // this later on, a copy of this process scheduled by
-                    // another thread (because it sent the process a message)
-                    // may end up running the wrong instructions and/or corrupt
-                    // registers in the process.
-                    context.instruction_index = index - 1;
-
-                    process::wait_for_message(&self.state, process, time)?;
-
-                    return Ok(());
-                }
-                Opcode::ProcessCurrent => {
-                    let reg = instruction.arg(0);
-                    let obj = process::process_current(&self.state, process);
-
-                    context.set_register(reg, obj);
-                }
-                Opcode::ProcessSuspendCurrent => {
-                    let time = context.get_register(instruction.arg(0));
-
-                    context.instruction_index = index;
-
-                    process::process_suspend_current(
+                    process::send_message(
                         &self.state,
-                        process,
-                        time,
-                    )?;
+                        generator,
+                        client,
+                        method,
+                        start,
+                        args,
+                    );
+                }
+                Opcode::ProcessYield => {
+                    process::yield_control(&self.state, process);
 
                     return Ok(());
                 }
-                Opcode::SetParentLocal => {
-                    let idx = instruction.arg(0);
-                    let depth = instruction.arg(1);
-                    let val = context.get_register(instruction.arg(2));
+                Opcode::ProcessSuspend => {
+                    let time =
+                        generator.context.get_register(instruction.arg(0));
 
-                    general::set_parent_local(context, idx, depth, val)?;
-                }
-                Opcode::GetParentLocal => {
-                    let reg = instruction.arg(0);
-                    let depth = instruction.arg(1);
-                    let idx = instruction.arg(2);
-                    let res = general::get_parent_local(context, idx, depth)?;
+                    process::suspend(&self.state, process, time);
 
-                    context.set_register(reg, res)
+                    return Ok(());
                 }
                 Opcode::ObjectEquals => {
                     let reg = instruction.arg(0);
-                    let cmp = context.get_register(instruction.arg(1));
-                    let cmp_with = context.get_register(instruction.arg(2));
-                    let res = object::object_equals(&self.state, cmp, cmp_with);
+                    let a = generator.context.get_register(instruction.arg(1));
+                    let b = generator.context.get_register(instruction.arg(2));
+                    let res = object::equals(&self.state, a, b);
 
-                    context.set_register(reg, res);
+                    generator.context.set_register(reg, res);
                 }
                 Opcode::GetNil => {
-                    context.set_register(
-                        instruction.arg(0),
-                        self.state.nil_object,
-                    );
-                }
-                Opcode::AttributeExists => {
-                    let reg = instruction.arg(0);
-                    let src = context.get_register(instruction.arg(1));
-                    let name = context.get_register(instruction.arg(2));
-                    let res = object::attribute_exists(&self.state, src, name);
+                    let res = self.state.permanent_space.nil_singleton;
 
-                    context.set_register(reg, res);
+                    generator.context.set_register(instruction.arg(0), res);
                 }
-                Opcode::RunBlock => {
-                    let block = context.get_register(instruction.arg(0));
-                    let start = instruction.arg(1);
-                    let args = instruction.arg(2);
+                Opcode::GetUndefined => {
+                    let res = self.state.permanent_space.undefined_singleton;
 
-                    block::run_block(process, context, block, start, args)?;
-                    enter_context!(process, context, index);
+                    generator.context.set_register(instruction.arg(0), res);
                 }
                 Opcode::SetGlobal => {
-                    let reg = instruction.arg(0);
-                    let idx = instruction.arg(1);
-                    let val = context.get_register(instruction.arg(2));
-                    let res = try_error!(
-                        general::set_global(&self.state, context, idx, val),
-                        self,
-                        process,
-                        context,
-                        index
-                    );
+                    let idx = instruction.arg(0);
+                    let val =
+                        generator.context.get_register(instruction.arg(1));
 
-                    context.set_register(reg, res);
+                    general::set_global(generator, idx, val);
                 }
                 Opcode::GetGlobal => {
                     let reg = instruction.arg(0);
                     let idx = instruction.arg(1);
-                    let res = general::get_global(context, idx);
+                    let res = general::get_global(generator, idx);
 
-                    context.set_register(reg, res);
+                    generator.context.set_register(reg, res);
                 }
                 Opcode::Throw => {
-                    let method_throw = instruction.arg(0) == 1;
-                    let value = context.get_register(instruction.arg(1));
+                    let value =
+                        generator.context.get_register(instruction.arg(0));
 
-                    if method_throw {
-                        process::process_unwind_until_defining_scope(process);
-                    }
-
-                    throw_value!(self, process, value, context, index);
+                    throw_value!(self, generator, value);
                 }
                 Opcode::CopyRegister => {
                     let reg = instruction.arg(0);
-                    let val = context.get_register(instruction.arg(1));
+                    let val =
+                        generator.context.get_register(instruction.arg(1));
 
-                    context.set_register(reg, val);
-                }
-                Opcode::TailCall => {
-                    let start = instruction.arg(0);
-                    let args = instruction.arg(1);
-
-                    block::tail_call(context, start, args);
-                    reset_context!(process, context, index);
-                    safepoint_and_reduce!(self, worker, process, reductions);
-                }
-                Opcode::CopyBlocks => {
-                    let to = context.get_register(instruction.arg(0));
-                    let from = context.get_register(instruction.arg(1));
-
-                    try_error!(
-                        object::copy_blocks(&self.state, to, from),
-                        self,
-                        process,
-                        context,
-                        index
-                    );
-                }
-                Opcode::Close => {
-                    let ptr = context.get_register(instruction.arg(0));
-
-                    object::close(ptr);
+                    generator.context.set_register(reg, val);
                 }
                 Opcode::ProcessSetBlocking => {
                     let reg = instruction.arg(0);
-                    let blocking = context.get_register(instruction.arg(1));
-                    let res = process::process_set_blocking(
-                        &self.state,
-                        process,
-                        blocking,
-                    );
+                    let blocking =
+                        generator.context.get_register(instruction.arg(1));
+                    let res =
+                        process::set_blocking(&self.state, process, blocking);
 
-                    context.set_register(reg, res);
+                    generator.context.set_register(reg, res);
 
-                    if res == self.state.false_object {
+                    if res == self.state.permanent_space.false_singleton {
                         continue;
                     }
 
-                    context.instruction_index = index;
-
-                    // After this we can _not_ perform any operations on the
-                    // process any more as it might be concurrently modified
-                    // by the pool we just moved it to.
-                    self.state.scheduler.schedule(process.clone());
+                    // After this we can't perform any operations on the
+                    // process any more as it might be concurrently modified by
+                    // the pool we just moved it to.
+                    self.state.scheduler.schedule(process);
 
                     return Ok(());
                 }
                 Opcode::Panic => {
-                    let msg = context.get_register(instruction.arg(0));
+                    let msg =
+                        generator.context.get_register(instruction.arg(0));
 
                     vm_panic!(
-                        msg.string_value()?.to_owned_string(),
-                        context,
-                        index
+                        unsafe { InkoString::read(&msg).to_string() },
+                        generator
                     );
                 }
                 Opcode::Exit => {
-                    // Any pending deferred blocks should be executed first.
-                    if context
-                        .schedule_deferred_blocks_of_all_parents(process)?
-                    {
-                        remember_and_reset!(process, context, index);
-                    }
-
-                    let status = context.get_register(instruction.arg(0));
+                    let status =
+                        generator.context.get_register(instruction.arg(0));
 
                     general::exit(&self.state, status)?;
 
@@ -963,331 +954,364 @@ impl Machine {
                     let reg = instruction.arg(0);
                     let start = instruction.arg(1);
                     let len = instruction.arg(2);
-                    let res = string::string_concat(
+                    let res = string::concat(
                         &self.state,
-                        process,
-                        context,
+                        worker,
+                        generator,
                         start,
                         len,
-                    )?;
+                    );
 
-                    context.set_register(reg, res);
+                    generator.context.set_register(reg, res);
                 }
-                Opcode::ProcessTerminateCurrent => {
-                    break 'exec_loop;
-                }
-                Opcode::ByteArrayFromArray => {
+                Opcode::ByteArrayAllocate => {
                     let reg = instruction.arg(0);
-                    let ary = context.get_register(instruction.arg(1));
-                    let res = byte_array::byte_array_from_array(
+                    let start = instruction.arg(1);
+                    let len = instruction.arg(2);
+                    let res = byte_array::allocate(
                         &self.state,
-                        process,
-                        ary,
-                    )?;
+                        worker,
+                        generator,
+                        start,
+                        len,
+                    );
 
-                    context.set_register(reg, res);
+                    generator.context.set_register(reg, res);
                 }
                 Opcode::ByteArraySet => {
-                    let reg = instruction.arg(0);
-                    let ary = context.get_register(instruction.arg(1));
-                    let idx = context.get_register(instruction.arg(2));
-                    let val = context.get_register(instruction.arg(3));
-                    let res = try_error!(
-                        byte_array::byte_array_set(ary, idx, val),
-                        self,
-                        process,
-                        context,
-                        index
-                    );
+                    let ary =
+                        generator.context.get_register(instruction.arg(0));
+                    let idx =
+                        generator.context.get_register(instruction.arg(1));
+                    let val =
+                        generator.context.get_register(instruction.arg(2));
 
-                    context.set_register(reg, res);
+                    try_error!(
+                        byte_array::set(&self.state, ary, idx, val),
+                        self,
+                        worker,
+                        generator
+                    );
                 }
-                Opcode::ByteArrayAt => {
+                Opcode::ByteArrayGet => {
                     let reg = instruction.arg(0);
-                    let ary = context.get_register(instruction.arg(1));
-                    let idx = context.get_register(instruction.arg(2));
+                    let ary =
+                        generator.context.get_register(instruction.arg(1));
+                    let idx =
+                        generator.context.get_register(instruction.arg(2));
                     let res = try_error!(
-                        byte_array::byte_array_get(ary, idx),
+                        byte_array::get(ary, idx),
                         self,
-                        process,
-                        context,
-                        index
+                        worker,
+                        generator
                     );
 
-                    context.set_register(reg, res);
+                    generator.context.set_register(reg, res);
                 }
                 Opcode::ByteArrayRemove => {
                     let reg = instruction.arg(0);
-                    let ary = context.get_register(instruction.arg(1));
-                    let idx = context.get_register(instruction.arg(2));
+                    let ary =
+                        generator.context.get_register(instruction.arg(1));
+                    let idx =
+                        generator.context.get_register(instruction.arg(2));
                     let res = try_error!(
-                        byte_array::byte_array_remove(ary, idx),
+                        byte_array::remove(ary, idx),
                         self,
-                        process,
-                        context,
-                        index
+                        worker,
+                        generator
                     );
 
-                    context.set_register(reg, res);
+                    generator.context.set_register(reg, res);
                 }
                 Opcode::ByteArrayLength => {
                     let reg = instruction.arg(0);
-                    let ary = context.get_register(instruction.arg(1));
-                    let res = byte_array::byte_array_length(
-                        &self.state,
-                        process,
-                        ary,
-                    )?;
+                    let ary =
+                        generator.context.get_register(instruction.arg(1));
+                    let res = byte_array::length(&self.state, worker, ary);
 
-                    context.set_register(reg, res);
+                    generator.context.set_register(reg, res);
                 }
                 Opcode::ByteArrayEquals => {
                     let reg = instruction.arg(0);
-                    let cmp = context.get_register(instruction.arg(1));
-                    let cmp_with = context.get_register(instruction.arg(2));
-                    let res = byte_array::byte_array_equals(
-                        &self.state,
-                        cmp,
-                        cmp_with,
-                    )?;
+                    let cmp =
+                        generator.context.get_register(instruction.arg(1));
+                    let cmp_with =
+                        generator.context.get_register(instruction.arg(2));
+                    let res = byte_array::equals(&self.state, cmp, cmp_with);
 
-                    context.set_register(reg, res);
-                }
-                Opcode::BlockGetReceiver => {
-                    let reg = instruction.arg(0);
-                    let res = block::block_get_receiver(context);
-
-                    context.set_register(reg, res);
-                }
-                Opcode::RunBlockWithReceiver => {
-                    let block = context.get_register(instruction.arg(0));
-                    let rec = context.get_register(instruction.arg(1));
-                    let start = instruction.arg(2);
-                    let args = instruction.arg(3);
-
-                    block::run_block_with_receiver(
-                        process, context, block, rec, start, args,
-                    )?;
-
-                    enter_context!(process, context, index);
-                }
-                Opcode::ProcessAddDeferToCaller => {
-                    let reg = instruction.arg(0);
-                    let block = context.get_register(instruction.arg(1));
-                    let res =
-                        process::process_add_defer_to_caller(process, block)?;
-
-                    context.set_register(reg, res);
+                    generator.context.set_register(reg, res);
                 }
                 Opcode::ProcessSetPinned => {
                     let reg = instruction.arg(0);
-                    let pin = context.get_register(instruction.arg(1));
-                    let res = process::process_set_pinned(
-                        &self.state,
-                        process,
-                        worker,
-                        pin,
-                    );
+                    let pin =
+                        generator.context.get_register(instruction.arg(1));
+                    let res =
+                        process::set_pinned(&self.state, worker, process, pin);
 
-                    context.set_register(reg, res);
-                }
-                Opcode::ProcessIdentifier => {
-                    let reg = instruction.arg(0);
-                    let proc = context.get_register(instruction.arg(1));
-                    let res = process::process_identifier(
-                        &self.state,
-                        process,
-                        proc,
-                    )?;
-
-                    context.set_register(reg, res);
+                    generator.context.set_register(reg, res);
                 }
                 Opcode::StringByte => {
                     let reg = instruction.arg(0);
-                    let val = context.get_register(instruction.arg(1));
-                    let idx = context.get_register(instruction.arg(2));
-                    let res = string::string_byte(val, idx)?;
+                    let val =
+                        generator.context.get_register(instruction.arg(1));
+                    let idx =
+                        generator.context.get_register(instruction.arg(2));
+                    let res = string::byte(val, idx);
 
-                    context.set_register(reg, res);
+                    generator.context.set_register(reg, res);
                 }
                 Opcode::MoveResult => {
                     let reg = instruction.arg(0);
-                    let res = general::move_result(process)?;
+                    let res = general::move_result(&mut generator)?;
 
-                    context.set_register(reg, res);
+                    generator.context.set_register(reg, res);
                 }
                 Opcode::GeneratorAllocate => {
                     let reg = instruction.arg(0);
-                    let block = context.get_register(instruction.arg(1));
-                    let rec = context.get_register(instruction.arg(2));
+                    let rec =
+                        generator.context.get_register(instruction.arg(1));
+                    let idx = instruction.arg(2);
                     let start = instruction.arg(3);
                     let args = instruction.arg(4);
                     let res = generator::allocate(
                         &self.state,
-                        process,
-                        context,
-                        block,
+                        worker,
+                        generator,
                         rec,
+                        idx,
                         start,
                         args,
-                    )?;
+                    );
 
-                    context.set_register(reg, res);
+                    generator.context.set_register(reg, res);
                 }
                 Opcode::GeneratorResume => {
-                    let gen = context.get_register(instruction.arg(0));
+                    let gen =
+                        generator.context.get_register(instruction.arg(0));
 
                     generator::resume(process, gen)?;
-                    enter_context!(process, context, index);
                 }
                 Opcode::GeneratorYield => {
-                    let val = context.get_register(instruction.arg(0));
+                    let val =
+                        generator.context.get_register(instruction.arg(0));
 
-                    if !process.yield_value(val) {
+                    generator.set_yield_value(val);
+
+                    if process.pop_generator() {
                         vm_panic!(
-                            "Can't yield from the top-level generator"
-                                .to_string(),
-                            context,
-                            index
+                            "Can't yield from the root generator".to_string(),
+                            generator
                         );
                     }
 
-                    enter_context!(process, context, index);
-                    safepoint_and_reduce!(self, worker, process, reductions);
+                    reduce!(self, process, reductions);
                 }
                 Opcode::GeneratorValue => {
                     let reg = instruction.arg(0);
-                    let gen = context.get_register(instruction.arg(1));
+                    let gen =
+                        generator.context.get_register(instruction.arg(1));
                     let res = try_error!(
                         generator::value(&self.state, gen),
                         self,
-                        process,
-                        context,
-                        index
+                        worker,
+                        generator
                     );
 
-                    context.set_register(reg, res);
+                    generator.context.set_register(reg, res);
                 }
                 Opcode::ExternalFunctionCall => {
                     let reg = instruction.arg(0);
-                    let func = context.get_register(instruction.arg(1));
+                    let func =
+                        generator.context.get_register(instruction.arg(1));
                     let start = instruction.arg(2);
                     let len = instruction.arg(3);
                     let res = try_io_error!(
-                        external_functions::external_function_call(
+                        external_functions::call(
                             &self.state,
+                            worker,
                             process,
-                            context,
+                            generator,
                             func,
                             start,
                             len
                         ),
                         self,
-                        process,
-                        context,
-                        index
+                        worker,
+                        generator
                     );
 
-                    context.set_register(reg, res);
+                    generator.context.set_register(reg, res);
                 }
                 Opcode::ExternalFunctionLoad => {
                     let reg = instruction.arg(0);
-                    let name = context.get_register(instruction.arg(1));
-                    let res = external_functions::external_function_load(
-                        &self.state,
-                        name,
-                    )?;
+                    let name =
+                        generator.context.get_register(instruction.arg(1));
+                    let res = external_functions::load(&self.state, name)?;
 
-                    context.set_register(reg, res);
+                    generator.context.set_register(reg, res);
+                }
+                Opcode::FutureAllocate => {
+                    let read_reg = instruction.arg(0);
+                    let write_reg = instruction.arg(1);
+                    let (read, write) = future::allocate(&self.state, worker);
+
+                    generator.context.set_register(read_reg, read);
+                    generator.context.set_register(write_reg, write);
+                }
+                Opcode::FutureGet => {
+                    let reg = instruction.arg(0);
+                    let fut =
+                        generator.context.get_register(instruction.arg(1));
+
+                    // Save the instruction offset first, so rescheduled copies
+                    // of our process start off at the right instruction.
+                    generator.context.index -= 1;
+
+                    let result = try_error!(
+                        future::get(&self.state, process, fut),
+                        self,
+                        worker,
+                        generator
+                    );
+
+                    if let Some(message) = result {
+                        generator.context.index += 1;
+
+                        generator.context.set_register(reg, message);
+                    } else {
+                        return Ok(());
+                    }
+                }
+                Opcode::FutureGetWithTimeout => {
+                    let reg = instruction.arg(0);
+                    let fut =
+                        generator.context.get_register(instruction.arg(1));
+                    let time =
+                        generator.context.get_register(instruction.arg(2));
+
+                    // Save the instruction offset first, so rescheduled copies
+                    // of our process start off at the right instruction.
+                    generator.context.index -= 1;
+
+                    let res = try_error!(
+                        future::get_with_timeout(
+                            &self.state,
+                            process,
+                            fut,
+                            time
+                        ),
+                        self,
+                        worker,
+                        generator
+                    );
+
+                    if let Some(message) = res {
+                        generator.context.index += 1;
+
+                        generator.context.set_register(reg, message);
+                    } else {
+                        return Ok(());
+                    }
+                }
+                Opcode::FutureWrite => {
+                    let reg = instruction.arg(0);
+                    let fut =
+                        generator.context.get_register(instruction.arg(1));
+                    let val =
+                        generator.context.get_register(instruction.arg(2));
+                    let throw = instruction.arg(3) == 1;
+                    let res = try_error!(
+                        future::write(&self.state, process, fut, val, throw),
+                        self,
+                        worker,
+                        generator
+                    );
+
+                    generator.context.set_register(reg, res);
+                }
+                Opcode::StaticCall => {
+                    let rec =
+                        generator.context.get_register(instruction.arg(1));
+                    let idx = instruction.arg(2);
+                    let start = instruction.arg(3);
+                    let args = instruction.arg(4);
+
+                    object::static_call(
+                        &self.state,
+                        &mut generator,
+                        rec,
+                        idx,
+                        start,
+                        args,
+                    );
+                }
+                Opcode::DynamicCall => {
+                    let rec =
+                        generator.context.get_register(instruction.arg(1));
+                    let hash1 = instruction.arg(2);
+                    let hash2 = instruction.arg(3);
+                    let start = instruction.arg(4);
+                    let args = instruction.arg(5);
+
+                    object::dynamic_call(
+                        &self.state,
+                        &mut generator,
+                        rec,
+                        hash1,
+                        hash2,
+                        start,
+                        args,
+                    );
+                }
+                Opcode::MethodGet => {
+                    let reg = instruction.arg(0);
+                    let rec =
+                        generator.context.get_register(instruction.arg(1));
+                    let idx = instruction.arg(2);
+                    let res = object::get_method(&self.state, rec, idx);
+
+                    generator.context.set_register(reg, res);
+                }
+                Opcode::IncrementRef => {
+                    let obj =
+                        generator.context.get_register(instruction.arg(0));
+
+                    general::increment_ref(obj);
+                }
+                Opcode::DecrementRef => {
+                    let obj =
+                        generator.context.get_register(instruction.arg(0));
+
+                    general::decrement_ref(obj);
+                }
+                Opcode::Drop => {
+                    let obj =
+                        generator.context.get_register(instruction.arg(0));
+
+                    try_error!(general::drop(obj), self, worker, generator);
                 }
             };
         }
 
-        if process.is_pinned() {
-            // A pinned process can only run on the corresponding worker.
-            // Because pinned workers won't run already unpinned processes, and
-            // because processes can't be pinned until they run, this means
-            // there will only ever be one process that triggers this code.
-            worker.leave_exclusive_mode();
-        }
-
-        process.terminate(&self.state);
-
-        // Terminate once the main process has finished execution.
-        if process.is_main() {
-            self.state.terminate(0);
-        }
-
+        process::finish_generator(&self.state, worker, process);
         Ok(())
     }
 
-    /// Checks if a garbage collection run should be performed for the given
-    /// process.
-    ///
-    /// This method returns the number of reductions to apply.
-    fn gc_safepoint(
+    fn panic(
         &self,
-        process: &RcProcess,
-        worker: &ProcessWorker,
-    ) -> usize {
-        if process.should_collect_young_generation() {
-            collect_garbage(&self.state, &process, &worker.tracers);
-            GC_REDUCTION_COST
-        } else {
-            METHOD_REDUCTION_COST
-        }
-    }
-
-    fn throw(
-        &self,
-        process: &RcProcess,
-        value: ObjectPointer,
-    ) -> Result<(), String> {
-        let mut deferred = Vec::new();
-
-        loop {
-            let context = process.context_mut();
-            let code = context.code;
-            let index = context.instruction_index;
-
-            for entry in &code.catch_table.entries {
-                if entry.start < index && entry.end >= index {
-                    context.instruction_index = entry.jump_to;
-
-                    // When unwinding, move all deferred blocks to the context
-                    // that handles the error. This makes unwinding easier, at
-                    // the cost of making a return from this context slightly
-                    // more expensive.
-                    context.append_deferred_blocks(&mut deferred);
-                    process.set_result(value);
-
-                    return Ok(());
-                }
-            }
-
-            if context.parent().is_some() {
-                context.move_deferred_blocks_to(&mut deferred);
-            }
-
-            if process.pop_context() {
-                return Err(format!(
-                    "A thrown value reached the top-level in process {:#x}",
-                    process.identifier()
-                ));
-            }
-        }
-    }
-
-    fn panic(&mut self, process: &RcProcess, message: &str) {
+        process: ServerPointer,
+        generator: GeneratorPointer,
+        message: &str,
+    ) {
         let mut frames = Vec::new();
         let mut buffer = String::new();
 
-        for context in process.contexts() {
+        for context in generator.contexts() {
             frames.push(format!(
                 "\"{}\" line {}, in \"{}\"",
-                context.code.file.string_value().unwrap(),
+                context.method.file,
                 context.line().to_string(),
-                context.code.name.string_value().unwrap()
+                context.method.name
             ));
         }
 

@@ -2,7 +2,6 @@
 //!
 //! Various virtual machine settings that can be changed by the user, such as
 //! the number of threads to run.
-use crate::immix::block::BLOCK_SIZE;
 use std::cmp::min;
 use std::env;
 
@@ -17,34 +16,43 @@ macro_rules! set_from_env {
     }};
 }
 
-const DEFAULT_YOUNG_THRESHOLD: u32 = (2 * 1024 * 1024) / (BLOCK_SIZE as u32);
-const DEFAULT_MATURE_THRESHOLD: u32 = (4 * 1024 * 1024) / (BLOCK_SIZE as u32);
-const DEFAULT_GROWTH_FACTOR: f64 = 1.5;
-const DEFAULT_GROWTH_THRESHOLD: f64 = 0.9;
 const DEFAULT_REDUCTIONS: usize = 1000;
+
+/// The maximum time (in nanoseconds) we want to spend on scanning blocks in a
+/// single recycling scan.
+///
+/// This number is quite conservative, as at the time of writing it wasn't clear
+/// yet if it would be noticeable if we increased this number.
+const MAXIMUM_TIME_PER_RECYCLING_SCAN: usize = 20_000;
+
+/// The estimated time (in nanoseconds) spent on scanning a single block.
+///
+/// This number is a rough estimate based on some simple measurements of
+/// iterating over 4096 blocks and checking their reusable line counts.
+const ESTIMATED_TIME_PER_BLOCK: usize = 20;
+
+/// The maximum number of blocks to scan in a single reclycing scan.
+///
+/// The time spent per block is expected to be roughly 20-30 nanoseconds. With a
+/// limit of 10 microseconds per scan, we should be able to scan up to 500
+/// blocks (about 15 MB of memory) in a single recycling scan cycle.
+///
+/// Note that this is just an upper limit. If a scan manages to free up enough
+/// lines before reaching this limit, it will stop earlier.
+const DEFAULT_RECYCLE_BLOCKS_PER_SCAN: usize =
+    MAXIMUM_TIME_PER_RECYCLING_SCAN / ESTIMATED_TIME_PER_BLOCK;
 
 /// Structure containing the configuration settings for the virtual machine.
 pub struct Config {
     /// The number of primary process threads to run.
     ///
     /// This defaults to the number of CPU cores.
-    pub primary_threads: usize,
+    pub primary_threads: u16,
 
     /// The number of blocking process threads to run.
     ///
     /// This defaults to the number of CPU cores.
-    pub blocking_threads: usize,
-
-    /// The number of garbage collector threads to run.
-    ///
-    /// This defaults to half the number of CPU cores, with a minimum of two.
-    pub gc_threads: usize,
-
-    /// The number of threads to run for tracing objects during garbage
-    /// collection.
-    ///
-    /// This defaults to half the number of CPU cores, with a minimum of two.
-    pub tracer_threads: usize,
+    pub blocking_threads: u16,
 
     /// The number of threads to use for parsing bytecode images.
     ///
@@ -63,29 +71,14 @@ pub struct Config {
     /// cores performing slightly worse (but not much). For programs that
     /// involve images containing thousands of modules, increasing the number of
     /// cores may reduce the time it takes to parse the image.
-    pub bytecode_threads: usize,
+    pub bytecode_threads: u16,
 
     /// The number of reductions a process can perform before being suspended.
     /// Defaults to 1000.
     pub reductions: usize,
 
-    /// The number of memory blocks that can be allocated before triggering a
-    /// young collection.
-    pub young_threshold: u32,
-
-    /// The number of memory blocks that can be allocated before triggering a
-    /// mature collection.
-    pub mature_threshold: u32,
-
-    /// The block allocation growth factor for the heap.
-    pub heap_growth_factor: f64,
-
-    /// The percentage of memory in the heap (relative to its threshold) that
-    /// should be used before increasing the heap size.
-    pub heap_growth_threshold: f64,
-
-    /// When enabled, GC timings will be printed to STDERR.
-    pub print_gc_timings: bool,
+    /// The maximum number of blocks to scan in a single recycling scan.
+    pub recycle_blocks_per_scan: usize,
 }
 
 impl Config {
@@ -93,46 +86,26 @@ impl Config {
         let cpu_count = num_cpus::get();
 
         Config {
-            primary_threads: cpu_count,
-            blocking_threads: cpu_count,
-            gc_threads: cpu_count,
-            tracer_threads: cpu_count,
-            bytecode_threads: min(4, cpu_count),
+            primary_threads: cpu_count as u16,
+            blocking_threads: cpu_count as u16,
+            bytecode_threads: min(4, cpu_count) as u16,
             reductions: DEFAULT_REDUCTIONS,
-            young_threshold: DEFAULT_YOUNG_THRESHOLD,
-            mature_threshold: DEFAULT_MATURE_THRESHOLD,
-            heap_growth_factor: DEFAULT_GROWTH_FACTOR,
-            heap_growth_threshold: DEFAULT_GROWTH_THRESHOLD,
-            print_gc_timings: false,
+            recycle_blocks_per_scan: DEFAULT_RECYCLE_BLOCKS_PER_SCAN,
         }
     }
 
     /// Populates configuration settings based on environment variables.
-    #[cfg_attr(
-        feature = "cargo-clippy",
-        allow(cyclomatic_complexity, cognitive_complexity)
-    )]
     pub fn populate_from_env(&mut self) {
-        set_from_env!(self, primary_threads, "PRIMARY_THREADS", usize);
-        set_from_env!(self, blocking_threads, "BLOCKING_THREADS", usize);
-        set_from_env!(self, gc_threads, "GC_THREADS", usize);
-        set_from_env!(self, tracer_threads, "TRACER_THREADS", usize);
-        set_from_env!(self, bytecode_threads, "BYTECODE_THREADS", usize);
-
+        set_from_env!(self, primary_threads, "PRIMARY_THREADS", u16);
+        set_from_env!(self, blocking_threads, "BLOCKING_THREADS", u16);
+        set_from_env!(self, bytecode_threads, "BYTECODE_THREADS", u16);
         set_from_env!(self, reductions, "REDUCTIONS", usize);
-
-        set_from_env!(self, young_threshold, "YOUNG_THRESHOLD", u32);
-        set_from_env!(self, mature_threshold, "MATURE_THRESHOLD", u32);
-        set_from_env!(self, heap_growth_factor, "HEAP_GROWTH_FACTOR", f64);
-
         set_from_env!(
             self,
-            heap_growth_threshold,
-            "HEAP_GROWTH_THRESHOLD",
-            f64
+            recycle_blocks_per_scan,
+            "RECYCLE_BLOCKS_PER_SCAN",
+            usize
         );
-
-        set_from_env!(self, print_gc_timings, "PRINT_GC_TIMINGS", bool);
     }
 }
 
@@ -146,23 +119,20 @@ mod tests {
         let config = Config::new();
 
         assert!(config.primary_threads >= 1);
-        assert!(config.gc_threads >= 1);
         assert_eq!(config.reductions, 1000);
     }
 
     #[test]
     fn test_populate_from_env() {
         env::set_var("INKO_PRIMARY_THREADS", "42");
-        env::set_var("INKO_HEAP_GROWTH_FACTOR", "4.2");
 
         let mut config = Config::new();
 
         config.populate_from_env();
 
         // Unset before any assertions may fail.
-        env::remove_var("INKO_HEAP_GROWTH_FACTOR");
+        env::remove_var("INKO_PRIMARY_THREADS");
 
         assert_eq!(config.primary_threads, 42);
-        assert_eq!(config.heap_growth_factor, 4.2);
     }
 }

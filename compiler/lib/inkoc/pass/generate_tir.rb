@@ -6,9 +6,24 @@ module Inkoc
     class GenerateTir
       include VisitorMethods
 
+      Loop = Struct.new(:start, :after)
+
       def initialize(compiler, mod)
         @module = mod
         @state = compiler.state
+        @loops = []
+      end
+
+      def enter_loop(start_name, after_name)
+        @loops << Loop.new(start_name, after_name)
+        retval = yield
+        @loops.pop
+
+        retval
+      end
+
+      def current_loop
+        @loops.last
       end
 
       def run(ast)
@@ -76,11 +91,10 @@ module Inkoc
 
         body.instruct(:Unary, :ModuleGet, mod_reg, mod_name_reg, loc)
 
-        result = set_global(Config::MODULE_GLOBAL, mod_reg, body, loc)
+        set_global(Config::MODULE_GLOBAL, mod_reg, body, loc)
 
         body.registers.release(mod_reg)
         body.registers.release(mod_name_reg)
-        body.registers.release(result)
         nil
       end
 
@@ -102,10 +116,9 @@ module Inkoc
         import_as = symbol.import_as(source_mod)
         loc = symbol.location
         symbol_reg = get_attribute(mod_reg, symbol.symbol_name.name, body, loc)
-        result = set_global(import_as, symbol_reg, body, loc)
 
+        set_global(import_as, symbol_reg, body, loc)
         body.registers.release(symbol_reg)
-        body.registers.release(result)
         nil
       end
 
@@ -113,9 +126,8 @@ module Inkoc
         return unless symbol.expose?
 
         import_as = symbol.import_as(source_mod)
-        result = set_global(import_as, mod_reg, body, symbol.location)
 
-        body.registers.release(result)
+        set_global(import_as, mod_reg, body, symbol.location)
         nil
       end
 
@@ -125,33 +137,70 @@ module Inkoc
         source_mod.attributes.each do |attribute|
           sym_name = attribute.name
           symbol_reg = get_attribute(mod_reg, sym_name, body, loc)
-          result = set_global(sym_name, symbol_reg, body, loc)
 
+          set_global(sym_name, symbol_reg, body, loc)
           body.registers.release(symbol_reg)
-          body.registers.release(result)
         end
       end
 
       def on_body(node, body)
         body.add_connected_basic_block
 
-        node.expressions.each do |expr|
+        last_index = node.expressions.length - 1
+        last_ins = nil
+
+        node.expressions.each_with_index do |expr, index|
           reg = process_node(expr, body)
 
-          body.registers.release(reg) if reg
+          # TODO: for any temporary expression, drop the reg
+          # temporary means anything not assigned a variable, or used in a
+          # throw, local throw, return or yield
+          if node.location.file.path.to_s == '/tmp/test.inko' && index != last_index
+            # Literals such as strings and integers are permanent objects, so we
+            # don't need to drop these.
+            case expr
+            when AST::NewInstance, AST::Block, AST::Match, AST::Send
+              drop_value(reg, body, node.location)
+            when AST::Identifier
+              drop_value(reg, body, node.location) if expr.block_type
+            end
+          end
+
+          next unless reg
+
+          if index == last_index
+            # Don't release the last register just yet, otherwise we may end up
+            # overwriting it when generating drop code before a return.
+            last_ins = body.last_instruction
+          else
+            body.registers.release(reg)
+          end
         end
 
-        add_explicit_return(body)
+        node.drop_variables.each do |var|
+          # TODO: obtain the correct depth
+          var_reg = get_local_symbol(-1, var, body, node.location)
+
+          drop_value(var_reg, body, node.location)
+          body.registers.release(var_reg)
+        end
+
+        add_explicit_return(body, last_ins)
+        body.registers.release(last_ins.register) if last_ins
         nil
       end
 
-      def add_explicit_return(body)
+      def on_group(node, body)
+        process_nodes(node.expressions, body).last
+      end
+
+      def add_explicit_return(body, ins = nil)
         return unless body.reachable_basic_block?(body.current_block)
 
-        ins = body.last_instruction
         loc = ins ? ins.location : body.location
 
-        if ins
+        # TODO: drop() return value if discarded
+        if ins && !body.type.discard_return_value && ins.register
           body.instruct(:Return, false, ins.register, loc) unless ins.return?
         else
           body.instruct(:Return, false, get_nil(body, loc), loc)
@@ -160,6 +209,13 @@ module Inkoc
 
       def on_integer(node, body)
         set_integer(node.value, body, node.location)
+      end
+
+      def on_unsigned_integer(node, body)
+        value = UnsignedInteger.new(node.value)
+        register = body.register(typedb.unsigned_integer_type.new_instance)
+
+        body.instruct(:SetLiteral, register, value, node.location)
       end
 
       def on_float(node, body)
@@ -180,13 +236,20 @@ module Inkoc
           if type.type_instance_of?(typedb.string_type)
             register
           else
-            to_string = type.lookup_method('to_string').type
+            as_string = type.lookup_method('as_string')
+
+            method =
+              if as_string.any?
+                as_string.type
+              else
+                type.lookup_method('to_string').type
+              end
 
             send_object_message(
               register,
-              to_string.name,
+              method.name,
               [],
-              to_string,
+              method,
               member.type,
               body,
               member.location
@@ -291,9 +354,9 @@ module Inkoc
         body.instruct(:Unary, :ExternalFunctionLoad, register, name, loc)
 
         body.registers.release(name)
-        body.registers.release(register)
 
         set_global(node.name, register, body, loc)
+        register
       end
 
       def on_block(node, body)
@@ -343,12 +406,8 @@ module Inkoc
         block_reg =
           set_global_if_module_scope(receiver, name, block_reg, body, location)
 
-        result =
-          set_literal_attribute(receiver, name, block_reg, body, location)
-
-        body.registers.release(block_reg)
-
-        result
+        set_literal_attribute(receiver, name, block_reg, body, location)
+        get_attribute(receiver, name, body, location)
       end
 
       def define_block(
@@ -380,17 +439,9 @@ module Inkoc
         arguments.each do |arg|
           symbol = code_object.type.arguments[arg.name]
 
-          if arg.default
-            define_argument_default(code_object, symbol, arg)
-          elsif arg.rest?
+          if arg.rest?
             define_rest_default(code_object, symbol, arg)
           end
-        end
-      end
-
-      def define_argument_default(body, local, arg)
-        generate_argument_default(body, local, arg.default.location) do
-          process_node(arg.default, body)
         end
       end
 
@@ -521,20 +572,19 @@ module Inkoc
 
         # create and store the "map" back in the object implementing the trait.
         body.instruct(:AllocatePermanent, traits_reg, proto_reg, loc)
-        body.instruct(:SetAttribute, traits_reg, object, name_reg, traits_reg, loc)
+        body.instruct(:SetAttribute, object, name_reg, traits_reg, loc)
 
         # register the trait and copy its blocks.
         body.add_connected_basic_block
         body.instruct(:CopyBlocks, object, trait, loc)
 
-        result = set_attribute(traits_reg, trait, true_reg, body, loc)
+        set_attribute(traits_reg, trait, true_reg, body, loc)
 
         body.registers.release(name_reg)
         body.registers.release(traits_reg)
-        body.registers.release(true_reg)
         body.registers.release(proto_reg)
 
-        result
+        true_reg
       end
 
       def on_reopen_object(node, body)
@@ -561,11 +611,10 @@ module Inkoc
       def set_object_literal_name(object, name, body, location)
         attr = Config::OBJECT_NAME_INSTANCE_ATTRIBUTE
         name_reg = set_string(name, body, location)
-        result = set_literal_attribute(object, attr, name_reg, body, location)
 
+        set_literal_attribute(object, attr, name_reg, body, location)
         body.registers.release(name_reg)
-
-        result
+        get_nil(body, location)
       end
 
       def store_object_literal(object, name, body, location)
@@ -573,12 +622,10 @@ module Inkoc
         object =
           set_global_if_module_scope(receiver, name, object, body, location)
 
-        result = set_literal_attribute(receiver, name, object, body, location)
-
+        set_literal_attribute(receiver, name, object, body, location)
         body.registers.release(receiver)
-        body.registers.release(object)
 
-        result
+        object
       end
 
       def on_send(node, body)
@@ -690,6 +737,11 @@ module Inkoc
         process_node(node.expression, body)
       end
 
+      def on_reference_value(node, body)
+        # TODO: incr at runtime
+        process_node(node.expression, body)
+      end
+
       def on_define_variable(node, body)
         callback = node.variable.define_variable_visitor_method
         value = process_node(node.value, body)
@@ -703,10 +755,92 @@ module Inkoc
 
       def on_define_local(variable, value, body)
         set_local(variable.symbol, value, body, variable.location)
+        get_nil(body, variable.location)
       end
 
       def set_local(symbol, value, body, location)
         body.instruct(:SetLocal, symbol, value, location)
+      end
+
+      def on_destructure_array(node, body)
+        return on_destructure_pair(node, body) if node.pair?
+        return on_destructure_triple(node, body) if node.triple?
+
+        value = process_node(node.value, body)
+        len = node.variables.length
+        min_length = set_integer(len, body, node.location)
+        length_ins = node.byte_array? ? :ByteArrayLength : :ArrayLength
+        length_reg = body.register(@state.typedb.integer_type.new_instance)
+        check_reg = body.register(@state.typedb.boolean_type.new_instance)
+
+        # Check if the input array has enough values.
+        body.instruct(:Unary, length_ins, length_reg, value, node.location)
+        body.instruct(
+          :Binary,
+          :IntegerGreaterOrEqual,
+          check_reg,
+          length_reg,
+          min_length,
+          node.location
+        )
+
+        body.instruct(:GotoNextBlockIfTrue, check_reg, node.location)
+
+        # Not enough values, panic
+        panic_reg = set_string(
+          "The Array or ByteArray to destructure must contain at least #{len} values",
+          body,
+          node.location
+        )
+
+        body.instruct(:Panic, panic_reg, node.location)
+
+        # There are enough values
+        body.add_connected_basic_block
+
+        node.variables.each_with_index do |var, index|
+          next if var.variable.ignore?
+
+          var_reg = body.register(TypeSystem::Any.new)
+          index_reg = set_integer(index, body, var.location)
+          ins_name = node.byte_array? ? :ByteArrayAt : :ArrayAt
+
+          body.instruct(:Binary, ins_name, var_reg, value, index_reg, var.location)
+
+          set_local(var.symbol, var_reg, body, var.location)
+          body.registers.release(index_reg)
+          body.registers.release(var_reg)
+        end
+
+        body.registers.release(value)
+        body.registers.release(length_reg)
+        body.registers.release(min_length)
+        body.registers.release(check_reg)
+        body.registers.release(panic_reg)
+        get_nil(body, node.location)
+      end
+
+      def on_destructure_pair(node, body)
+        destruct_tuple(2, node, body)
+      end
+
+      def on_destructure_triple(node, body)
+        destruct_tuple(3, node, body)
+      end
+
+      def destruct_tuple(length, node, body)
+        value = process_node(node.value, body)
+
+        node.variables.each_with_index do |var, index|
+          next if var.variable.ignore?
+
+          val_reg = get_attribute(value, "@#{index}", body, var.location)
+
+          set_local(var.symbol, val_reg, body, var.location)
+          body.registers.release(val_reg)
+        end
+
+        get_nil(body, node.location)
       end
 
       def get_local_symbol(depth, symbol, body, location)
@@ -722,7 +856,9 @@ module Inkoc
       def set_global_if_module_scope(receiver, name, value, body, location)
         if module_scope?(receiver.type)
           body.registers.release(value)
+
           set_global(name, value, body, location)
+          get_global(name, body, location)
         else
           value
         end
@@ -730,7 +866,6 @@ module Inkoc
 
       def set_global(name, value, body, location)
         symbol = @module.globals[name]
-        register = body.register(symbol.type)
 
         if symbol.index.negative?
           raise(
@@ -739,7 +874,7 @@ module Inkoc
           )
         end
 
-        body.instruct(:SetGlobal, register, symbol, value, location)
+        body.instruct(:SetGlobal, symbol, value, location)
       end
 
       def get_global(name, body, location)
@@ -770,12 +905,11 @@ module Inkoc
         loc = variable.location
         name = variable.name
         receiver = get_self(body, loc)
-        result = set_literal_attribute(receiver, name, value, body, loc)
 
+        set_literal_attribute(receiver, name, value, body, loc)
         body.registers.release(receiver)
         body.registers.release(value)
-
-        result
+        get_nil(body, loc)
       end
 
       def on_define_constant(variable, value, body)
@@ -783,12 +917,11 @@ module Inkoc
         name = variable.name
         receiver = get_self(body, loc)
         value = set_global_if_module_scope(receiver, name, value, body, loc)
-        result = set_literal_attribute(receiver, name, value, body, loc)
 
+        set_literal_attribute(receiver, name, value, body, loc)
         body.registers.release(receiver)
         body.registers.release(value)
-
-        result
+        get_nil(body, loc)
       end
 
       def on_reassign_variable(node, body)
@@ -811,6 +944,8 @@ module Inkoc
         else
           set_local(symbol, value, body, loc)
         end
+
+        get_nil(body, loc)
       end
 
       def on_raw_instruction(node, body)
@@ -935,13 +1070,14 @@ module Inkoc
         receiver = process_node(args.fetch(0), body)
         name = process_node(args.fetch(1), body)
         value = process_node(args.fetch(2), body)
-        result = set_attribute(receiver, name, value, body, node.location)
+
+        set_attribute(receiver, name, value, body, node.location)
 
         body.registers.release(receiver)
         body.registers.release(name)
         body.registers.release(value)
 
-        result
+        get_nil(body, node.location)
       end
 
       def on_raw_get_attribute(node, body)
@@ -1350,13 +1486,14 @@ module Inkoc
         obj = process_node(node.arguments.fetch(0), body)
         val = process_node(node.arguments.fetch(1), body)
         name = set_string(Config::OBJECT_NAME_INSTANCE_ATTRIBUTE, body, loc)
-        result = set_attribute(obj, name, val, body, loc)
+
+        set_attribute(obj, name, val, body, loc)
 
         body.registers.release(obj)
         body.registers.release(val)
         body.registers.release(name)
 
-        result
+        get_nil(body, node.location)
       end
 
       def on_raw_current_file_path(node, body)
@@ -1373,35 +1510,6 @@ module Inkoc
 
       def on_raw_process_identifier(node, body)
         raw_unary_instruction(:ProcessIdentifier, node, body)
-      end
-
-      def on_raw_if(node, body)
-        loc = node.location
-        rec_node = node.arguments.fetch(0)
-        result = body.register(rec_node.type)
-        receiver = process_node(rec_node, body)
-
-        body.instruct(:GotoNextBlockIfTrue, receiver, loc)
-
-        # The block used for the "false" argument.
-        if_false = process_node(node.arguments.fetch(2), body)
-
-        body.instruct(:Unary, :CopyRegister, result, if_false, loc)
-        body.instruct(:SkipNextBlock, loc)
-
-        # The block used for the "true" argument.
-        body.add_connected_basic_block
-
-        if_true = process_node(node.arguments.fetch(1), body)
-
-        body.instruct(:Unary, :CopyRegister, result, if_true, loc)
-
-        body.add_connected_basic_block
-        body.registers.release(receiver)
-        body.registers.release(if_false)
-        body.registers.release(if_true)
-
-        result
       end
 
       def on_raw_module_load(node, body)
@@ -1422,6 +1530,32 @@ module Inkoc
         raw_unary_instruction(:GeneratorValue, node, body)
       end
 
+      def on_raw_get_null(node, body)
+        TIR::VirtualRegister.reserved
+      end
+
+      def on_raw_to_iterator(node, body)
+        arg = process_node(node.arguments.fetch(0), body)
+
+        if node.create_iterator
+          result = send_object_message(
+            arg,
+            Config::ITER_MESSAGE,
+            [],
+            node.block_type,
+            node.type,
+            body,
+            node.location
+          )
+
+          body.registers.release(arg)
+
+          result
+        else
+          arg
+        end
+      end
+
       def on_return(node, body)
         location = node.location
         register =
@@ -1431,13 +1565,14 @@ module Inkoc
             get_nil(body, location)
           end
 
-        body.instruct(:Return, true, register, location)
+        # TODO: remove method/block return argument
+        body.instruct(:Return, false, register, location)
       end
 
       def on_throw(node, body)
         register = process_node(node.value, body)
 
-        body.instruct(:Throw, !node.local, register, node.location)
+        body.instruct(:Throw, false, register, node.location)
         body.registers.release(register)
 
         get_nil(body, node.location)
@@ -1458,6 +1593,9 @@ module Inkoc
           return process_node(node.expression, body)
         end
 
+        error_block_name = body.new_basic_block_name
+        after_block_name = body.new_basic_block_name
+
         catch_reg = body.register(body.type.throw_type)
         ret_reg = body.register(node.expression.type)
 
@@ -1466,19 +1604,23 @@ module Inkoc
         try_reg = process_node(node.expression, body)
 
         body.instruct(:Unary, :CopyRegister, ret_reg, try_reg, node.location)
-        body.instruct(:SkipNextBlock, node.location)
+        body.instruct(:GotoBlock, after_block_name, node.location)
 
         # Block for error handling
-        else_block = body.add_connected_basic_block
+        else_block = body.add_connected_basic_block(error_block_name)
 
         body.instruct(:Nullary, :MoveResult, catch_reg, node.location)
 
-        else_reg = register_for_else_block(node, body, catch_reg)
+        if node.else_argument_symbol
+          set_local(node.else_argument_symbol, catch_reg, body, node.location)
+        end
+
+        else_reg = on_inline_body(node.else_body, body)
 
         body.instruct(:Unary, :CopyRegister, ret_reg, else_reg, node.location)
 
         # Block for everything that comes after our "try" expression.
-        body.add_connected_basic_block
+        body.add_connected_basic_block(after_block_name)
         body.catch_table.add_entry(try_block, else_block)
 
         ret_reg
@@ -1719,6 +1861,158 @@ module Inkoc
           get_nil(body, node.location)
       end
 
+      def on_if(node, body)
+        after_block_name = body.new_basic_block_name
+        else_block_name = body.new_basic_block_name
+        result_reg = body.register(TypeSystem::Any.new)
+        cond_names = node.conditions.map { body.new_basic_block_name }
+
+        cond_names << else_block_name
+
+        node.conditions.each_with_index do |cond, index|
+          block_name = cond_names[index]
+          next_block_name = cond_names[index + 1] || cond_names.last
+          body_block_name = body.new_basic_block_name
+          loc = cond.location
+
+          body.add_connected_basic_block(block_name)
+
+          cond_reg = process_node(cond.condition, body)
+          cond_reg = ensure_boolean(cond_reg, body, loc)
+
+          # Jump to the body of the condition if it passed.
+          body.instruct(:GotoBlockIfTrue, body_block_name, cond_reg, loc)
+
+          # Skip this entire block if the condition failed.
+          body.instruct(:GotoBlock, next_block_name, loc)
+
+          body.add_connected_basic_block(body_block_name)
+          body.registers.release(cond_reg)
+
+          cond_result = on_inline_body(cond.body, body)
+
+          body.instruct(:Unary, :CopyRegister, result_reg, cond_result, loc)
+          body.instruct(:GotoBlock, after_block_name, loc)
+
+          body.registers.release(cond_result)
+        end
+
+        body.add_connected_basic_block(else_block_name)
+
+        if node.else_body
+          else_reg = on_inline_body(node.else_body, body)
+
+          body.instruct(:Unary, :CopyRegister, result_reg, else_reg, node.location)
+          body.registers.release(else_reg)
+        end
+
+        body.add_connected_basic_block(after_block_name)
+
+        # Without an `else` we ignore whatever is returned. This is needed as
+        # otherwise our return register may be uninitialised.
+        unless node.else_body
+          nil_reg = get_nil(body, node.location)
+
+          body.instruct(:Unary, :CopyRegister, result_reg, nil_reg, node.location)
+          body.registers.release(nil_reg)
+        end
+
+        result_reg
+      end
+
+      def on_and(node, body)
+        body.add_connected_basic_block
+
+        after_block_name = body.new_basic_block_name
+        right_block_name = body.new_basic_block_name
+        loc = node.location
+
+        result = process_node(node.left, body)
+        result = ensure_boolean(result, body, loc)
+
+        body.instruct(:GotoBlockIfTrue, right_block_name, result, loc)
+        body.instruct(:GotoBlock, after_block_name, loc)
+
+        body.add_connected_basic_block(right_block_name)
+
+        right = process_node(node.right, body)
+        right = ensure_boolean(right, body, loc)
+
+        body.instruct(:Unary, :CopyRegister, result, right, loc)
+        body.registers.release(right)
+
+        body.add_connected_basic_block(after_block_name)
+
+        result
+      end
+
+      def on_or(node, body)
+        body.add_connected_basic_block
+
+        after_block_name = body.new_basic_block_name
+        loc = node.location
+
+        result = process_node(node.left, body)
+        result = ensure_boolean(result, body, loc)
+
+        body.instruct(:GotoBlockIfTrue, after_block_name, result, loc)
+
+        right = process_node(node.right, body)
+        right = ensure_boolean(right, body, loc)
+
+        body.instruct(:Unary, :CopyRegister, result, right, loc)
+        body.registers.release(right)
+
+        body.add_connected_basic_block(after_block_name)
+
+        result
+      end
+
+      def on_not(node, body)
+        loc = node.location
+        expr = process_node(node.expression, body)
+        expr = ensure_boolean(expr, body, loc)
+        false_reg = get_false(body, loc)
+        result = body.register(@state.typedb.boolean_type.new_instance)
+
+        body.instruct(:Binary, :ObjectEquals, result, expr, false_reg, loc)
+        body.registers.release(false_reg)
+
+        result
+      end
+
+      def on_loop(node, body)
+        loop_start = body.new_basic_block_name
+        loop_end = body.new_basic_block_name
+
+        body.add_connected_basic_block(loop_start)
+
+        enter_loop(loop_start, loop_end) do
+          on_inline_body(node.body, body)
+        end
+
+        body.instruct(:GotoBlock, loop_start, node.location)
+        body.add_connected_basic_block(loop_end)
+
+        nil
+      end
+
+      def on_next(node, body)
+        # TODO: run destructors
+        body.instruct(:GotoBlock, current_loop.start, node.location)
+      end
+
+      def on_break(node, body)
+        # TODO: run destructors
+        body.instruct(:GotoBlock, current_loop.after, node.location)
+      end
+
+      def on_inline_body(node, body)
+        # TODO: handle drop logic like on_body()
+        process_nodes(node.expressions, body).last ||
+          get_nil(body, node.location)
+      end
+
       def generate_implements_trait_loop(object_reg, trait_reg, body, location)
         source_reg = body.register(new_object_type)
         traits_reg = body.register(new_object_type)
@@ -1765,37 +2059,6 @@ module Inkoc
         body.registers.release(name_reg)
 
         res
-      end
-
-      def register_for_else_block(node, body, catch_reg)
-        self_reg = get_self(body, node.else_body.location)
-        block_reg = define_block_for_else(node, self_reg, body)
-        else_loc = node.else_body.location
-        arguments = node.else_argument ? [catch_reg] : []
-        return_type = block_reg.type.return_type
-        result = run_block(block_reg, arguments, return_type, body, else_loc)
-
-        body.registers.release(self_reg)
-        body.registers.release(block_reg)
-
-        result
-      end
-
-      def define_block_for_else(node, receiver, body)
-        loc = node.else_body.location
-        block_type = node.else_block_type
-        else_code = body.add_code_object(
-          block_type.name,
-          block_type,
-          loc,
-          locals: node.else_body.locals
-        )
-
-        on_body(node.else_body, else_code)
-
-        block_reg = body.register(block_type)
-
-        body.instruct(:SetBlock, block_reg, else_code, receiver, loc)
       end
 
       def run_block(block, args, return_type, body, location)
@@ -1934,13 +2197,13 @@ module Inkoc
       end
 
       def set_string(value, body, location)
-        register = body.register(typedb.string_type)
+        register = body.register(typedb.string_type.new_instance)
 
         body.instruct(:SetLiteral, register, value, location)
       end
 
       def set_integer(value, body, location)
-        register = body.register(typedb.integer_type)
+        register = body.register(typedb.integer_type.new_instance)
 
         body.instruct(:SetLiteral, register, value, location)
       end
@@ -1995,7 +2258,10 @@ module Inkoc
       end
 
       def send_runs_block?(receiver, name)
-        receiver.block? && name == Config::CALL_MESSAGE
+        is_block = receiver.block? ||
+          (receiver.reference? && receiver.type.block?)
+
+        is_block && name == Config::CALL_MESSAGE
       end
 
       def get_attribute(receiver, name, body, location)
@@ -2010,15 +2276,16 @@ module Inkoc
       end
 
       def set_attribute(receiver, name, value, body, location)
-        register = body.register(value.type)
-
-        body.instruct(:SetAttribute, register, receiver, name, value, location)
+        body.instruct(:SetAttribute, receiver, name, value, location)
       end
 
       def set_literal_attribute(receiver, name, value, body, location)
         name_reg = set_string(name, body, location)
 
         set_attribute(receiver, name_reg, value, body, location)
+        body.registers.release(name_reg)
+
+        nil
       end
 
       def allocate_array(register, values, body, location)
@@ -2086,6 +2353,66 @@ module Inkoc
 
       def new_object_type
         @module.lookup_object_type.new_instance
+      end
+
+      # TODO: reconsider using hashing for dynamic dispatch
+      def round_method_count(table)
+        value = table.symbols.count { |s| s.type.method? }
+
+        return value if value.zero?
+
+        # Round to the nearest power of 2.
+        value -= 1
+
+        value |= value >> 1
+        value |= value >> 2
+        value |= value >> 4
+        value |= value >> 8
+        value |= value >> 16
+
+        value + 1
+      end
+
+      def drop_value(value, body, location)
+        if value.type.owned?
+          drop = value.type.lookup_method('drop')
+
+          # TODO: handle dropping Any, perhaps by ensuring all objects have a
+          # default drop() method?
+          return value if drop.nil?
+
+          send_object_message(
+            value,
+            drop.name,
+            [],
+            drop.type,
+            @state.typedb.nil_type.new_instance,
+            body,
+            location
+          )
+
+          # TODO: dealloc()
+        else
+          # TODO: decr() ref count
+        end
+      end
+
+      def ensure_boolean(value, body, location)
+        return value if value.type.type_instance_of?(@state.typedb.boolean_type)
+
+        method = value.type.lookup_method(Config::TRUTHY_MESSAGE).type
+        result = send_object_message(
+          value,
+          method.name,
+          [],
+          method,
+          method.return_type,
+          body,
+          location
+        )
+
+        body.registers.release(value)
+        result
       end
     end
     # rubocop: enable Metrics/ClassLength

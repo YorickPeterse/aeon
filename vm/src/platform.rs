@@ -3,57 +3,57 @@
 //! This module provides basic functionality for detecting the underlying
 //! platform.
 
-/// Returns the name of the underlying operating system.
-pub fn operating_system<'a>() -> &'a str {
+/// Returns an identifier for the underlying operating system.
+pub fn operating_system() -> i64 {
     if cfg!(target_os = "windows") {
-        "windows"
+        0
     } else if cfg!(target_os = "macos") {
-        "macos"
+        1
     } else if cfg!(target_os = "ios") {
-        "ios"
+        2
     } else if cfg!(target_os = "linux") {
-        "linux"
+        3
     } else if cfg!(target_os = "android") {
-        "android"
+        4
     } else if cfg!(target_os = "freebsd") {
-        "freebsd"
+        5
     } else if cfg!(target_os = "dragonfly") {
-        "dragonfly"
+        6
     } else if cfg!(target_os = "bitrig") {
-        "bitrig"
+        7
     } else if cfg!(target_os = "openbsd") {
-        "openbsd"
+        8
     } else if cfg!(target_os = "netbsd") {
-        "netbsd"
+        9
     } else if cfg!(unix) {
-        "unix"
+        10
     } else {
-        "unknown"
+        11
     }
 }
 
 #[cfg(test)]
 mod tests {
     macro_rules! test_operating_system {
-        ($platform: expr) => {
+        ($platform: expr, $code: expr) => {
             #[cfg(target_os = $platform)]
             #[test]
             fn test_operating_system() {
-                assert_eq!(super::operating_system(), $platform);
+                assert_eq!(super::operating_system(), $code);
             }
         };
     }
 
-    test_operating_system!("windows");
-    test_operating_system!("macos");
-    test_operating_system!("ios");
-    test_operating_system!("linux");
-    test_operating_system!("android");
-    test_operating_system!("freebsd");
-    test_operating_system!("dragonfly");
-    test_operating_system!("bitrig");
-    test_operating_system!("openbsd");
-    test_operating_system!("netbsd");
+    test_operating_system!("windows", 0);
+    test_operating_system!("macos", 1);
+    test_operating_system!("ios", 2);
+    test_operating_system!("linux", 3);
+    test_operating_system!("android", 4);
+    test_operating_system!("freebsd", 5);
+    test_operating_system!("dragonfly", 6);
+    test_operating_system!("bitrig", 7);
+    test_operating_system!("openbsd", 8);
+    test_operating_system!("netbsd", 9);
 
     #[cfg(not(any(
         target_os = "windows",
@@ -69,6 +69,6 @@ mod tests {
     )))]
     #[test]
     fn test_operating_system() {
-        assert_eq!(super::operating_system(), "unknown");
+        assert_eq!(super::operating_system(), 11);
     }
 }

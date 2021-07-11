@@ -32,10 +32,6 @@ module Inkoc
         @type.arguments.names
       end
 
-      def required_arguments_count
-        @type.required_arguments
-      end
-
       def rest_argument?
         @type.last_argument_is_rest
       end

@@ -1,7 +1,7 @@
 import std::module
 import std::test::*
 
-def tests(t: Tests) {
+def tests(t: ref Tests) {
   t.group('std::module.list') do (g) {
     g.test('Getting all the modules that have been defined') {
       try assert_true(module.list.length.positive?)

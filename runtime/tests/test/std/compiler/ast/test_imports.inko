@@ -9,7 +9,8 @@ def location -> SourceLocation {
 def tests(t: Tests) {
   t.group('std::compiler::ast::imports::ImportSymbol.expose?') do (g) {
     g.test('Checking if a symbol without an alias should be exposed') {
-      let symbol = ImportSymbol.new(name: 'foo', location: location)
+      let symbol =
+        ImportSymbol.new(name: 'foo', location: location, alias: Option.none)
 
       try assert_true(symbol.expose?)
     }

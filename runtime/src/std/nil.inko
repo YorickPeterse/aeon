@@ -8,12 +8,14 @@
 #
 # Most of the time you won't be interacting with Nil. Instead, you'll be using
 # the `Option` type as defined in the `std::option` module.
+import std::clone::(Clone, Copy)
+import std::conversion::ToString
 import std::operators::Equal
 
 impl NilType {
   # Always returns `Nil` itself.
   static def new -> Self {
-    self
+    _INKOC.get_nil
   }
 
   # Always returns `False`.
@@ -23,7 +25,21 @@ impl NilType {
 }
 
 impl Equal for NilType {
-  def ==(other: Self) -> Boolean {
+  def ==(other: ref Self) -> Boolean {
     _INKOC.object_equals(self, other)
+  }
+}
+
+impl Clone for NilType {
+  def clone -> Self {
+    _INKOC.get_nil
+  }
+}
+
+impl Copy for NilType {}
+
+impl ToString for NilType {
+  def to_string -> String {
+    ''
   }
 }

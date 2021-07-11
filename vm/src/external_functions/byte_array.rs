@@ -1,59 +1,89 @@
 //! Functions for working with Inko arrays.
+use crate::arc_without_weak::ArcWithoutWeak;
 use crate::immutable_string::ImmutableString;
-use crate::object_pointer::ObjectPointer;
-use crate::object_value;
-use crate::process::RcProcess;
+use crate::mem::allocator::{BumpAllocator, Pointer};
+use crate::mem::generator::GeneratorPointer;
+use crate::mem::objects::{ByteArray, String as InkoString};
+use crate::mem::process::ServerPointer;
 use crate::runtime_error::RuntimeError;
-use crate::vm::state::RcState;
+use crate::vm::state::State;
 
 /// Removes all values from a ByteArray.
 ///
 /// This function requires a single argument: the ByteArray to clear.
 pub fn byte_array_clear(
-    state: &RcState,
-    _: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    arguments[0].byte_array_value_mut()?.clear();
-    Ok(state.nil_object)
+    state: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let bytes = unsafe { arguments[0].get_mut::<ByteArray>() };
+
+    bytes.value_mut().clear();
+    Ok(state.permanent_space.nil_singleton)
 }
 
 /// Converts a ByteArray to a String.
 ///
 /// This function requires a single argument: the ByteArray to convert.
 pub fn byte_array_to_string(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let input_bytes = arguments[0].byte_array_value()?;
-    let string = ImmutableString::from_utf8(input_bytes.clone());
+    state: &State,
+    alloc: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let bytes = unsafe { arguments[0].get::<ByteArray>() }.value();
+    let string = ImmutableString::from_utf8(bytes.clone());
 
-    Ok(process.allocate(
-        object_value::immutable_string(string),
-        state.string_prototype,
+    Ok(InkoString::from_immutable_string(
+        alloc,
+        state.permanent_space.string_class(),
+        ArcWithoutWeak::new(string),
     ))
 }
 
-/// Converts a ByteArray to a String by draining the input ByteArray.
+/// Converts a ByteArray to a String by taking ownership of the byte array.
 ///
 /// This function requires a single argument: the ByteArray to convert.
-pub fn byte_array_drain_to_string(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let input_bytes = arguments[0].byte_array_value_mut()?;
-    let string = ImmutableString::from_utf8(input_bytes.drain(0..).collect());
+pub fn byte_array_into_string(
+    state: &State,
+    alloc: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let bytes = unsafe { arguments[0].get_mut::<ByteArray>() }.take_bytes();
+    let string = ImmutableString::from_utf8(bytes);
 
-    Ok(process.allocate(
-        object_value::immutable_string(string),
-        state.string_prototype,
+    Ok(InkoString::from_immutable_string(
+        alloc,
+        state.permanent_space.string_class(),
+        ArcWithoutWeak::new(string),
     ))
+}
+
+/// Drops the given ByteArray.
+///
+/// This function requires a single argument: the ByteArray to drop.
+pub fn byte_array_drop(
+    state: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    unsafe {
+        ByteArray::drop(arguments[0]);
+    }
+
+    Ok(state.permanent_space.nil_singleton)
 }
 
 register!(
     byte_array_clear,
     byte_array_to_string,
-    byte_array_drain_to_string
+    byte_array_into_string,
+    byte_array_drop
 );

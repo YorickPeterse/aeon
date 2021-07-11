@@ -2,50 +2,36 @@
 #
 # In Inko boolean true is the object `True` and boolean false is the object
 # `False`. Both are regular objects that are instances of the `Boolean` object.
+import std::clone::Clone
 import std::conversion::ToString
 import std::hash::Hash
 import std::operators::Equal
 
 impl Boolean {
   def truthy? -> Boolean {
-    _INKOC.if(self, True, False)
+    if self { True } else { False }
   }
 
   # Returns `True` if `self` is also `True`.
   def true? -> Boolean {
-    _INKOC.if(self, True, False)
+    if self { True } else { False }
   }
 
   # Returns `True` if `self` is `False`.
   def false? -> Boolean {
-    _INKOC.if(self, False, True)
-  }
-
-  # Returns `True` if `self` is `True`, and the given block also returns `True`.
-  #
-  # # Examples
-  #
-  #     True.and { True }  # => True
-  #     False.and { True } # => False
-  def and(other: do -> Boolean) -> Boolean {
-    _INKOC.if(truthy?, other.call, False)
-  }
-
-  # Returns `True` if `self` is `True`, or if the given block returns `True`.
-  #
-  # # Examples
-  #
-  #     True.or { True }   # => True
-  #     False.or { True }  # => True
-  #     False.or { False } # => False
-  def or(other: do -> Boolean) -> Boolean {
-    _INKOC.if(truthy?, True, other.call)
+    if self { False } else { True }
   }
 }
 
 impl ToString for Boolean {
   def to_string -> String {
-    _INKOC.if(self, 'True', 'False')
+    if self { 'True' } else { 'False' }
+  }
+}
+
+impl Clone for Boolean {
+  def clone -> Self {
+    if self { True } else { False }
   }
 }
 

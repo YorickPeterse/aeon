@@ -1,8 +1,8 @@
 import std::fs::path::Path
-import std::hash::DefaultHasher
+import std::hash::Hasher
 import std::test::*
 
-def tests(t: Tests) {
+def tests(t: ref Tests) {
   t.group('std::string::String.to_uppercase') do (g) {
     g.test('Converting a String to uppercase') {
       try assert_equal('hello'.to_uppercase, 'HELLO')
@@ -113,14 +113,20 @@ def tests(t: Tests) {
     }
   }
 
-  t.group('std::string::String.to_integer') do (g) {
-    g.test('Converting a String to an Integer') {
-      try assert_equal('10'.to_integer, 10)
-      try assert_equal('-5'.to_integer, -5)
+  t.group('std::string::String.into_path') do (g) {
+    g.test('Moving a String into a Path') {
+      try assert_equal('foo'.into_path, Path.new('foo'))
+    }
+  }
+
+  t.group('std::string::String.to_int') do (g) {
+    g.test('Converting a String to an Int') {
+      try assert_equal('10'.to_int, 10)
+      try assert_equal('-5'.to_int, -5)
     }
 
-    g.test('Converting an invalid String to an Integer') {
-      try assert_equal('foo'.to_integer, 0)
+    g.test('Converting an invalid String to an Int') {
+      try assert_equal('foo'.to_int, 0)
     }
   }
 
@@ -130,18 +136,18 @@ def tests(t: Tests) {
       try assert_equal('-5.0'.to_float, -5.0)
     }
 
-    g.test('Converting an invalid String to an Integer') {
+    g.test('Converting an invalid String to an Int') {
       try assert_equal('foo'.to_float, 0.0)
     }
   }
 
   t.group('std::string::String.hash') do (g) {
     g.test('Hashing a String') {
-      let hasher1 = DefaultHasher.new(1, 2)
-      let hasher2 = DefaultHasher.new(1, 2)
+      let hasher1 = Hasher.new(1, 2)
+      let hasher2 = Hasher.new(1, 2)
 
-      'foo'.hash(hasher1)
-      'foo'.hash(hasher2)
+      'foo'.hash(ref hasher1)
+      'foo'.hash(ref hasher2)
 
       try assert_equal(hasher1.to_hash, hasher2.to_hash)
     }

@@ -24,8 +24,8 @@ def close_and_remove_file!(T: Close + Remove)(file: T) {
   try file.remove else Nil
 }
 
-def read_only_file(block: do (ReadOnlyFile), path: ToString = VALID_FILE) {
-  let file = try! ReadOnlyFile.new(path)
+def read_only_file(block: do (ReadOnlyFile)) {
+  let file = try! ReadOnlyFile.new(VALID_FILE)
 
   process.defer { file.close }
   block.call(file)
@@ -45,18 +45,18 @@ def read_write_file(block: do (ReadWriteFile)) {
   block.call(file)
 }
 
-def tests(t: Tests) {
+def tests(t: ref Tests) {
   t.group('std::fs::file::ReadOnlyFile.new') do (g) {
     g.test('Opening an existing file in read-only mode') {
       try assert_no_throw {
-        let file = local try ReadOnlyFile.new(VALID_FILE)
+        let file = try ReadOnlyFile.new(VALID_FILE)
         file.close
       }
     }
 
     g.test('Opening a non-existing file in read-only mode') {
       try assert_throw {
-        local try ReadOnlyFile.new('this-file-does-not-exist.inko')
+        try ReadOnlyFile.new('this-file-does-not-exist.inko')
       }
     }
   }
@@ -134,7 +134,7 @@ def tests(t: Tests) {
     g.test('Seeking to a very large positive offset') {
       read_only_file do (file) {
         try assert_throw {
-          local try file.seek(1_000_000_000_000_000_000_000_000)
+          try file.seek(1_000_000_000_000_000_000_000_000)
         }
       }
     }
@@ -151,7 +151,7 @@ def tests(t: Tests) {
 
     g.test('Seeking to an invalid offset') {
       read_only_file do (file) {
-        try assert_throw { local try file.seek(-10_000) }
+        try assert_throw { try file.seek(-10_000) }
       }
     }
   }
@@ -190,7 +190,7 @@ def tests(t: Tests) {
       read_only_file do (file) {
         file.close
 
-        try assert_throw { local try file.read_string }
+        try assert_throw { try file.read_string }
       }
     }
   }
@@ -198,7 +198,7 @@ def tests(t: Tests) {
   t.group('std::fs::file::WriteOnlyFile.new') do (g) {
     g.test('Opening a file in write-only mode') {
       try assert_no_throw {
-        let file = local try WriteOnlyFile.new(fixtures.temporary_file_path)
+        let file = try WriteOnlyFile.new(fixtures.temporary_file_path)
 
         close_and_remove_file(file)
       }
@@ -208,7 +208,7 @@ def tests(t: Tests) {
   t.group('std::fs::file::WriteOnlyFile.append') do (g) {
     g.test('Opening a file in append-only mode') {
       try assert_no_throw {
-        let file = local try WriteOnlyFile.append(fixtures.temporary_file_path)
+        let file = try WriteOnlyFile.append(fixtures.temporary_file_path)
 
         close_and_remove_file(file)
       }
@@ -257,7 +257,7 @@ def tests(t: Tests) {
       write_only_file do (file) {
         try! file.write_string('hello')
 
-        try assert_no_throw { local try file.flush }
+        try assert_no_throw { try file.flush }
       }
     }
   }
@@ -275,7 +275,7 @@ def tests(t: Tests) {
 
     g.test('Seeking to an invalid offset') {
       write_only_file do (file) {
-        try assert_throw { local try file.seek(-10_000) }
+        try assert_throw { try file.seek(-10_000) }
       }
     }
   }
@@ -332,7 +332,7 @@ def tests(t: Tests) {
       write_only_file do (file) {
         try! file.remove
 
-        try assert_throw { local try file.remove }
+        try assert_throw { try file.remove }
       }
     }
   }
@@ -340,7 +340,7 @@ def tests(t: Tests) {
   t.group('std::fs::file::ReadWriteFile.new') do (g) {
     g.test('Opening a file in read-write mode') {
       try assert_no_throw {
-        let file = local try ReadWriteFile.new(fixtures.temporary_file_path)
+        let file = try ReadWriteFile.new(fixtures.temporary_file_path)
 
         close_and_remove_file(file)
       }
@@ -350,7 +350,7 @@ def tests(t: Tests) {
   t.group('std::fs::file::ReadWriteFile.append') do (g) {
     g.test('Opening a file in read-append mode') {
       try assert_no_throw {
-        let file = local try ReadWriteFile.append(fixtures.temporary_file_path)
+        let file = try ReadWriteFile.append(fixtures.temporary_file_path)
 
         close_and_remove_file(file)
       }
@@ -425,7 +425,7 @@ def tests(t: Tests) {
 
     g.test('Seeking to an invalid offset') {
       read_write_file do (file) {
-        try assert_throw { local try file.seek(-10_000) }
+        try assert_throw { try file.seek(-10_000) }
       }
     }
   }
@@ -482,7 +482,7 @@ def tests(t: Tests) {
       read_write_file do (file) {
         try! file.remove
 
-        try assert_throw { local try file.remove }
+        try assert_throw { try file.remove }
       }
     }
   }
@@ -499,7 +499,7 @@ def tests(t: Tests) {
     g.test('Removing a non-existing file') {
       let path = fixtures.temporary_file_path
 
-      try assert_throw { local try file.remove(path) }
+      try assert_throw { try file.remove(path) }
     }
   }
 
@@ -507,7 +507,7 @@ def tests(t: Tests) {
     g.test('Copying an existing file') {
       write_only_file do (f) {
         let new_path =
-          `{f.path.to_string}{process.current.identifier.to_string}`.to_path
+          `{f.path.to_string}{process.current.identifier.to_string}`.into_path
 
         process.defer {
           try file.remove(new_path) else Nil
@@ -521,7 +521,7 @@ def tests(t: Tests) {
     }
 
     g.test('Copying a non-existing file') {
-      try assert_throw { local try file.copy('does-not-exist', 'foo') }
+      try assert_throw { try file.copy('does-not-exist', 'foo') }
     }
   }
 }

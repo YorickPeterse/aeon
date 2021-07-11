@@ -1,7 +1,7 @@
 import std::set::Set
 import std::test::*
 
-def tests(t: Tests) {
+def tests(t: ref Tests) {
   t.group('std::set::Set.insert') do (g) {
     g.test('Inserting a value into a Set') {
       let set = Set.new
@@ -24,22 +24,6 @@ def tests(t: Tests) {
       set.insert(10)
 
       try assert_true(set.remove(10))
-    }
-  }
-
-  t.group('std::set::Set.each') do (g) {
-    g.test('Iterating over the values in a Set') {
-      let set = Set.new
-      let mut total = 0
-
-      set.insert(1)
-      set.insert(2)
-
-      set.each do (value) {
-        total += value
-      }
-
-      try assert_equal(total, 3)
     }
   }
 

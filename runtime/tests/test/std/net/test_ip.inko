@@ -2,7 +2,7 @@ import std::net::ip::(self, Ipv4Address, Ipv6Address)
 import std::test::*
 import std::process
 
-def tests(t: Tests) {
+def tests(t: ref Tests) {
   t.group('std::net::ip.parse') do (g) {
     g.test('Parsing an IPv4 address') {
       try assert_equal(
@@ -19,19 +19,19 @@ def tests(t: Tests) {
     }
 
     g.test('Parsing an invalid IPv4 address') {
-      try assert_throw { local try ip.parse('1.2') }
+      try assert_throw { try ip.parse('1.2') }
     }
 
     g.test('Parsing an invalid IP address') {
       try assert_throw {
-        local try ip.parse('ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff')
+        try ip.parse('ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff')
       }
 
-      try assert_throw { local try ip.parse('foo') }
+      try assert_throw { try ip.parse('foo') }
     }
 
     g.test('Parsing an empty address') {
-      try assert_throw { local try ip.parse('') }
+      try assert_throw { try ip.parse('') }
     }
   }
 
@@ -43,45 +43,45 @@ def tests(t: Tests) {
     }
 
     g.test('Parsing an IPv4 address that is too short') {
-      try assert_throw { local try Ipv4Address.parse('1.2'.to_byte_array) }
+      try assert_throw { try Ipv4Address.parse('1.2'.to_byte_array) }
     }
 
     g.test('Parsing an IPv4 address that is too long') {
       try assert_throw {
-        local try Ipv4Address.parse('255.255.255.255.255.255'.to_byte_array)
+        try Ipv4Address.parse('255.255.255.255.255.255'.to_byte_array)
       }
     }
 
     g.test('Parsing an IPv4 address containing invalid characters') {
-      try assert_throw { local try Ipv4Address.parse('1.f.4.a'.to_byte_array) }
+      try assert_throw { try Ipv4Address.parse('1.f.4.a'.to_byte_array) }
     }
 
     g.test('Parsing an IPv4 address that does not contain any dots') {
-      try assert_throw { local try Ipv4Address.parse('1234'.to_byte_array) }
+      try assert_throw { try Ipv4Address.parse('1234'.to_byte_array) }
     }
 
     g.test('Parsing an IPv4 address containing out of bounds octets') {
-      try assert_throw { local try Ipv4Address.parse('300.0.0.0'.to_byte_array) }
+      try assert_throw { try Ipv4Address.parse('300.0.0.0'.to_byte_array) }
     }
 
     g.test('Parsing an IPv4 address containing a port') {
-      try assert_throw { local try Ipv4Address.parse('1.2.3.4:80'.to_byte_array) }
+      try assert_throw { try Ipv4Address.parse('1.2.3.4:80'.to_byte_array) }
     }
 
     g.test('Parsing an IPv4 address containing a CIDR mask') {
-      try assert_throw { local try Ipv4Address.parse('1.2.3.4/24'.to_byte_array) }
+      try assert_throw { try Ipv4Address.parse('1.2.3.4/24'.to_byte_array) }
     }
 
     g.test('Parsing an IPv4 address that starts with dot') {
-      try assert_throw { local try Ipv4Address.parse('.2.3.4'.to_byte_array) }
+      try assert_throw { try Ipv4Address.parse('.2.3.4'.to_byte_array) }
     }
 
     g.test('Parsing an IPv4 address that is just a single dot') {
-      try assert_throw { local try Ipv4Address.parse('.'.to_byte_array) }
+      try assert_throw { try Ipv4Address.parse('.'.to_byte_array) }
     }
 
     g.test('Parsing an empty String') {
-      try assert_throw { local try Ipv4Address.parse(''.to_byte_array) }
+      try assert_throw { try Ipv4Address.parse(''.to_byte_array) }
     }
   }
 
@@ -340,44 +340,44 @@ def tests(t: Tests) {
 
     g.test('Parsing an IPv6 address that is too long') {
       try assert_throw {
-        local try Ipv6Address.parse(
+        try Ipv6Address.parse(
           '0000:0000:0000:0000:0000:0000:0000:0000:0000'.to_byte_array
         )
       }
     }
 
     g.test('Parsing an IPv6 address that is too short') {
-      try assert_throw { local try Ipv6Address.parse('0000'.to_byte_array) }
+      try assert_throw { try Ipv6Address.parse('0000'.to_byte_array) }
     }
 
     g.test('Parsing an IPv6 address that compresses zeroes more than once') {
-      try assert_throw { local try Ipv6Address.parse('::1::1'.to_byte_array) }
+      try assert_throw { try Ipv6Address.parse('::1::1'.to_byte_array) }
     }
 
     g.test('Parsing an IPv6 address that contains too many colons') {
-      try assert_throw { local try Ipv6Address.parse('1:::1'.to_byte_array) }
+      try assert_throw { try Ipv6Address.parse('1:::1'.to_byte_array) }
     }
 
     g.test('Parsing an IPv6 address containing invalid hextets') {
       try assert_throw {
-        local try Ipv6Address
+        try Ipv6Address
           .parse('0000:0000:0000:0000:0000:0000:zzzz'.to_byte_array)
       }
     }
 
     g.test('Parsing an IPv6 address embedding an invalid IPv4 address') {
       try assert_throw {
-        local try Ipv6Address.parse('::1:300.168.1.1'.to_byte_array)
+        try Ipv6Address.parse('::1:300.168.1.1'.to_byte_array)
       }
 
       try assert_throw {
-        local try Ipv6Address.parse('::1:300.168:1.1'.to_byte_array)
+        try Ipv6Address.parse('::1:300.168:1.1'.to_byte_array)
       }
     }
 
     g.test('Parsing an IPv6 address containing a CIDR mask') {
       try assert_throw {
-        local try Ipv6Address.parse('::1/24'.to_byte_array)
+        try Ipv6Address.parse('::1/24'.to_byte_array)
       }
     }
 
@@ -457,7 +457,7 @@ def tests(t: Tests) {
     }
 
     g.test('Converting an invalid String to an IP address') {
-      try assert_throw { local try 'foo'.to_ip_address }
+      try assert_throw { try 'foo'.to_ip_address }
     }
   }
 }

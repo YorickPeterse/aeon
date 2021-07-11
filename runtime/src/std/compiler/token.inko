@@ -10,7 +10,7 @@ trait Token {
   def value -> String
 
   # Returns the source location of this token.
-  def location -> SourceLocation
+  def location -> ref SourceLocation
 
   # Returns a `Boolean` indicating if this token is a keyword.
   def keyword? -> Boolean {
@@ -68,14 +68,14 @@ class RegularToken {
 
 impl Token for RegularToken {
   def type -> String {
-    @type
+    @type.clone
   }
 
   def value -> String {
-    @value
+    @value.clone
   }
 
-  def location -> SourceLocation {
+  def location -> ref SourceLocation {
     @location
   }
 }
@@ -95,14 +95,14 @@ class KeywordToken {
 
 impl Token for KeywordToken {
   def type -> String {
-    @keyword
+    @keyword.clone
   }
 
   def value -> String {
-    @keyword
+    @keyword.clone
   }
 
-  def location -> SourceLocation {
+  def location -> ref SourceLocation {
     @location
   }
 
@@ -130,10 +130,10 @@ impl Token for InvalidToken {
   }
 
   def value -> String {
-    @value
+    @value.clone
   }
 
-  def location -> SourceLocation {
+  def location -> ref SourceLocation {
     @location
   }
 
@@ -165,7 +165,7 @@ impl Token for NullToken {
     ''
   }
 
-  def location -> SourceLocation {
+  def location -> ref SourceLocation {
     @location
   }
 
@@ -208,14 +208,14 @@ class BinaryToken {
 
 impl Token for BinaryToken {
   def type -> String {
-    @type
+    @type.clone
   }
 
   def value -> String {
-    @value
+    @value.clone
   }
 
-  def location -> SourceLocation {
+  def location -> ref SourceLocation {
     @location
   }
 
@@ -250,14 +250,14 @@ class BinaryAssignToken {
 
 impl Token for BinaryAssignToken {
   def type -> String {
-    @type
+    @type.clone
   }
 
   def value -> String {
-    @value
+    @value.clone
   }
 
-  def location -> SourceLocation {
+  def location -> ref SourceLocation {
     @location
   }
 

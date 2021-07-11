@@ -1,7 +1,7 @@
-import std::hash::DefaultHasher
+import std::hash::Hasher
 import std::test::*
 
-def tests(t: Tests) {
+def tests(t: ref Tests) {
   t.group('std::array::Array.new') do (g) {
     g.test('Creating an empty Array') {
       try assert_equal(Array.new.length, 0)
@@ -72,35 +72,6 @@ def tests(t: Tests) {
     }
   }
 
-  t.group('std::array::Array.each') do (g) {
-    g.test('Iterating over the values of an Array') {
-      let input = Array.new(10, 20, 30)
-      let output = Array.new
-
-      input.each do (number) {
-        output.push(number)
-      }
-
-      try assert_equal(output, Array.new(10, 20, 30))
-    }
-  }
-
-  t.group('std::array::Array.each_with_index') do (g) {
-    g.test('Iterating over the values and indexes of an Array') {
-      let input = Array.new(10, 20, 30)
-      let output = Array.new
-      let indexes = Array.new
-
-      input.each_with_index do (number, index) {
-        output.push(number)
-        indexes.push(index)
-      }
-
-      try assert_equal(output, Array.new(10, 20, 30))
-      try assert_equal(indexes, Array.new(0, 1, 2))
-    }
-  }
-
   t.group('std::array::Array.append') do (g) {
     g.test('Appending all the values of one Array to another Array') {
       let first = Array.new(10, 20, 30)
@@ -166,7 +137,7 @@ def tests(t: Tests) {
     }
 
     g.test('Returning the value of a non-existing negative index') {
-      let array: Array!(Integer) = Array.new
+      let array: Array!(Int) = Array.new
 
       try assert_true(array.get(-2).none?)
     }
@@ -197,7 +168,8 @@ def tests(t: Tests) {
     g.test('Setting the value of non-existing index') {
       let numbers = Array.new
 
-      try assert_equal(numbers[0] = 1, 1)
+      numbers[0] = 1
+
       try assert_equal(numbers, Array.new(1))
     }
 
@@ -208,7 +180,8 @@ def tests(t: Tests) {
     g.test('Setting the value of a negative index using an empty Array') {
       let numbers = Array.new
 
-      try assert_equal(numbers[-1] = 1, 1)
+      numbers[-1] = 1
+
       try assert_equal(numbers, Array.new(1))
     }
 
@@ -278,13 +251,27 @@ def tests(t: Tests) {
 
   t.group('std::array::Array.hash') do (g) {
     g.test('Hashing an Array') {
-      let hasher1 = DefaultHasher.new(1, 2)
-      let hasher2 = DefaultHasher.new(1, 2)
+      let hasher1 = Hasher.new(1, 2)
+      let hasher2 = Hasher.new(1, 2)
 
-      Array.new('foo').hash(hasher1)
-      Array.new('foo').hash(hasher2)
+      Array.new('foo').hash(ref hasher1)
+      Array.new('foo').hash(ref hasher2)
 
       try assert_equal(hasher1.to_hash, hasher2.to_hash)
+    }
+  }
+
+  t.group('std::array::Array.swap') do (g) {
+    g.test('Swapping a value in an Array') {
+      let numbers = Array.new(10, 20)
+      let old_val = numbers.swap(1, 40)
+
+      try assert_equal(old_val, 20)
+      try assert_equal(numbers[1], 40)
+    }
+
+    g.test('Swapping a value using an out of bounds index') {
+      try assert_panic('Array.new.swap(0, 10)')
     }
   }
 }

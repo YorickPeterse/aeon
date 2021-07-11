@@ -82,8 +82,9 @@ module Inkoc
       # rubocop: disable Metrics/CyclomaticComplexity
       # rubocop: disable Metrics/PerceivedComplexity
       def type_compatible?(other, state)
+        return type_compatible?(other.type, state) if other.reference?
         return true if other.any? || self == other
-        return true if other.trait? && implements_trait?(other, state)
+        return implements_trait?(other, state) if other.trait?
 
         if other.type_parameter?
           return compatible_with_type_parameter?(other, state)
@@ -121,6 +122,13 @@ module Inkoc
           true
         elsif self == trait
           true
+        elsif base_type == trait.base_type
+          type_parameters.all? do |param|
+            ours = lookup_type_parameter_instance(param)
+            theirs = trait.lookup_type_parameter_instance(param)
+
+            ours.type_compatible?(theirs, state)
+          end
         else
           # The trait is not directly required, but might be required indirectly
           # via another required trait.

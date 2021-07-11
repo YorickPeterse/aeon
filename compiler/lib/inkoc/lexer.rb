@@ -25,9 +25,20 @@ module Inkoc
       'static' => :static,
       'match' => :match,
       'when' => :when,
-      'local' => :local,
       'yield' => :yield,
-      'extern' => :extern
+      'extern' => :extern,
+      'ref' => :ref,
+      'move' => :move,
+      'if' => :if,
+      'and' => :and,
+      'or' => :or,
+      'not' => :not,
+      'in' => :in,
+      'loop' => :loop,
+      'next' => :next,
+      'break' => :break,
+      'while' => :while,
+      'async' => :async,
     }.freeze
 
     SPECIALS = Set.new(
@@ -232,6 +243,7 @@ module Inkoc
       unescape_string(token.value)
       unescape_backslash(token.value)
       token.value.gsub!('\\`', '`')
+      token.value.gsub!('\\{', '{')
 
       # If a \ is followed by a newline and additional whitespace, we strip all
       # of it. This makes it possible to wrap template strings across multiple
@@ -401,7 +413,14 @@ module Inkoc
         end
       end
 
-      token = new_token(type, start, @position)
+      stop = @position
+
+      if type == :integer && @input[@position] == 'u' && !skip_first
+        @position += 1
+        type = :unsigned_integer
+      end
+
+      token = new_token(type, start, stop)
       token.value.delete!('_')
 
       token
@@ -563,19 +582,11 @@ module Inkoc
     end
 
     def bitwise_and_or_boolean_and
-      if @input[@position + 1] == '&'
-        operator(2, :and)
-      else
-        operator(1, :bitwise_and, :bitwise_and_assign)
-      end
+      operator(1, :bitwise_and, :bitwise_and_assign)
     end
 
     def bitwise_or_or_boolean_or
-      if @input[@position + 1] == '|'
-        operator(2, :or)
-      else
-        operator(1, :bitwise_or, :bitwise_or_assign)
-      end
+      operator(1, :bitwise_or, :bitwise_or_assign)
     end
 
     def mul_or_pow

@@ -9,7 +9,7 @@ module Inkoc
 
       attr_reader :name, :location
 
-      attr_accessor :block_type, :symbol, :depth, :throw_type
+      attr_accessor :block_type, :symbol, :depth, :throw_type, :variable_state
 
       # name - The name of the identifier.
       # location - The SourceLocation of the identifier.
@@ -20,6 +20,7 @@ module Inkoc
         @symbol = nil
         @depth = nil
         @throw_type = nil
+        @variable_state = nil
       end
 
       def identifier?
@@ -36,6 +37,10 @@ module Inkoc
 
       def reassign_variable_visitor_method
         :on_reassign_local
+      end
+
+      def ignore?
+        @name == '_'
       end
     end
   end

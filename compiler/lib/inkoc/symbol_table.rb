@@ -12,16 +12,19 @@ module Inkoc
       @symbols = []
       @mapping = {}
       @parent = parent
-      @unique_names = false
-      @remapped_names = {}
+      @remapped_stack = []
+    end
+
+    def remapped_names
+      @remapped_stack.last
     end
 
     def with_unique_names
-      @unique_names = true
-      return_value = yield
-      @unique_names = false
-      @remapped_names = {}
+      @remapped_stack.push({})
 
+      return_value = yield
+
+      @remapped_stack.pop
       return_value
     end
 
@@ -31,7 +34,7 @@ module Inkoc
     end
 
     def define(name, type, mutable = false)
-      if @unique_names
+      if remapped_names
         symbol_name = name + object_id.to_s
       else
         symbol_name = name
@@ -42,8 +45,8 @@ module Inkoc
       @symbols << symbol
       @mapping[symbol_name] = symbol
 
-      if @unique_names
-        @remapped_names[name] = symbol
+      if (names = remapped_names)
+        names[name] = symbol
       end
 
       symbol
@@ -68,10 +71,20 @@ module Inkoc
         if name_or_index.is_a?(Integer)
           @symbols[name_or_index]
         else
-          @mapping[name_or_index] || @remapped_names[name_or_index]
+          @mapping[name_or_index] || lookup_in_renamed_stack(name_or_index)
         end
 
       symbol || NullSymbol.singleton
+    end
+
+    def lookup_in_renamed_stack(name)
+      @remapped_stack.reverse_each do |mapping|
+        if (remapped = mapping[name])
+          return remapped
+        end
+      end
+
+      nil
     end
 
     def slice(range)
@@ -108,6 +121,10 @@ module Inkoc
 
     def defined?(name)
       lookup_with_parent(name)[1].any?
+    end
+
+    def defines?(symbol)
+      @symbols[symbol.index] == symbol
     end
 
     def last

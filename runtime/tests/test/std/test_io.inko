@@ -1,3 +1,4 @@
+import std::conversion::ToString
 import std::io::(Error, INVALID_INPUT, NOT_FOUND, Read, Write)
 import std::os::NEWLINE
 import std::test::*
@@ -9,13 +10,13 @@ class Reader {
 }
 
 impl Read for Reader {
-  def read_bytes(bytes: ByteArray, size = 0) -> Integer {
-    let input = Array.new(105, 110, 107, 111)
-    let max = size.positive?.if(true: { size }, false: { input.length })
+  def read(into: ref ByteArray, size: Int) -> Int {
+    let input = ByteArray.new(105, 110, 107, 111)
+    let max = if size.positive? { size } else { input.length }
     let mut index = 0
 
-    while({ index < max }) {
-      bytes.push(input[index])
+    while index < max {
+      into.push(input[index])
       index += 1
     }
 
@@ -30,32 +31,34 @@ class Writer {
     Self { @buffer = Array.new }
   }
 
-  def buffer -> Array!(String) {
+  def buffer -> ref Array!(String) {
     @buffer
   }
 }
 
 impl Write for Writer {
-  def write_bytes(bytes: ByteArray) -> Integer {
+  def write_bytes(bytes: ref ByteArray) -> Int {
     0
   }
 
   def flush {}
 
-  def write_string(string: String) -> Integer {
-    @buffer.push(string)
+  def write_string(string: ref ToString) -> Int {
+    let to_write = string.to_string
+    let written = to_write.length
 
-    string.length
+    @buffer.push(to_write)
+
+    written
   }
 }
 
-def tests(t: Tests) {
+def tests(t: ref Tests) {
   t.group('std::io::Error.new') do (g) {
     g.test('Creating an Error for an error code') {
       let error = Error.new(NOT_FOUND)
 
       try assert_equal(error.code, NOT_FOUND)
-      try assert_equal(error.message, 'The resource could not be found')
     }
   }
 
@@ -64,7 +67,6 @@ def tests(t: Tests) {
       let error = Error.invalid_input('testing')
 
       try assert_equal(error.code, INVALID_INPUT)
-      try assert_equal(error.message, 'testing')
     }
   }
 
@@ -90,7 +92,7 @@ def tests(t: Tests) {
       let written = try! writer.print('inko')
 
       try assert_equal(written, 5)
-      try assert_equal(writer.buffer, Array.new('inko', "\n"))
+      try assert_equal(writer.buffer, Array.new("inko\n"))
     }
   }
 }

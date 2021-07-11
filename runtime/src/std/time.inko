@@ -1,6 +1,5 @@
 # Types and methods for dealing with time.
-import std::conversion::(ToFloat, ToInteger)
-import std::loop::(while)
+import std::conversion::(ToFloat, ToInt)
 import std::operators::(
   Add, Equal, Greater, GreaterOrEqual, Smaller, SmallerOrEqual, Subtract
 )
@@ -8,7 +7,8 @@ import std::process::(panic)
 import std::time::bits::*
 
 extern def time_monotonic -> Float
-extern def time_system -> Array!(Any)
+extern def time_system -> Float
+extern def time_offset -> Int
 
 # A span of time measured in seconds.
 #
@@ -23,7 +23,7 @@ class Duration {
   #
   # # Examples
   #
-  # Creating a `Duration` using an `Integer`:
+  # Creating a `Duration` using an `Int`:
   #
   #     import std::time::Duration
   #
@@ -42,7 +42,7 @@ class Duration {
   #
   # # Examples
   #
-  # Creating a `Duration` using an `Integer`:
+  # Creating a `Duration` using an `Int`:
   #
   #     import std::time::Duration
   #
@@ -61,7 +61,7 @@ class Duration {
   #
   # # Examples
   #
-  # Creating a `Duration` using an `Integer`:
+  # Creating a `Duration` using an `Int`:
   #
   #     import std::time::Duration
   #
@@ -90,7 +90,7 @@ class Duration {
   #
   #     Duration.from_seconds(5).to_seconds # => 5.0
   def to_seconds -> Float {
-    @seconds
+    @seconds.clone
   }
 
   # Returns the duration in milliseconds.
@@ -133,17 +133,17 @@ class Duration {
   }
 }
 
-impl ToInteger for Duration {
+impl ToInt for Duration {
   # Returns the number of seconds in the `Duration`.
-  def to_integer -> Integer {
-    @seconds.to_integer
+  def to_int -> Int {
+    @seconds.to_int
   }
 }
 
 impl ToFloat for Duration {
   # Returns the number of seconds in the `Duration`.
   def to_float -> Float {
-    @seconds
+    @seconds.clone
   }
 }
 
@@ -159,7 +159,7 @@ impl Add!(Self) for Duration {
   #     let sum = Duration.from_seconds(5) + Duration.from_seconds(2)
   #
   #     sum.to_seconds # => 7.0
-  def +(other: Self) -> Self {
+  def +(other: ref Self) -> Self {
     Duration.new(@seconds + other.to_seconds)
   }
 }
@@ -176,7 +176,7 @@ impl Subtract!(Self) for Duration {
   #     let diff = Duration.from_seconds(5) - Duration.from_seconds(2)
   #
   #     diff.to_seconds # => 3.0
-  def -(other: Self) -> Self {
+  def -(other: ref Self) -> Self {
     Duration.new(@seconds - other.to_seconds)
   }
 }
@@ -191,7 +191,7 @@ impl Smaller for Duration {
   #     import std::time::Duration
   #
   #     Duration.from_seconds(5) < Duration.from_seconds(10) # => True
-  def <(other: Self) -> Boolean {
+  def <(other: ref Self) -> Boolean {
     @seconds < other.to_seconds
   }
 }
@@ -206,7 +206,7 @@ impl Greater for Duration {
   #     import std::time::Duration
   #
   #     Duration.from_seconds(5) > Duration.from_seconds(10) # => False
-  def >(other: Self) -> Boolean {
+  def >(other: ref Self) -> Boolean {
     @seconds > other.to_seconds
   }
 }
@@ -222,7 +222,7 @@ impl SmallerOrEqual for Duration {
   #
   #     Duration.from_seconds(5) <= Duration.from_seconds(10) # => True
   #     Duration.from_seconds(5) <= Duration.from_seconds(5)  # => True
-  def <=(other: Self) -> Boolean {
+  def <=(other: ref Self) -> Boolean {
     @seconds <= other.to_seconds
   }
 }
@@ -238,80 +238,76 @@ impl GreaterOrEqual for Duration {
   #
   #     Duration.from_seconds(5) >= Duration.from_seconds(10) # => False
   #     Duration.from_seconds(5) >= Duration.from_seconds(5)  # => True
-  def >=(other: Self) -> Boolean {
+  def >=(other: ref Self) -> Boolean {
     @seconds >= other.to_seconds
   }
 }
 
 # An object representing the current system time.
 #
-# A `SystemTime` object represents the current system in seconds relative to
+# A `DateTime` object represents the current system in seconds relative to
 # the Unix epoch. Due to the use of the system clock an instance of
-# `SystemTime` can be influenced by time zone changes, clock adjustments, or
+# `DateTime` can be influenced by time zone changes, clock adjustments, or
 # leap seconds. If you need a monotonically increasing clock you should use
 # `Instant` instead.
-class SystemTime {
-  # The year of this `SystemTime`.
-  @year: Integer
+class DateTime {
+  # The year of this `DateTime`.
+  @year: Int
 
-  # The month of this `SystemTime`, from `1` to `12`.
-  @month: Integer
+  # The month of this `DateTime`, from `1` to `12`.
+  @month: Int
 
-  # The day of this `SystemTime`, from `1` to `31`.
-  @day: Integer
+  # The day of this `DateTime`, from `1` to `31`.
+  @day: Int
 
-  # The hour of this `SystemTime`, from `0` to `23`.
-  @hour: Integer
+  # The hour of this `DateTime`, from `0` to `23`.
+  @hour: Int
 
-  # The minute of this `SystemTime`, from `0` to `59`.
-  @minute: Integer
+  # The minute of this `DateTime`, from `0` to `59`.
+  @minute: Int
 
-  # The second of this `SystemTime`, from `0` to `59`.
-  @second: Integer
+  # The second of this `DateTime`, from `0` to `59`.
+  @second: Int
 
-  # The sub seconds of this `SystemTime`.
+  # The sub seconds of this `DateTime`.
   @sub_second: Float
 
-  # The UTC offset (in seconds) of this `SystemTime`.
-  @utc_offset: Integer
+  # The UTC offset (in seconds) of this `DateTime`.
+  @utc_offset: Int
 
-  # Returns a new `SystemTime` representing the current time using the local
+  # Returns a new `DateTime` representing the current time using the local
   # timezone.
   #
   # # Examples
   #
   # Getting the current time:
   #
-  #     import std::time::SystemTime
+  #     import std::time::DateTime
   #
-  #     SystemTime.now
-  static def now -> SystemTime {
-    let time = time_system
-
-    from_timestamp(time: time[0] as Float, utc_offset: time[1] as Integer)
+  #     DateTime.now
+  static def now -> DateTime {
+    from_timestamp(time: time_system, utc_offset: time_offset)
   }
 
-  # Returns a new `SystemTime` representing the current time using UTC as the
+  # Returns a new `DateTime` representing the current time using UTC as the
   # timezone.
   #
   # # Examples
   #
   # Getting the current time in UTC:
   #
-  #     import std::time::SystemTime
+  #     import std::time::DateTime
   #
-  #     SystemTime.utc
-  static def utc -> SystemTime {
-    let time = time_system
-
-    from_utc_timestamp(time[0] as Float)
+  #     DateTime.utc
+  static def utc -> DateTime {
+    from_utc_timestamp(time_system)
   }
 
-  # Returns a new `SystemTime` from a Unix timestamp and UTC offset.
+  # Returns a new `DateTime` from a Unix timestamp and UTC offset.
   static def from_timestamp(
     time: ToFloat,
-    utc_offset: Integer,
-  ) -> SystemTime {
+    utc_offset: Int,
+  ) -> DateTime {
     # The algorithm below is based on the following code from the musl standard
     # library: http://git.musl-libc.org/cgit/musl/tree/src/time/__secs_to_tm.c.
     # Notable changes compared to the original algorithm:
@@ -360,7 +356,7 @@ class SystemTime {
     # _local_ time we need to add the offset to the timestamp before we
     # decompose it.
     let local_time = time.to_float + utc_offset.to_float
-    let local_time_int = local_time.to_integer
+    let local_time_int = local_time.to_int
 
     let mut year = 0
     let mut month = 0
@@ -377,20 +373,20 @@ class SystemTime {
     let mut rem_days = days % DAYS_PER_400Y
     let mut century_cycles = rem_days / DAYS_PER_100Y
 
-    (century_cycles == 4).if_true { century_cycles -= 1 }
+    if century_cycles == 4 { century_cycles -= 1 }
 
     rem_days -= century_cycles * DAYS_PER_100Y
 
     let mut quadrennial_cycles = rem_days / DAYS_PER_4Y
 
     # 25 cycles == 100 years
-    (quadrennial_cycles == 25).if_true { quadrennial_cycles -= 1 }
+    if quadrennial_cycles == 25 { quadrennial_cycles -= 1 }
 
     rem_days -= quadrennial_cycles * DAYS_PER_4Y
 
     let mut rem_years = rem_days / DAYS_PER_NORMAL_YEAR
 
-    (rem_years == 4).if_true { rem_years -= 1 }
+    if rem_years == 4 { rem_years -= 1 }
 
     rem_days -= rem_years * DAYS_PER_NORMAL_YEAR
 
@@ -403,7 +399,7 @@ class SystemTime {
 
     let mut months = 0
 
-    while({ days_in_month(months) <= rem_days }) {
+    while days_in_month(months) <= rem_days {
       rem_days -= days_in_month(months)
       months += 1
     }
@@ -414,7 +410,7 @@ class SystemTime {
     # March).
     month = months + 2
 
-    (month >= MONTHS_PER_YEAR).if_true {
+    if month >= MONTHS_PER_YEAR {
       month = month - MONTHS_PER_YEAR
       year = year + 1
     }
@@ -440,20 +436,20 @@ class SystemTime {
     )
   }
 
-  # Returns a new `SystemTime` from a Unix timestamp using UTC as the timezone.
-  static def from_utc_timestamp(time: ToFloat) -> SystemTime {
+  # Returns a new `DateTime` from a Unix timestamp using UTC as the timezone.
+  static def from_utc_timestamp(time: ToFloat) -> DateTime {
     from_timestamp(time, utc_offset: 0)
   }
 
   static def new(
-    year = 0,
-    month = 1,
-    day = 1,
-    hour = 0,
-    minute = 0,
-    second = 0,
-    sub_second = 0.0,
-    utc_offset = 0
+    year: Int,
+    month: Int,
+    day: Int,
+    hour: Int,
+    minute: Int,
+    second: Int,
+    sub_second: Float,
+    utc_offset: Int
   ) -> Self {
     Self {
       @year = year,
@@ -468,44 +464,44 @@ class SystemTime {
   }
 
   # Returns the hour of the day from 0 to 23.
-  def hour -> Integer {
-    @hour
+  def hour -> Int {
+    @hour.clone
   }
 
   # Returns the minute of the hour from 0 to 59.
-  def minute -> Integer {
-    @minute
+  def minute -> Int {
+    @minute.clone
   }
 
   # Returns the second of the minute from 0 to 60.
-  def second -> Integer {
-    @second
+  def second -> Int {
+    @second.clone
   }
 
   # Returns the fractional part of the second, in seconds.
   def sub_second -> Float {
-    @sub_second
+    @sub_second.clone
   }
 
   # Returns the year of the current time.
-  def year -> Integer {
-    @year
+  def year -> Int {
+    @year.clone
   }
 
   # Returns the month of the year from 1 to 12.
-  def month -> Integer {
-    @month
+  def month -> Int {
+    @month.clone
   }
 
   # Returns the day of the month from 1 to 31.
-  def day -> Integer {
-    @day
+  def day -> Int {
+    @day.clone
   }
 
   # Returns the day of the week from 1 to 7.
   #
   # Per ISO 8601 the first day of the week starts on Monday, not Sunday.
-  def day_of_week -> Integer {
+  def day_of_week -> Int {
     # January 1st, 1970 (our anchor date) was on a Thursday. We add 3 so that
     # Monday (3 days before Thursday) becomes the anchor date.
     #
@@ -543,15 +539,15 @@ class SystemTime {
 
   # Returns the day of the year from 1 to 366 for leap years, and from 1 to 365
   # for regular years.
-  def day_of_year -> Integer {
+  def day_of_year -> Int {
     days_since_january(month: month - 1, leap: leap_year?) + day
   }
 
   # Returns the number of days between `self` and the Unix epoch.
   #
-  # The returned `Integer` is negative if `self` is before the Unix epoch, and
+  # The returned `Int` is negative if `self` is before the Unix epoch, and
   # positive for a value that is on or after the Unix epoch.
-  def days_since_unix_epoch -> Integer {
+  def days_since_unix_epoch -> Int {
     let years = (year - UNIX_EPOCH_YEAR).absolute
     let leap_days = (years / 4)
       - (years / 100)
@@ -567,10 +563,11 @@ class SystemTime {
     # representing the first day of the year.
     let days_since_year_start = day_of_year - 1
 
-    before_unix_epoch?.if(
-      true: { 0 - (days_until_year_start - days_since_year_start) },
-      false: { days_until_year_start + days_since_year_start }
-    )
+    if before_unix_epoch? {
+      0 - (days_until_year_start - days_since_year_start)
+    } else {
+      days_until_year_start + days_since_year_start
+    }
   }
 
   # Returns `True` if the year in `self` comes before the Unix epoch.
@@ -582,12 +579,12 @@ class SystemTime {
   def leap_year? -> Boolean {
     let year = @year
 
-    (year % 4).zero?.and { (year % 100).positive?.or { (year % 400).zero? } }
+    (year % 4).zero? and ((year % 100).positive? or (year % 400).zero?)
   }
 
   # Returns the offset in seconds relative to UTC.
-  def utc_offset -> Integer {
-    @utc_offset
+  def utc_offset -> Int {
+    @utc_offset.clone
   }
 
   # Returns `True` if UTC is used.
@@ -597,35 +594,36 @@ class SystemTime {
 
   # Returns the number of seconds since the Unix epoch in UTC.
   #
-  # This value will be negative if `self` is a `SystemTime` before the Unix
+  # This value will be negative if `self` is a `DateTime` before the Unix
   # epoch.
-  def seconds_since_unix_epoch -> Integer {
+  def seconds_since_unix_epoch -> Int {
     let day_sec = days_since_unix_epoch.absolute * SECS_PER_DAY
     let time_sec = (hour * SECS_PER_HOUR) + (minute * SECS_PER_MIN) + second
-    let seconds = before_unix_epoch?.if(
-      true: { 0 - (day_sec - time_sec) },
-      false: { day_sec + time_sec }
-    )
+    let seconds = if before_unix_epoch? {
+      0 - (day_sec - time_sec)
+    } else {
+      day_sec + time_sec
+    }
 
     # Timestamps are always in UTC, not in the local time.
     seconds - utc_offset
   }
 
-  # Converts the `SystemTime` to another `SystemTime` that uses UTC as the
+  # Converts the `DateTime` to another `DateTime` that uses UTC as the
   # timezone.
   def to_utc -> Self {
-    SystemTime.from_utc_timestamp(to_float)
+    DateTime.from_utc_timestamp(to_float)
   }
 }
 
-impl ToInteger for SystemTime {
+impl ToInt for DateTime {
   # Returns the timestamp since the Unix epoch.
-  def to_integer -> Integer {
+  def to_int -> Int {
     seconds_since_unix_epoch
   }
 }
 
-impl ToFloat for SystemTime {
+impl ToFloat for DateTime {
   # Returns the timestamp since the Unix epoch, the including fractional
   # seconds.
   def to_float -> Float {
@@ -633,142 +631,140 @@ impl ToFloat for SystemTime {
   }
 }
 
-impl Add!(Duration) for SystemTime {
+impl Add!(Duration) for DateTime {
   # Adds the given number of seconds to `self`, returning the result as a new
-  # `SystemTime`.
+  # `DateTime`.
   #
   # # Examples
   #
-  # Adding a `Duration` to a `SystemTime`:
+  # Adding a `Duration` to a `DateTime`:
   #
-  #     import std::time::(Duration, SystemTime)
+  #     import std::time::(Duration, DateTime)
   #
-  #     SystemTime.now + Duration.from_seconds(5)
-  def +(other: Duration) -> Self {
+  #     DateTime.now + Duration.from_seconds(5)
+  def +(other: ref Duration) -> Self {
     let timestamp = to_float + other.to_float
 
-    utc?.if(
-      true: { SystemTime.from_utc_timestamp(timestamp) },
-      false: {
-        SystemTime.from_timestamp(time: timestamp, utc_offset: utc_offset)
-      }
-    )
+    if utc? {
+      DateTime.from_utc_timestamp(timestamp)
+    } else {
+      DateTime.from_timestamp(time: timestamp, utc_offset: utc_offset)
+    }
   }
 }
 
-impl Subtract!(Duration) for SystemTime {
+impl Subtract!(Duration) for DateTime {
   # Subtracts the given number of seconds from `self`, returning the result as
-  # a new `SystemTime`.
+  # a new `DateTime`.
   #
   # # Examples
   #
-  # Subtracting a `Duration` from a `SystemTime`:
+  # Subtracting a `Duration` from a `DateTime`:
   #
-  #     import std::time::(Duration, SystemTime)
+  #     import std::time::(Duration, DateTime)
   #
-  #     SystemTime.now - Duration.from_seconds(5)
-  def -(other: Duration) -> Self {
+  #     DateTime.now - Duration.from_seconds(5)
+  def -(other: ref Duration) -> Self {
     let timestamp = to_float - other.to_float
 
-    utc?.if(
-      true: { SystemTime.from_utc_timestamp(timestamp) },
-      false: {
-        SystemTime.from_timestamp(time: timestamp, utc_offset: utc_offset)
-      }
-    )
+    if utc? {
+      DateTime.from_utc_timestamp(timestamp)
+    } else {
+      DateTime.from_timestamp(time: timestamp, utc_offset: utc_offset)
+    }
   }
 }
 
-impl Smaller for SystemTime {
-  # Returns `True` if `self` is smaller than the given `SystemTime`.
+impl Smaller for DateTime {
+  # Returns `True` if `self` is smaller than the given `DateTime`.
   #
   # # Examples
   #
-  # Comparing two `SystemTime` objects:
+  # Comparing two `DateTime` objects:
   #
-  #     import std::time::SystemTime
+  #     import std::time::DateTime
   #
-  #     let before = SystemTime.now
+  #     let before = DateTime.now
   #     let after = before + 5
   #
   #     before < after # => True
-  def <(other: Self) -> Boolean {
+  def <(other: ref Self) -> Boolean {
     to_float < other.to_float
   }
 }
 
-impl SmallerOrEqual for SystemTime {
+impl SmallerOrEqual for DateTime {
   # Returns `True` if `self` is smaller than or equal to the given
-  # `SystemTime`.
+  # `DateTime`.
   #
   # # Examples
   #
-  # Comparing two `SystemTime` objects:
+  # Comparing two `DateTime` objects:
   #
-  #     import std::time::SystemTime
+  #     import std::time::DateTime
   #
-  #     let before = SystemTime.now
+  #     let before = DateTime.now
   #     let after = before + 5
   #
   #     before <= after  # => True
   #     before <= before # => True
-  def <=(other: Self) -> Boolean {
+  def <=(other: ref Self) -> Boolean {
     to_float <= other.to_float
   }
 }
 
-impl Greater for SystemTime {
-  # Returns `True` if `self` is greater than the given `SystemTime`.
+impl Greater for DateTime {
+  # Returns `True` if `self` is greater than the given `DateTime`.
   #
   # # Examples
   #
-  # Comparing two `SystemTime` objects:
+  # Comparing two `DateTime` objects:
   #
-  #     import std::time::SystemTime
+  #     import std::time::DateTime
   #
-  #     let before = SystemTime.now
+  #     let before = DateTime.now
   #     let after = before + 5
   #
   #     after > before # => True
-  def >(other: Self) -> Boolean {
+  def >(other: ref Self) -> Boolean {
     to_float > other.to_float
   }
 }
 
-impl GreaterOrEqual for SystemTime {
+impl GreaterOrEqual for DateTime {
   # Returns `True` if `self` is greater than or equal to the given
-  # `SystemTime`.
+  # `DateTime`.
   #
   # # Examples
   #
-  # Comparing two `SystemTime` objects:
+  # Comparing two `DateTime` objects:
   #
-  #     import std::time::SystemTime
+  #     import std::time::DateTime
   #
-  #     let before = SystemTime.now
+  #     let before = DateTime.now
   #     let after = before + 5
   #
   #     after >= before # => True
   #     after >= after  # => True
-  def >=(other: Self) -> Boolean {
+  def >=(other: ref Self) -> Boolean {
     to_float >= other.to_float
   }
 }
 
-impl Equal for SystemTime {
-  # Returns `True` if `self` and the given `SystemTime` are equal to each
+impl Equal for DateTime {
+  # Returns `True` if `self` and the given `DateTime` are equal to each
   # other.
   #
   # # Examples
   #
-  # Comparing two `SystemTime` objects:
+  # Comparing two `DateTime` objects:
   #
-  #     import std::time::SystemTime
+  #     import std::time::DateTime
   #
-  #     let now = SystemTime.now
+  #     let now = DateTime.now
   #
   #     now == now # => True
-  def ==(other: Self) -> Boolean {
+  def ==(other: ref Self) -> Boolean {
     to_float == other.to_float
   }
 }
@@ -782,7 +778,13 @@ class Instant {
   # The (internal) timestamp of this `Instant`.
   @time: Float
 
-  static def new(time = time_monotonic) -> Self {
+  # Returns a new `Instant` representing the current time.
+  static def now -> Self {
+    Self { @time = time_monotonic }
+  }
+
+  # Returns a new `Instant` at the given offset.
+  static def new(time: Float) -> Self {
     Self { @time = time }
   }
 
@@ -800,23 +802,23 @@ class Instant {
   #
   #     process.suspend(Duration.from_seconds(1))
   #
-  #     start.elapsed.to_integer # => 1
+  #     start.elapsed.to_int # => 1
   def elapsed -> Duration {
     Duration.new(time_monotonic - @time)
   }
 }
 
-impl ToInteger for Instant {
+impl ToInt for Instant {
   # Returns the number of seconds since the epoch.
-  def to_integer -> Integer {
-    @time.to_integer
+  def to_int -> Int {
+    @time.to_int
   }
 }
 
 impl ToFloat for Instant {
   # Returns the number of seconds since the epoch.
   def to_float -> Float {
-    @time
+    @time.clone
   }
 }
 
@@ -830,9 +832,9 @@ impl Add!(Duration) for Instant {
   #
   #     import std::time::(Duration, Instant)
   #
-  #     Instant.new + Duration.from_seconds(5)
-  def +(other: Duration) -> Self {
-    Instant.new(@time + other.to_float)
+  #     Instant.now + Duration.from_seconds(5)
+  def +(other: ref Duration) -> Self {
+    Instant { @time = @time + other.to_float }
   }
 }
 
@@ -844,9 +846,9 @@ impl Subtract!(Duration) for Instant {
   #
   #     import std::time::(Duration, Instant)
   #
-  #     Instant.new - Duration.from_seconds(5)
-  def -(other: Duration) -> Self {
-    Instant.new(@time - other.to_float)
+  #     Instant.now - Duration.from_seconds(5)
+  def -(other: ref Duration) -> Self {
+    Instant { @time = @time - other.to_float }
   }
 }
 
@@ -863,7 +865,7 @@ impl Smaller for Instant {
   #     let after = before + Duration.from_seconds(5)
   #
   #     before < after # => True
-  def <(other: Self) -> Boolean {
+  def <(other: ref Self) -> Boolean {
     @time < other.to_float
   }
 }
@@ -883,7 +885,7 @@ impl SmallerOrEqual for Instant {
   #
   #     before <= after  # => True
   #     before <= before # => True
-  def <=(other: Self) -> Boolean {
+  def <=(other: ref Self) -> Boolean {
     @time <= other.to_float
   }
 }
@@ -901,7 +903,7 @@ impl Greater for Instant {
   #     let after = before + Duration.from_seconds(5)
   #
   #     after > before # => True
-  def >(other: Self) -> Boolean {
+  def >(other: ref Self) -> Boolean {
     @time > other.to_float
   }
 }
@@ -921,7 +923,7 @@ impl GreaterOrEqual for Instant {
   #
   #     after >= before # => True
   #     after >= after  # => True
-  def >=(other: Self) -> Boolean {
+  def >=(other: ref Self) -> Boolean {
     @time >= other.to_float
   }
 }
@@ -935,9 +937,8 @@ impl Equal  for Instant {
   #
   #     import std::time::Instant
   #
-  #     Instant.new(1.0) == Instant.new(1.0) # => True
-  #     Instant.new(1.0) == Instant.new(2.0) # => False
-  def ==(other: Self) -> Boolean {
+  #     Instant.now == Instant.now
+  def ==(other: ref Self) -> Boolean {
     @time == other.to_float
   }
 }

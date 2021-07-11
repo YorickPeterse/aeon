@@ -1,8 +1,8 @@
 import std::float::(NAN, INFINITY, NEGATIVE_INFINITY)
-import std::hash::DefaultHasher
+import std::hash::Hasher
 import std::test::*
 
-def tests(t: Tests) {
+def tests(t: ref Tests) {
   t.group('std::float::Float.+') do (g) {
     g.test('Adding two Floats together') {
       try assert_equal(1.0 + 2.0, 3.0)
@@ -595,11 +595,11 @@ def tests(t: Tests) {
 
   t.group('std::float::Float.round') do (g) {
     g.test('Using a Float with no decimals') {
-      try assert_equal(1.0.round, 1.0)
+      try assert_equal(1.0.round(0), 1.0)
     }
 
     g.test('Using a Float with decimals') {
-      try assert_equal(1.1234.round, 1.0)
+      try assert_equal(1.1234.round(0), 1.0)
     }
 
     g.test('Rounding a Float using a positive number of decimals') {
@@ -631,15 +631,15 @@ def tests(t: Tests) {
     }
 
     g.test('Using a NAN') {
-      try assert_true(NAN.round.not_a_number?)
+      try assert_true(NAN.round(0).not_a_number?)
     }
 
     g.test('Using Infinity') {
-      try assert_equal(INFINITY.round, INFINITY)
+      try assert_equal(INFINITY.round(0), INFINITY)
     }
 
     g.test('Using negative Infinity') {
-      try assert_equal(NEGATIVE_INFINITY.round, NEGATIVE_INFINITY)
+      try assert_equal(NEGATIVE_INFINITY.round(0), NEGATIVE_INFINITY)
     }
   }
 
@@ -665,47 +665,47 @@ def tests(t: Tests) {
     }
   }
 
-  t.group('std::float::Float.to_integer') do (g) {
-    g.test('Converting a Float to an Integer') {
-      try assert_equal(1.5.to_integer, 1)
+  t.group('std::float::Float.to_int') do (g) {
+    g.test('Converting a Float to an Int') {
+      try assert_equal(1.5.to_int, 1)
     }
 
-    g.test('Converting a negative Float to an Integer') {
-      try assert_equal(-1.5.to_integer, -1)
+    g.test('Converting a negative Float to an Int') {
+      try assert_equal(-1.5.to_int, -1)
     }
 
-    g.test('Converting a very large Float to an Integer') {
+    g.test('Converting a very large Float to an Int') {
       let float = (1 << 100).to_float
 
-      try assert_equal(float.to_integer, 1 << 100)
+      try assert_equal(float.to_int, 1 << 100)
     }
 
-    g.test('Converting NaN to an Integer') {
+    g.test('Converting NaN to an Int') {
       try assert_panic(
         '
         import std::float::NAN
 
-        NAN.to_integer
+        NAN.to_int
         '
       )
     }
 
-    g.test('Converting Infinity to an Integer') {
+    g.test('Converting Infinity to an Int') {
       try assert_panic(
         '
         import std::float::INFINITY
 
-        INFINITY.to_integer
+        INFINITY.to_int
         '
       )
     }
 
-    g.test('Converting negative Infinity to an Integer') {
+    g.test('Converting negative Infinity to an Int') {
       try assert_panic(
         '
         import std::float::NEGATIVE_INFINITY
 
-        NEGATIVE_INFINITY.to_integer
+        NEGATIVE_INFINITY.to_int
         '
       )
     }
@@ -746,41 +746,41 @@ def tests(t: Tests) {
 
   t.group('std::float::Float.hash') do (g) {
     g.test('Hashing a Float') {
-      let hasher1 = DefaultHasher.new(1, 2)
-      let hasher2 = DefaultHasher.new(1, 2)
+      let hasher1 = Hasher.new(1, 2)
+      let hasher2 = Hasher.new(1, 2)
 
-      1.5.hash(hasher1)
-      1.5.hash(hasher2)
+      1.5.hash(ref hasher1)
+      1.5.hash(ref hasher2)
 
       try assert_equal(hasher1.to_hash, hasher2.to_hash)
     }
 
     g.test('Hashing a NaN') {
-      let hasher1 = DefaultHasher.new(1, 2)
-      let hasher2 = DefaultHasher.new(1, 2)
+      let hasher1 = Hasher.new(1, 2)
+      let hasher2 = Hasher.new(1, 2)
 
-      NAN.hash(hasher1)
-      NAN.hash(hasher2)
+      NAN.hash(ref hasher1)
+      NAN.hash(ref hasher2)
 
       try assert_equal(hasher1.to_hash, hasher2.to_hash)
     }
 
     g.test('Hashing Infinity') {
-      let hasher1 = DefaultHasher.new(1, 2)
-      let hasher2 = DefaultHasher.new(1, 2)
+      let hasher1 = Hasher.new(1, 2)
+      let hasher2 = Hasher.new(1, 2)
 
-      INFINITY.hash(hasher1)
-      INFINITY.hash(hasher2)
+      INFINITY.hash(ref hasher1)
+      INFINITY.hash(ref hasher2)
 
       try assert_equal(hasher1.to_hash, hasher2.to_hash)
     }
 
     g.test('Hashing negative Infinity') {
-      let hasher1 = DefaultHasher.new(1, 2)
-      let hasher2 = DefaultHasher.new(1, 2)
+      let hasher1 = Hasher.new(1, 2)
+      let hasher2 = Hasher.new(1, 2)
 
-      NEGATIVE_INFINITY.hash(hasher1)
-      NEGATIVE_INFINITY.hash(hasher2)
+      NEGATIVE_INFINITY.hash(ref hasher1)
+      NEGATIVE_INFINITY.hash(ref hasher2)
 
       try assert_equal(hasher1.to_hash, hasher2.to_hash)
     }
@@ -810,11 +810,11 @@ def tests(t: Tests) {
     }
 
     g.test('Parsing a Float with leading whitespace') {
-      try assert_throw { local try Float.parse(' 1.2') }
+      try assert_throw { try Float.parse(' 1.2') }
     }
 
     g.test('Parsing a Float with trailing whitespace') {
-      try assert_throw { local try Float.parse('1.2 ') }
+      try assert_throw { try Float.parse('1.2 ') }
     }
 
     g.test('Parsing a Float with an exponentn') {

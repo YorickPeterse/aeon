@@ -33,7 +33,6 @@ impl<T> ArcWithoutWeak<T> {
     ///
     /// The returned pointer is in reality a pointer to the inner structure,
     /// instead of a pointer directly to the value.
-    #[cfg_attr(feature = "cargo-clippy", allow(wrong_self_convention))]
     pub fn into_raw(value: Self) -> *mut T {
         let raw = value.inner;
 
@@ -68,10 +67,6 @@ impl<T> ArcWithoutWeak<T> {
 
     pub fn inner(&self) -> &Inner<T> {
         unsafe { self.inner.as_ref() }
-    }
-
-    pub fn references(&self) -> usize {
-        self.inner().references.load(Ordering::SeqCst)
     }
 
     pub fn as_ptr(&self) -> *mut T {
@@ -127,6 +122,12 @@ impl<T: PartialEq> PartialEq for ArcWithoutWeak<T> {
 
 impl<T: Eq> Eq for ArcWithoutWeak<T> {}
 
+impl<T> From<&ArcWithoutWeak<T>> for ArcWithoutWeak<T> {
+    fn from(arc: &ArcWithoutWeak<T>) -> Self {
+        arc.clone()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -144,8 +145,8 @@ mod tests {
         let pointer = ArcWithoutWeak::new(10);
         let cloned = pointer.clone();
 
-        assert_eq!(pointer.references(), 2);
-        assert_eq!(cloned.references(), 2);
+        assert_eq!(pointer.inner().references.load(Ordering::SeqCst), 2);
+        assert_eq!(cloned.inner().references.load(Ordering::SeqCst), 2);
     }
 
     #[test]
@@ -155,7 +156,7 @@ mod tests {
 
         drop(cloned);
 
-        assert_eq!(pointer.references(), 1);
+        assert_eq!(pointer.inner().references.load(Ordering::SeqCst), 1);
     }
 
     #[test]
@@ -188,7 +189,8 @@ mod tests {
     }
 
     #[test]
-    fn test_optional_type_type() {
+    fn test_type_size() {
         assert_eq!(mem::size_of::<ArcWithoutWeak<()>>(), 8);
+        assert_eq!(mem::size_of::<Option<ArcWithoutWeak<()>>>(), 8);
     }
 }

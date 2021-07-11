@@ -1,34 +1,49 @@
 //! Functions for working with Inko floats.
-use crate::object_pointer::ObjectPointer;
-use crate::object_value;
-use crate::process::RcProcess;
+use crate::mem::allocator::{BumpAllocator, Pointer};
+use crate::mem::generator::GeneratorPointer;
+use crate::mem::objects::{Float, Int, String as InkoString, UnsignedInt};
+use crate::mem::process::ServerPointer;
 use crate::runtime_error::RuntimeError;
-use crate::vm::state::RcState;
+use crate::vm::state::State;
 
 /// Rounds a float up.
 ///
 /// This function requires a single argument: the float to round.
 pub fn float_ceil(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let float = arguments[0].float_value()?.ceil();
+    state: &State,
+    alloc: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let float = unsafe { Float::read(arguments[0]) };
+    let value = float.ceil();
 
-    Ok(process.allocate(object_value::float(float), state.float_prototype))
+    Ok(Float::alloc(
+        alloc,
+        state.permanent_space.float_class(),
+        value,
+    ))
 }
 
 /// Rounds a float down.
 ///
 /// This function requires a single argument: the float to round.
 pub fn float_floor(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let float = arguments[0].float_value()?.floor();
+    state: &State,
+    alloc: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let float = unsafe { Float::read(arguments[0]) };
+    let value = float.floor();
 
-    Ok(process.allocate(object_value::float(float), state.float_prototype))
+    Ok(Float::alloc(
+        alloc,
+        state.permanent_space.float_class(),
+        value,
+    ))
 }
 
 /// Rounds a float to a given number of decimals.
@@ -38,18 +53,17 @@ pub fn float_floor(
 /// 1. The float to round.
 /// 2. The number of decimals to round to.
 pub fn float_round(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let float = arguments[0].float_value()?;
-    let precision = arguments[1].integer_value()?;
-
+    state: &State,
+    alloc: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let float = unsafe { Float::read(arguments[0]) };
+    let precision = unsafe { UnsignedInt::read(arguments[1]) };
     let result = if precision == 0 {
         float.round()
-    } else if precision >= i64::from(i32::MIN)
-        && precision <= i64::from(i32::MAX)
-    {
+    } else if precision <= u64::from(u32::MAX) {
         let power = 10.0_f64.powi(precision as i32);
         let multiplied = float * power;
 
@@ -65,80 +79,127 @@ pub fn float_round(
         float
     };
 
-    Ok(process.allocate(object_value::float(result), state.float_prototype))
+    Ok(Float::alloc(
+        alloc,
+        state.permanent_space.float_class(),
+        result,
+    ))
 }
 
 /// Returns the bitwise representation of the float.
 ///
 /// This function requires a single argument: the float to convert.
 pub fn float_to_bits(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let bits = arguments[0].float_value()?.to_bits();
+    state: &State,
+    alloc: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let bits = unsafe { Float::read(arguments[0]) }.to_bits();
 
-    Ok(process.allocate_u64(bits, state.integer_prototype))
+    Ok(UnsignedInt::alloc(
+        alloc,
+        state.permanent_space.unsigned_int_class(),
+        bits,
+    ))
 }
 
 /// Converts a Float to an Integer.
 ///
 /// This function requires a single argument: the float to convert.
 pub fn float_to_integer(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let float_val = arguments[0].float_value()?;
+    state: &State,
+    alloc: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let float = unsafe { Float::read(arguments[0]) };
 
-    Ok(process.allocate_f64_as_i64(float_val, state.integer_prototype)?)
+    Ok(Int::alloc(
+        alloc,
+        state.permanent_space.int_class(),
+        float as i64,
+    ))
 }
 
 /// Converts a Float to a String.
 ///
 /// This function requires a single argument: the float to convert.
 pub fn float_to_string(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let result = format!("{:?}", arguments[0].float_value()?);
+    state: &State,
+    alloc: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let value = format!("{:?}", unsafe { Float::read(arguments[0]) });
 
-    Ok(process.allocate(object_value::string(result), state.string_prototype))
+    Ok(InkoString::alloc(
+        alloc,
+        state.permanent_space.string_class(),
+        value,
+    ))
 }
 
 /// Returns true if a Float is a NaN.
 ///
 /// This function requires a single argument: the float to check.
 pub fn float_is_nan(
-    state: &RcState,
-    _: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let result = if arguments[0].float_value()?.is_nan() {
-        state.true_object
+    state: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    if unsafe { Float::read(arguments[0]) }.is_nan() {
+        Ok(state.permanent_space.true_singleton)
     } else {
-        state.false_object
-    };
-
-    Ok(result)
+        Ok(state.permanent_space.false_singleton)
+    }
 }
 
 /// Returns true if a Float is an infinite number.
 ///
 /// This function requires a single argument: the float to check.
 pub fn float_is_infinite(
-    state: &RcState,
-    _: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let result = if arguments[0].float_value()?.is_infinite() {
-        state.true_object
+    state: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    if unsafe { Float::read(arguments[0]) }.is_infinite() {
+        Ok(state.permanent_space.true_singleton)
     } else {
-        state.false_object
-    };
+        Ok(state.permanent_space.false_singleton)
+    }
+}
 
-    Ok(result)
+/// Copies a Float
+///
+/// This function requires a single argument: the Float to copy.
+pub fn float_clone(
+    state: &State,
+    alloc: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let src = arguments[0];
+
+    if src.is_permanent() {
+        return Ok(src);
+    }
+
+    let value = unsafe { Float::read(src) };
+
+    Ok(Float::alloc(
+        alloc,
+        state.permanent_space.float_class(),
+        value,
+    ))
 }
 
 register!(
@@ -149,5 +210,6 @@ register!(
     float_to_integer,
     float_to_string,
     float_is_nan,
-    float_is_infinite
+    float_is_infinite,
+    float_clone
 );

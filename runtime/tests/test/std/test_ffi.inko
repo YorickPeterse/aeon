@@ -46,7 +46,7 @@ def tm_struct -> Layout {
   }
 }
 
-def allocate!(R)(size: Integer, block: do (Pointer) -> R) -> R {
+def allocate!(R)(size: Int, block: move do (Pointer) -> R) -> R {
   let libc = try! Library.new(libc_paths)
   let calloc = try! libc.function(
     name: 'calloc',
@@ -62,10 +62,8 @@ def allocate!(R)(size: Integer, block: do (Pointer) -> R) -> R {
 
   let pointer = calloc.call(1, size) as Pointer
 
-  pointer.null?.if_true {
-    let error = `calloc() failed to allocate {size} bytes of memory`
-
-    process.panic(error)
+  if pointer.null? {
+    process.panic(`calloc() failed to allocate {size} bytes of memory`)
   }
 
   # We defer _after_ the above check, otherwise we may try to free() a NULL
@@ -74,7 +72,7 @@ def allocate!(R)(size: Integer, block: do (Pointer) -> R) -> R {
   block.call(pointer)
 }
 
-def tests(t: Tests) {
+def tests(t: ref Tests) {
   t.group('std::ffi::Pointer.null') do (g) {
     g.test('Creating a NULL pointer') {
       try assert_true(Pointer.null.null?)
@@ -97,7 +95,7 @@ def tests(t: Tests) {
   t.group('std::ffi::Pointer.read') do (g) {
     g.test('Reading a Pointer from a Pointer') {
       allocate(ffi.pointer.size) do (pointer) {
-        let value = pointer.read(ffi.pointer) as Pointer
+        let value = pointer.read(ffi.pointer, offset: 0) as Pointer
 
         try assert_true(value.null?)
       }
@@ -105,13 +103,13 @@ def tests(t: Tests) {
 
     g.test('Reading a Float from a Pointer') {
       allocate(ffi.f64.size) do (pointer) {
-        try assert_equal(pointer.read(ffi.f64) as Float, 0.0)
+        try assert_equal(pointer.read(ffi.f64, offset: 0) as Float, 0.0)
       }
     }
 
-    g.test('Reading an Integer from a Pointer') {
+    g.test('Reading an Int from a Pointer') {
       allocate(ffi.i32.size) do (pointer) {
-        try assert_equal(pointer.read(ffi.i32) as Integer, 0)
+        try assert_equal(pointer.read(ffi.i32, offset: 0) as Int, 0)
       }
     }
   }
@@ -119,19 +117,23 @@ def tests(t: Tests) {
   t.group('std::ffi::Pointer.write') do (g) {
     g.test('Writing the address of a Pointer to a Pointer') {
       allocate(ffi.pointer.size) do (pointer) {
-        allocate(ffi.i32.size) do (target) {
-          pointer.write(ffi.pointer, target)
+        allocate(ffi.i32.size) do (input) {
+          let input_addr = input.address
 
-          try assert_equal(pointer.read(ffi.pointer) as Pointer, target)
+          pointer.write(ffi.pointer, input, offset: 0)
+
+          let output = pointer.read(ffi.pointer, offset: 0) as Pointer
+
+          try assert_equal(output.address, input_addr)
         }
       }
     }
 
     g.test('Writing a String to a Pointer') {
       allocate(5) do (pointer) {
-        pointer.write(ffi.string, 'inko')
+        pointer.write(ffi.string, 'inko', offset: 0)
 
-        try assert_equal(pointer.read(ffi.string) as String, 'inko')
+        try assert_equal(pointer.read(ffi.string, offset: 0) as String, 'inko')
       }
     }
 
@@ -139,9 +141,11 @@ def tests(t: Tests) {
       allocate(5) do (pointer) {
         let bytes = 'inko'.to_byte_array
 
-        pointer.write(ffi.byte_array, bytes)
+        pointer.write(ffi.byte_array, bytes, offset: 0)
 
-        try assert_equal(pointer.read(ffi.byte_array) as ByteArray, bytes)
+        let output = pointer.read(ffi.byte_array, offset: 0) as ByteArray
+
+        try assert_equal(output, 'inko'.to_byte_array)
       }
     }
 
@@ -149,9 +153,9 @@ def tests(t: Tests) {
       let type = ffi.f32
 
       allocate(type.size) do (pointer) {
-        pointer.write(type, 1.5)
+        pointer.write(type, 1.5, offset: 0)
 
-        try assert_equal(pointer.read(type) as Float, 1.5)
+        try assert_equal(pointer.read(type, offset: 0) as Float, 1.5)
       }
     }
 
@@ -159,9 +163,9 @@ def tests(t: Tests) {
       let type = ffi.f64
 
       allocate(type.size) do (pointer) {
-        pointer.write(type, 1.5)
+        pointer.write(type, 1.5, offset: 0)
 
-        try assert_equal(pointer.read(type) as Float, 1.5)
+        try assert_equal(pointer.read(type, offset: 0) as Float, 1.5)
       }
     }
 
@@ -169,9 +173,9 @@ def tests(t: Tests) {
       let type = ffi.i8
 
       allocate(type.size) do (pointer) {
-        pointer.write(type, 42)
+        pointer.write(type, 42, offset: 0)
 
-        try assert_equal(pointer.read(type) as Integer, 42)
+        try assert_equal(pointer.read(type, offset: 0) as Int, 42)
       }
     }
 
@@ -179,9 +183,9 @@ def tests(t: Tests) {
       let type = ffi.i16
 
       allocate(type.size) do (pointer) {
-        pointer.write(type, 42)
+        pointer.write(type, 42, offset: 0)
 
-        try assert_equal(pointer.read(type) as Integer, 42)
+        try assert_equal(pointer.read(type, offset: 0) as Int, 42)
       }
     }
 
@@ -189,9 +193,9 @@ def tests(t: Tests) {
       let type = ffi.i32
 
       allocate(type.size) do (pointer) {
-        pointer.write(type, 42)
+        pointer.write(type, 42, offset: 0)
 
-        try assert_equal(pointer.read(type) as Integer, 42)
+        try assert_equal(pointer.read(type, offset: 0) as Int, 42)
       }
     }
 
@@ -199,9 +203,9 @@ def tests(t: Tests) {
       let type = ffi.i64
 
       allocate(type.size) do (pointer) {
-        pointer.write(type, 42)
+        pointer.write(type, 42, offset: 0)
 
-        try assert_equal(pointer.read(type) as Integer, 42)
+        try assert_equal(pointer.read(type, offset: 0) as Int, 42)
       }
     }
 
@@ -209,9 +213,9 @@ def tests(t: Tests) {
       let type = ffi.u8
 
       allocate(type.size) do (pointer) {
-        pointer.write(type, 42)
+        pointer.write(type, 42, offset: 0)
 
-        try assert_equal(pointer.read(type) as Integer, 42)
+        try assert_equal(pointer.read(type, offset: 0) as Int, 42)
       }
     }
 
@@ -219,9 +223,9 @@ def tests(t: Tests) {
       let type = ffi.i16
 
       allocate(type.size) do (pointer) {
-        pointer.write(type, 42)
+        pointer.write(type, 42, offset: 0)
 
-        try assert_equal(pointer.read(type) as Integer, 42)
+        try assert_equal(pointer.read(type, offset: 0) as Int, 42)
       }
     }
 
@@ -229,9 +233,9 @@ def tests(t: Tests) {
       let type = ffi.u32
 
       allocate(type.size) do (pointer) {
-        pointer.write(type, 42)
+        pointer.write(type, 42, offset: 0)
 
-        try assert_equal(pointer.read(type) as Integer, 42)
+        try assert_equal(pointer.read(type, offset: 0) as Int, 42)
       }
     }
 
@@ -239,9 +243,9 @@ def tests(t: Tests) {
       let type = ffi.u64
 
       allocate(type.size) do (pointer) {
-        pointer.write(type, 42)
+        pointer.write(type, 42, offset: 0)
 
-        try assert_equal(pointer.read(type) as Integer, 42)
+        try assert_equal(pointer.read(type, offset: 0) as Int, 42)
       }
     }
 
@@ -249,9 +253,9 @@ def tests(t: Tests) {
       let type = ffi.size_t
 
       allocate(type.size) do (pointer) {
-        pointer.write(type, 42)
+        pointer.write(type, 42, offset: 0)
 
-        try assert_equal(pointer.read(type) as Integer, 42)
+        try assert_equal(pointer.read(type, offset: 0) as Int, 42)
       }
     }
   }
@@ -266,7 +270,7 @@ def tests(t: Tests) {
   t.group('std::ffi::Library.new') do (g) {
     g.test('Opening a non existing library') {
       try assert_throw {
-        local try Library.new(Array.new('does-not-exist.so'))
+        try Library.new(Array.new('does-not-exist.so'))
       }
     }
 
@@ -275,11 +279,11 @@ def tests(t: Tests) {
 
       paths.append(libc_paths)
 
-      try assert_no_throw { local try Library.new(paths) }
+      try assert_no_throw { try Library.new(paths) }
     }
 
     g.test('Opening an existing library') {
-      try assert_no_throw { local try Library.new(libc_paths) }
+      try assert_no_throw { try Library.new(libc_paths) }
     }
   }
 
@@ -287,13 +291,13 @@ def tests(t: Tests) {
     g.test('Obtaining a Pointer to an existing variable') {
       let libc = try! Library.new(libc_paths)
 
-      try assert_no_throw { local try libc.variable('malloc') }
+      try assert_no_throw { try libc.variable('malloc') }
     }
 
     g.test('Obtaining a Pointer using a non existing variable') {
       let libc = try! Library.new(libc_paths)
 
-      try assert_throw { local try libc.variable('kittens') }
+      try assert_throw { try libc.variable('kittens') }
     }
   }
 
@@ -310,7 +314,7 @@ def tests(t: Tests) {
       let libc = try! Library.new(libc_paths)
 
       try assert_no_throw {
-        local try libc.function(
+        try libc.function(
           name: 'malloc',
           arguments: Array.new(ffi.size_t),
           returns: ffi.pointer
@@ -322,7 +326,7 @@ def tests(t: Tests) {
       let libc = try! Library.new(libc_paths)
 
       try assert_throw {
-        local try libc.function(
+        try libc.function(
           name: 'kittens',
           arguments: Array.new,
           returns: ffi.pointer
@@ -336,7 +340,7 @@ def tests(t: Tests) {
       let libc = try! Library.new(libc_paths)
 
       try assert_no_throw {
-        local try Function.new(
+        try Function.new(
           library: libc,
           name: 'malloc',
           arguments: Array.new(ffi.size_t),
@@ -349,7 +353,7 @@ def tests(t: Tests) {
       let libc = try! Library.new(libc_paths)
 
       try assert_throw {
-        local try Function.new(
+        try Function.new(
           library: libc,
           name: 'kittens',
           arguments: Array.new,
@@ -363,7 +367,7 @@ def tests(t: Tests) {
     g.test('Calling a function with a valid number of arguments') {
       let libc = try! Library.new(libc_paths)
       let time_func = try! libc.function('time', Array.new(ffi.pointer), ffi.i64)
-      let timestamp = time_func.call(Pointer.null) as Integer
+      let timestamp = time_func.call(Pointer.null) as Int
 
       try assert_true(timestamp.positive?)
     }
@@ -438,7 +442,8 @@ def tests(t: Tests) {
 
       let layout = Layout.new(members: members, alignment: 8, size: 4)
 
-      try assert_true(layout['tm_sec'].same_object?(member))
+      try assert_equal(layout['tm_sec'].name, 'tm_sec')
+      try assert_equal(layout['tm_sec'].type, ffi.i32)
     }
 
     g.test('Obtaining a Member using an invalid name') {
@@ -457,10 +462,12 @@ def tests(t: Tests) {
       let tm = tm_struct
 
       allocate(tm.size) do (pointer) {
+        let size = tm.size
+        let align = tm.alignment
         let struct = tm.from_pointer(pointer)
 
-        try assert_equal(struct.size, tm.size)
-        try assert_equal(struct.alignment, tm.alignment)
+        try assert_equal(struct.size, size)
+        try assert_equal(struct.alignment, align)
       }
     }
   }
@@ -499,7 +506,7 @@ def tests(t: Tests) {
       allocate(tm.size) do (pointer) {
         let struct = Struct.new(pointer: pointer, layout: tm)
 
-        try assert_equal(struct['tm_sec'] as Integer, 0)
+        try assert_equal(struct['tm_sec'] as Int, 0)
       }
     }
 
@@ -524,7 +531,7 @@ def tests(t: Tests) {
 
         struct['tm_sec'] = 42
 
-        try assert_equal(struct['tm_sec'] as Integer, 42)
+        try assert_equal(struct['tm_sec'] as Int, 42)
       }
     }
 
@@ -609,11 +616,11 @@ def tests(t: Tests) {
     }
   }
 
-  t.group('std::ffi::Type.to_integer') do (g) {
+  t.group('std::ffi::Type.to_int') do (g) {
     g.test('Obtaining the type ID of a Type') {
       let type = Type.new(2)
 
-      try assert_equal(type.to_integer, 2)
+      try assert_equal(type.to_int, 2)
     }
   }
 
@@ -635,91 +642,91 @@ def tests(t: Tests) {
 
   t.group('std::ffi.void') do (g) {
     g.test('Creating a new void type') {
-      try assert_equal(ffi.void.to_integer, 0)
+      try assert_equal(ffi.void.to_int, 0)
     }
   }
 
   t.group('std::ffi.pointer') do (g) {
     g.test('Creating a new pointer type') {
-      try assert_equal(ffi.pointer.to_integer, 1)
+      try assert_equal(ffi.pointer.to_int, 1)
     }
   }
 
   t.group('std::ffi.f64') do (g) {
     g.test('Creating a new double type') {
-      try assert_equal(ffi.f64.to_integer, 2)
+      try assert_equal(ffi.f64.to_int, 2)
     }
   }
 
   t.group('std::ffi.f32') do (g) {
     g.test('Creating a new float type') {
-      try assert_equal(ffi.f32.to_integer, 3)
+      try assert_equal(ffi.f32.to_int, 3)
     }
   }
 
   t.group('std::ffi.i8') do (g) {
     g.test('Creating a new char type') {
-      try assert_equal(ffi.i8.to_integer, 4)
+      try assert_equal(ffi.i8.to_int, 4)
     }
   }
 
   t.group('std::ffi.i16') do (g) {
     g.test('Creating a new short type') {
-      try assert_equal(ffi.i16.to_integer, 5)
+      try assert_equal(ffi.i16.to_int, 5)
     }
   }
 
   t.group('std::ffi.i32') do (g) {
     g.test('Creating a new int type') {
-      try assert_equal(ffi.i32.to_integer, 6)
+      try assert_equal(ffi.i32.to_int, 6)
     }
   }
 
   t.group('std::ffi.i64') do (g) {
     g.test('Creating a new long type') {
-      try assert_equal(ffi.i64.to_integer, 7)
+      try assert_equal(ffi.i64.to_int, 7)
     }
   }
 
   t.group('std::ffi.u8') do (g) {
     g.test('Creating a new unsigned char type') {
-      try assert_equal(ffi.u8.to_integer, 8)
+      try assert_equal(ffi.u8.to_int, 8)
     }
   }
 
   t.group('std::ffi.u16') do (g) {
     g.test('Creating a new unsigned short type') {
-      try assert_equal(ffi.u16.to_integer, 9)
+      try assert_equal(ffi.u16.to_int, 9)
     }
   }
 
   t.group('std::ffi.u32') do (g) {
     g.test('Creating a new unsigned int type') {
-      try assert_equal(ffi.u32.to_integer, 10)
+      try assert_equal(ffi.u32.to_int, 10)
     }
   }
 
   t.group('std::ffi.u64') do (g) {
     g.test('Creating a new unsigned long type') {
-      try assert_equal(ffi.u64.to_integer, 11)
+      try assert_equal(ffi.u64.to_int, 11)
     }
   }
 
   t.group('std::ffi.size_t') do (g) {
     g.test('Creating a new size_t type') {
-      try assert_equal(ffi.size_t.to_integer, 14)
+      try assert_equal(ffi.size_t.to_int, 14)
     }
   }
 
   t.group('std::ffi.string') do (g) {
     g.test('Creating a new string type') {
-      try assert_equal(ffi.string.to_integer, 12)
+      try assert_equal(ffi.string.to_int, 12)
     }
   }
 
   t.group('std::ffi.byte_array') do (g) {
     g.test('Creating a new byte array type') {
-      try assert_equal(ffi.byte_array.to_integer, 13)
+      try assert_equal(ffi.byte_array.to_int, 13)
     }
   }
 }

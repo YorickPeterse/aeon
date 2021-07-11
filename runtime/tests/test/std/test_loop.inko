@@ -1,29 +1,7 @@
 import std::loop::(self as loop_mod)
 import std::test::*
 
-def loop_forever -> Integer {
-  let mut i = 0
-
-  loop_mod.loop { (i < 3).if(true: { i += 1 }, false: { return i }) }
-}
-
-def tests(t: Tests) {
-  t.group('std::loop.while') do (g) {
-    g.test('Looping while a condition is truthy') {
-      let mut iters = 0
-
-      loop_mod.while({ iters < 3 }) { iters += 1 }
-
-      try assert_equal(iters, 3)
-    }
-  }
-
-  t.group('std::loop.loop') do (g) {
-    g.test('Looping infinitely') {
-      try assert_equal(loop_forever, 3)
-    }
-  }
-
+def tests(t: ref Tests) {
   t.group('std::loop.repeat') do (g) {
     g.test('Repeating a loop a fixed number of times') {
       let mut iters = 0

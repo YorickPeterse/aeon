@@ -31,312 +31,344 @@ let SOCK_RAW = 3
 let MAXIMUM_LISTEN_BACKLOG = 65_535
 
 extern def socket_read(
-  socket: Socket,
-  bytes: ByteArray,
-  size: Integer
-) !! Integer -> Integer
+  socket: ref Socket,
+  bytes: ref ByteArray,
+  size: ref Int
+) !! Int -> Int
 
 extern def socket_write_string(
-  socket: Socket,
-  input: String
-) !! Integer -> Integer
+  socket: ref Socket,
+  input: ref String
+) !! Int -> Int
 
 extern def socket_write_bytes(
-  socket: Socket,
-  input: ByteArray,
-) !! Integer -> Integer
+  socket: ref Socket,
+  input: ref ByteArray,
+) !! Int -> Int
 
-extern def socket_listen(socket: Socket, backlog: Integer) !! Integer -> Integer
-extern def socket_bind(socket: Socket, address: String, port: Integer) !! Integer
+extern def socket_listen(
+  socket: ref Socket,
+  backlog: ref Int
+) !! Int -> Int
+
+extern def socket_bind(
+  socket: ref Socket,
+  address: ref String,
+  port: ref Int
+) !! Int
+
 extern def socket_connect(
-  socket: Socket,
-  address: String,
-  port: Integer
-) !! Integer
+  socket: ref Socket,
+  address: ref String,
+  port: ref Int
+) !! Int
 
 extern def socket_receive_from(
-  socket: Socket,
-  bytes: ByteArray,
-  size: Integer
-) !! Integer -> Array!(Any)
+  socket: ref Socket,
+  bytes: ref ByteArray,
+  size: ref Int
+) !! Int -> Array!(Any)
 
 extern def socket_send_bytes_to(
-  socket: Socket,
-  input: ByteArray,
-  address: String,
-  port: Integer
-) !! Integer -> Integer
+  socket: ref Socket,
+  input: ref ByteArray,
+  address: ref String,
+  port: ref Int
+) !! Int -> Int
 
 extern def socket_send_string_to(
-  socket: Socket,
-  input: String,
-  address: String,
-  port: Integer
-) !! Integer -> Integer
+  socket: ref Socket,
+  input: ref String,
+  address: ref String,
+  port: ref Int
+) !! Int -> Int
 
-extern def socket_shutdown_read(socket: Socket) !! Integer
-extern def socket_shutdown_write(socket: Socket) !! Integer
-extern def socket_shutdown_read_write(socket: Socket) !! Integer
-extern def socket_local_address(socket: Socket) !! Integer -> Array!(Any)
-extern def socket_peer_address(socket: Socket) !! Integer -> Array!(Any)
+extern def socket_shutdown_read(socket: ref Socket) !! Int
+extern def socket_shutdown_write(socket: ref Socket) !! Int
+extern def socket_shutdown_read_write(socket: ref Socket) !! Int
+extern def socket_local_address(socket: ref Socket) !! Int -> Array!(Any)
+extern def socket_peer_address(socket: ref Socket) !! Int -> Array!(Any)
 
-extern def socket_get_ttl(socket: Socket) !! Integer -> Integer
-extern def socket_get_only_v6(socket: Socket) !! Integer -> Boolean
-extern def socket_get_nodelay(socket: Socket) !! Integer -> Boolean
-extern def socket_get_broadcast(socket: Socket) !! Integer -> Boolean
-extern def socket_get_linger(socket: Socket) !! Integer -> Float
-extern def socket_get_recv_size(socket: Socket) !! Integer -> Integer
-extern def socket_get_send_size(socket: Socket) !! Integer -> Integer
-extern def socket_get_keepalive(socket: Socket) !! Integer -> Float
-extern def socket_get_multicast_loop_v4(socket: Socket) !! Integer -> Boolean
-extern def socket_get_multicast_loop_v6(socket: Socket) !! Integer -> Boolean
-extern def socket_get_multicast_ttl_v4(socket: Socket) !! Integer -> Integer
-extern def socket_get_multicast_hops_v6(socket: Socket) !! Integer -> Integer
-extern def socket_get_multicast_if_v4(socket: Socket) !! Integer -> String
-extern def socket_get_multicast_if_v6(socket: Socket) !! Integer -> Integer
-extern def socket_get_unicast_hops_v6(socket: Socket) !! Integer -> Integer
-extern def socket_get_reuse_address(socket: Socket) !! Integer -> Boolean
-extern def socket_get_reuse_port(socket: Socket) !! Integer -> Boolean
+extern def socket_get_ttl(socket: ref Socket) !! Int -> Int
+extern def socket_get_only_v6(socket: ref Socket) !! Int -> Boolean
+extern def socket_get_nodelay(socket: ref Socket) !! Int -> Boolean
+extern def socket_get_broadcast(socket: ref Socket) !! Int -> Boolean
+extern def socket_get_linger(socket: ref Socket) !! Int -> Float
+extern def socket_get_recv_size(socket: ref Socket) !! Int -> Int
+extern def socket_get_send_size(socket: ref Socket) !! Int -> Int
+extern def socket_get_keepalive(socket: ref Socket) !! Int -> Float
+extern def socket_get_multicast_loop_v4(socket: ref Socket) !! Int -> Boolean
+extern def socket_get_multicast_loop_v6(socket: ref Socket) !! Int -> Boolean
+extern def socket_get_multicast_ttl_v4(socket: ref Socket) !! Int -> Int
+extern def socket_get_multicast_hops_v6(socket: ref Socket) !! Int -> Int
+extern def socket_get_multicast_if_v4(socket: ref Socket) !! Int -> String
+extern def socket_get_multicast_if_v6(socket: ref Socket) !! Int -> Int
+extern def socket_get_unicast_hops_v6(socket: ref Socket) !! Int -> Int
+extern def socket_get_reuse_address(socket: ref Socket) !! Int -> Boolean
+extern def socket_get_reuse_port(socket: ref Socket) !! Int -> Boolean
 
-extern def socket_set_ttl(socket: Socket, value: Integer) !! Integer -> Integer
+extern def socket_set_ttl(
+  socket: ref Socket,
+  value: ref Int
+) !! Int -> Int
+
 extern def socket_set_only_v6(
-  socket: Socket,
-  value: Boolean
-) !! Integer -> Boolean
+  socket: ref Socket,
+  value: ref Boolean
+) !! Int -> Boolean
 
 extern def socket_set_nodelay(
-  socket: Socket,
-  value: Boolean
-) !! Integer -> Boolean
+  socket: ref Socket,
+  value: ref Boolean
+) !! Int -> Boolean
 
 extern def socket_set_broadcast(
-  socket: Socket,
-  value: Boolean
-) !! Integer -> Boolean
+  socket: ref Socket,
+  value: ref Boolean
+) !! Int -> Boolean
 
-extern def socket_set_linger(socket: Socket, value: Float) !! Integer -> Float
+extern def socket_set_linger(
+  socket: ref Socket,
+  value: ref Float
+) !! Int -> Float
+
 extern def socket_set_recv_size(
-  socket: Socket,
-  value: Integer
-) !! Integer -> Integer
+  socket: ref Socket,
+  value: ref Int
+) !! Int -> Int
 
 extern def socket_set_send_size(
-  socket: Socket,
-  value: Integer
-) !! Integer -> Integer
+  socket: ref Socket,
+  value: ref Int
+) !! Int -> Int
 
 extern def socket_set_keepalive(
-  socket: Socket,
-  value: Float
-) !! Integer -> Float
+  socket: ref Socket,
+  value: ref Float
+) !! Int -> Float
 
 extern def socket_set_multicast_loop_v4(
-  socket: Socket,
-  value: Boolean
-) !! Integer -> Boolean
+  socket: ref Socket,
+  value: ref Boolean
+) !! Int -> Boolean
 
 extern def socket_set_multicast_loop_v6(
-  socket: Socket,
-  value: Boolean
-) !! Integer -> Boolean
+  socket: ref Socket,
+  value: ref Boolean
+) !! Int -> Boolean
 
 extern def socket_set_multicast_ttl_v4(
-  socket: Socket,
-  value: Integer
-) !! Integer -> Integer
+  socket: ref Socket,
+  value: ref Int
+) !! Int -> Int
 
 extern def socket_set_multicast_hops_v6(
-  socket: Socket,
-  value: Integer
-) !! Integer -> Integer
+  socket: ref Socket,
+  value: ref Int
+) !! Int -> Int
 
 extern def socket_set_multicast_if_v4(
-  socket: Socket,
-  value: String
-) !! Integer -> String
+  socket: ref Socket,
+  value: ref String
+) !! Int -> String
 
 extern def socket_set_multicast_if_v6(
-  socket: Socket,
-  value: Integer
-) !! Integer -> Integer
+  socket: ref Socket,
+  value: ref Int
+) !! Int -> Int
 
 extern def socket_set_unicast_hops_v6(
-  socket: Socket,
-  value: Integer
-) !! Integer -> Integer
+  socket: ref Socket,
+  value: ref Int
+) !! Int -> Int
 
 extern def socket_set_reuse_address(
-  socket: Socket,
-  value: Boolean
-) !! Integer -> Boolean
+  socket: ref Socket,
+  value: ref Boolean
+) !! Int -> Boolean
 
 extern def socket_set_reuse_port(
-  socket: Socket,
-  value: Boolean
-) !! Integer -> Boolean
+  socket: ref Socket,
+  value: ref Boolean
+) !! Int -> Boolean
 
-def get_ttl(socket: Socket) !! Error -> Integer {
+def get_ttl(socket: ref Socket) !! Error -> Int {
   try socket_get_ttl(socket) else (error) throw Error.new(error)
 }
 
-def get_only_v6(socket: Socket) !! Error -> Boolean {
+def get_only_v6(socket: ref Socket) !! Error -> Boolean {
   try socket_get_only_v6(socket) else (error) throw Error.new(error)
 }
 
-def get_nodelay(socket: Socket) !! Error -> Boolean {
+def get_nodelay(socket: ref Socket) !! Error -> Boolean {
   try socket_get_nodelay(socket) else (error) throw Error.new(error)
 }
 
-def get_broadcast(socket: Socket) !! Error -> Boolean {
+def get_broadcast(socket: ref Socket) !! Error -> Boolean {
   try socket_get_broadcast(socket) else (error) throw Error.new(error)
 }
 
-def get_linger(socket: Socket) !! Error -> Float {
+def get_linger(socket: ref Socket) !! Error -> Float {
   try socket_get_linger(socket) else (error) throw Error.new(error)
 }
 
-def get_recv_size(socket: Socket) !! Error -> Integer {
+def get_recv_size(socket: ref Socket) !! Error -> Int {
   try socket_get_recv_size(socket) else (error) throw Error.new(error)
 }
 
-def get_send_size(socket: Socket) !! Error -> Integer {
+def get_send_size(socket: ref Socket) !! Error -> Int {
   try socket_get_send_size(socket) else (error) throw Error.new(error)
 }
 
-def get_keepalive(socket: Socket) !! Error -> Float {
+def get_keepalive(socket: ref Socket) !! Error -> Float {
   try socket_get_keepalive(socket) else (error) throw Error.new(error)
 }
 
-def get_multicast_loop_v4(socket: Socket) !! Error -> Boolean {
+def get_multicast_loop_v4(socket: ref Socket) !! Error -> Boolean {
   try socket_get_multicast_loop_v4(socket) else (error) throw Error.new(error)
 }
 
-def get_multicast_loop_v6(socket: Socket) !! Error -> Boolean {
+def get_multicast_loop_v6(socket: ref Socket) !! Error -> Boolean {
   try socket_get_multicast_loop_v6(socket) else (error) throw Error.new(error)
 }
 
-def get_multicast_ttl_v4(socket: Socket) !! Error -> Integer {
+def get_multicast_ttl_v4(socket: ref Socket) !! Error -> Int {
   try socket_get_multicast_ttl_v4(socket) else (error) throw Error.new(error)
 }
 
-def get_multicast_hops_v6(socket: Socket) !! Error -> Integer {
+def get_multicast_hops_v6(socket: ref Socket) !! Error -> Int {
   try socket_get_multicast_hops_v6(socket) else (error) throw Error.new(error)
 }
 
-def get_multicast_if_v4(socket: Socket) !! Error -> String {
+def get_multicast_if_v4(socket: ref Socket) !! Error -> String {
   try socket_get_multicast_if_v4(socket) else (error) throw Error.new(error)
 }
 
-def get_multicast_if_v6(socket: Socket) !! Error -> Integer {
+def get_multicast_if_v6(socket: ref Socket) !! Error -> Int {
   try socket_get_multicast_if_v6(socket) else (error) throw Error.new(error)
 }
 
-def get_unicast_hops_v6(socket: Socket) !! Error -> Integer {
+def get_unicast_hops_v6(socket: ref Socket) !! Error -> Int {
   try socket_get_unicast_hops_v6(socket) else (error) throw Error.new(error)
 }
 
-def get_reuse_address(socket: Socket) !! Error -> Boolean {
+def get_reuse_address(socket: ref Socket) !! Error -> Boolean {
   try socket_get_reuse_address(socket) else (error) throw Error.new(error)
 }
 
-def get_reuse_port(socket: Socket) !! Error -> Boolean {
+def get_reuse_port(socket: ref Socket) !! Error -> Boolean {
   try socket_get_reuse_port(socket) else (error) throw Error.new(error)
 }
 
-def set_ttl(socket: Socket, value: Integer) !! Error -> Integer {
+def set_ttl(socket: ref Socket, value: Int) !! Error -> Int {
   try socket_set_ttl(socket, value) else (e) throw Error.new(e)
 }
 
-def set_only_v6(socket: Socket, value: Boolean) !! Error -> Boolean {
+def set_only_v6(socket: ref Socket, value: Boolean) !! Error -> Boolean {
   try socket_set_only_v6(socket, value) else (e) throw Error.new(e)
 }
 
-def set_nodelay(socket: Socket, value: Boolean) !! Error -> Boolean {
+def set_nodelay(socket: ref Socket, value: Boolean) !! Error -> Boolean {
   try socket_set_nodelay(socket, value) else (e) throw Error.new(e)
 }
 
-def set_broadcast(socket: Socket, value: Boolean) !! Error -> Boolean {
+def set_broadcast(socket: ref Socket, value: Boolean) !! Error -> Boolean {
   try socket_set_broadcast(socket, value) else (e) throw Error.new(e)
 }
 
-def set_linger(socket: Socket, value: Float) !! Error -> Float {
+def set_linger(socket: ref Socket, value: Float) !! Error -> Float {
   try socket_set_linger(socket, value) else (e) throw Error.new(e)
 }
 
-def set_recv_size(socket: Socket, value: Integer) !! Error -> Integer {
+def set_recv_size(socket: ref Socket, value: Int) !! Error -> Int {
   try socket_set_recv_size(socket, value) else (e) throw Error.new(e)
 }
 
-def set_send_size(socket: Socket, value: Integer) !! Error -> Integer {
+def set_send_size(socket: ref Socket, value: Int) !! Error -> Int {
   try socket_set_send_size(socket, value) else (e) throw Error.new(e)
 }
 
-def set_keepalive(socket: Socket, value: Float) !! Error -> Float {
+def set_keepalive(socket: ref Socket, value: Float) !! Error -> Float {
   try socket_set_keepalive(socket, value) else (e) throw Error.new(e)
 }
 
-def set_multicast_loop_v4(socket: Socket, value: Boolean) !! Error -> Boolean {
+def set_multicast_loop_v4(
+  socket: ref Socket,
+  value: Boolean
+) !! Error -> Boolean {
   try socket_set_multicast_loop_v4(socket, value) else (e) throw Error.new(e)
 }
 
-def set_multicast_loop_v6(socket: Socket, value: Boolean) !! Error -> Boolean {
+def set_multicast_loop_v6(
+  socket: ref Socket,
+  value: Boolean
+) !! Error -> Boolean {
   try socket_set_multicast_loop_v6(socket, value) else (e) throw Error.new(e)
 }
 
-def set_multicast_ttl_v4(socket: Socket, value: Integer) !! Error -> Integer {
+def set_multicast_ttl_v4(
+  socket: ref Socket,
+  value: Int
+) !! Error -> Int {
   try socket_set_multicast_ttl_v4(socket, value) else (e) throw Error.new(e)
 }
 
-def set_multicast_hops_v6(socket: Socket, value: Integer) !! Error -> Integer {
+def set_multicast_hops_v6(
+  socket: ref Socket,
+  value: Int
+) !! Error -> Int {
   try socket_set_multicast_hops_v6(socket, value) else (e) throw Error.new(e)
 }
 
-def set_multicast_if_v4(socket: Socket, value: String) !! Error -> String {
+def set_multicast_if_v4(
+  socket: ref Socket,
+  value: ref String
+) !! Error -> String {
   try socket_set_multicast_if_v4(socket, value) else (e) throw Error.new(e)
 }
 
-def set_multicast_if_v6(socket: Socket, value: Integer) !! Error -> Integer {
+def set_multicast_if_v6(socket: ref Socket, value: Int) !! Error -> Int {
   try socket_set_multicast_if_v6(socket, value) else (e) throw Error.new(e)
 }
 
-def set_unicast_hops_v6(socket: Socket, value: Integer) !! Error -> Integer {
+def set_unicast_hops_v6(socket: ref Socket, value: Int) !! Error -> Int {
   try socket_set_unicast_hops_v6(socket, value) else (e) throw Error.new(e)
 }
 
-def set_reuse_address(socket: Socket, value: Boolean) !! Error -> Boolean {
+def set_reuse_address(socket: ref Socket, value: Boolean) !! Error -> Boolean {
   try socket_set_reuse_address(socket, value) else (e) throw Error.new(e)
 }
 
-def set_reuse_port(socket: Socket, value: Boolean) !! Error -> Boolean {
+def set_reuse_port(socket: ref Socket, value: Boolean) !! Error -> Boolean {
   try socket_set_reuse_port(socket, value) else (e) throw Error.new(e)
 }
 
-def local_address(socket: Socket) !! Error -> Array!(Any) {
+def local_address(socket: ref Socket) !! Error -> Array!(Any) {
   try socket_local_address(socket) else (error) throw Error.new(error)
 }
 
-def peer_address(socket: Socket) !! Error -> Array!(Any) {
+def peer_address(socket: ref Socket) !! Error -> Array!(Any) {
   try socket_peer_address(socket) else (error) throw Error.new(error)
 }
 
-def bind(socket: Socket, address: String, port: Integer) !! Error {
+def bind(socket: ref Socket, address: String, port: Int) !! Error {
   try socket_bind(socket, address, port) else (error) throw Error.new(error)
 }
 
-def connect(socket: Socket, address: String, port: Integer) !! Error {
+def connect(socket: ref Socket, address: String, port: Int) !! Error {
   try socket_connect(socket, address, port) else (error) throw Error.new(error)
 }
 
-def listen(socket: Socket, backlog: Integer) !! Error -> Integer {
+def listen(socket: ref Socket, backlog: Int) !! Error -> Int {
   try socket_listen(socket, backlog) else (error) throw Error.new(error)
 }
 
 def send_bytes_to(
-  socket: Socket,
-  bytes: ByteArray,
+  socket: ref Socket,
+  bytes: ref ByteArray,
   address: String,
-  port: Integer
-) !! Error -> Integer {
+  port: Int
+) !! Error -> Int {
   try {
     socket_send_bytes_to(socket, bytes, address, port)
   } else (error) {
@@ -345,11 +377,11 @@ def send_bytes_to(
 }
 
 def send_string_to(
-  socket: Socket,
+  socket: ref Socket,
   string: String,
   address: String,
-  port: Integer
-) !! Error -> Integer {
+  port: Int
+) !! Error -> Int {
   try {
     socket_send_string_to(socket, string, address, port)
   } else (error) {
@@ -358,37 +390,37 @@ def send_string_to(
 }
 
 def receive_from(
-  socket: Socket,
-  bytes: ByteArray,
-  size: Integer
+  socket: ref Socket,
+  bytes: ref ByteArray,
+  size: Int
 ) !! Error -> Array!(Any) {
   try socket_receive_from(socket, bytes, size) else (e) throw Error.new(e)
 }
 
 def read_bytes(
-  socket: Socket,
-  bytes: ByteArray,
-  size: Integer
-) !! Error -> Integer {
+  socket: ref Socket,
+  bytes: ref ByteArray,
+  size: Int
+) !! Error -> Int {
   try socket_read(socket, bytes, size) else (error) throw Error.new(error)
 }
 
-def write_bytes(socket: Socket, bytes: ByteArray) !! Error -> Integer {
+def write_bytes(socket: ref Socket, bytes: ref ByteArray) !! Error -> Int {
   try socket_write_bytes(socket, bytes) else (error) throw Error.new(error)
 }
 
-def write_string(socket: Socket, string: String) !! Error -> Integer {
+def write_string(socket: ref Socket, string: String) !! Error -> Int {
   try socket_write_string(socket, string) else (error) throw Error.new(error)
 }
 
-def shutdown_read(socket: Socket) !! Error {
+def shutdown_read(socket: ref Socket) !! Error {
   try socket_shutdown_read(socket) else (error) throw Error.new(error)
 }
 
-def shutdown_write(socket: Socket) !! Error {
+def shutdown_write(socket: ref Socket) !! Error {
   try socket_shutdown_write(socket) else (error) throw Error.new(error)
 }
 
-def shutdown(socket: Socket) !! Error {
+def shutdown(socket: ref Socket) !! Error {
   try socket_shutdown_read_write(socket) else (error) throw Error.new(error)
 }

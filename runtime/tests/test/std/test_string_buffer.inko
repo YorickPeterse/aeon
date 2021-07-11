@@ -1,7 +1,7 @@
 import std::string_buffer::StringBuffer
 import std::test::*
 
-def tests(t: Tests) {
+def tests(t: ref Tests) {
   t.group('std::string_buffer::StringBuffer.new') do (g) {
     g.test('Creating an empty StringBuffer') {
       try assert_true(StringBuffer.new.empty?)
@@ -25,10 +25,10 @@ def tests(t: Tests) {
   t.group('std::string_buffer::StringBuffer.push') do (g) {
     g.test('Pushing a String into a StringBuffer') {
       let buffer = StringBuffer.new
-      let pushed = buffer.push('x')
 
-      try assert_equal(pushed, 'x')
-      try assert_equal(buffer.to_string, pushed)
+      buffer.push('x')
+
+      try assert_equal(buffer.to_string, 'x')
     }
   }
 

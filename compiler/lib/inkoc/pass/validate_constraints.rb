@@ -70,12 +70,9 @@ module Inkoc
       alias on_define_variable_with_explicit_type on_node_with_value
       alias on_reassign_variable on_node_with_value
       alias on_keyword_argument on_node_with_value
+      alias on_destructure_array on_node_with_value
 
       def on_type_cast(node)
-        process_node(node.expression)
-      end
-
-      def on_dereference(node)
         process_node(node.expression)
       end
     end

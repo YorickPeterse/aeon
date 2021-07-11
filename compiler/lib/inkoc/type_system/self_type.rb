@@ -11,7 +11,7 @@ module Inkoc
       end
 
       def resolve_self_type(self_type)
-        self_type
+        self_type.as_owned
       end
 
       def type_name
@@ -23,6 +23,8 @@ module Inkoc
       end
 
       def type_compatible?(other, _)
+        return type_compatible?(other.type, state) if other.reference?
+
         other.self_type?
       end
     end

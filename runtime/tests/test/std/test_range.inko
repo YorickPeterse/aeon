@@ -1,7 +1,7 @@
 import std::range
 import std::test::*
 
-def tests(t: Tests) {
+def tests(t: ref Tests) {
   t.group('std::range::Range.start') do (g) {
     g.test('Obtaining the start of a Range') {
       let range = Range.new(start: 1, end: 10)
@@ -54,8 +54,8 @@ def tests(t: Tests) {
     }
   }
 
-  t.group('std::integer::Integer...') do (g) {
-    g.test('Generating a Range of Integer objects') {
+  t.group('std::integer::Int...') do (g) {
+    g.test('Generating a Range of Int objects') {
       let range = 1..3
 
       try assert_equal(range.start, 1)

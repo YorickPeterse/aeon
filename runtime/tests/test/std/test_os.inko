@@ -2,7 +2,7 @@ import std::env
 import std::os::(self, Command, NEWLINE)
 import std::test::*
 
-def tests(t: Tests) {
+def tests(t: ref Tests) {
   t.group('std::os.platform') do (g) {
     g.test('Obtaining the name of the underlying platform') {
       let valid_platforms = Array.new(
@@ -50,7 +50,7 @@ def tests(t: Tests) {
 
   t.group('std::os::NEWLINE') do (g) {
     g.test('Obtaining the newline separator for the underlying platform') {
-      let expected = os.windows?.if(true: { "\r\n" }, false: { "\n" })
+      let expected = if os.windows? { "\r\n" } else { "\n" }
 
       try assert_equal(NEWLINE, expected)
     }
@@ -64,10 +64,7 @@ def tests(t: Tests) {
 
   t.group('std::os::Command.argument') do (g) {
     g.test('Adding a single argument') {
-      let cmd = Command.new('ls')
-
-      cmd.argument('foo')
-      cmd.argument('bar')
+      let cmd = Command.new('ls').argument('foo').argument('bar')
 
       try assert_equal(cmd.current_arguments, Array.new('foo', 'bar'))
     }
@@ -75,9 +72,7 @@ def tests(t: Tests) {
 
   t.group('std::os::Command.arguments') do (g) {
     g.test('Adding multiple arguments') {
-      let cmd = Command.new('ls')
-
-      cmd.arguments(Array.new('foo', 'bar'))
+      let cmd = Command.new('ls').arguments(Array.new('foo', 'bar'))
 
       try assert_equal(cmd.current_arguments, Array.new('foo', 'bar'))
     }
@@ -85,9 +80,7 @@ def tests(t: Tests) {
 
   t.group('std::os::Command.variable') do (g) {
     g.test('Adding a single environment variable') {
-      let cmd = Command.new('ls')
-
-      cmd.variable(name: 'USER', value: 'alice')
+      let cmd = Command.new('ls').variable(name: 'USER', value: 'alice')
 
       try assert_equal(cmd.current_variables['USER'], 'alice')
     }
@@ -95,9 +88,12 @@ def tests(t: Tests) {
 
   t.group('std::os::Command.variables') do (g) {
     g.test('Adding multiple environment variables') {
-      let cmd = Command.new('ls')
+      let vars = Map.new
 
-      cmd.variables(Map.new.set('USER', 'alice').set('FOO', 'bar'))
+      vars['USER'] = 'alice'
+      vars['FOO'] = 'bar'
+
+      let cmd = Command.new('ls').variables(vars)
 
       try assert_equal(cmd.current_variables['USER'], 'alice')
       try assert_equal(cmd.current_variables['FOO'], 'bar')
@@ -107,7 +103,7 @@ def tests(t: Tests) {
   # Testing STDIN, STDOUT and STDERR on Windows is a bit tricky due to its
   # limited support for commandline programs. As such we only run some basic
   # tests on Windows, and more in-depth tests on Unix platforms.
-  os.windows?.if_true {
+  if os.windows? {
     t.group('std::os::Command.spawn') do (g) {
       g.test('Spawning a command that ignores all input and output') {
         let cmd = Command
@@ -128,12 +124,12 @@ def tests(t: Tests) {
       g.test('Spawning a non-existing command') {
         let cmd = Command.new('foo').ignore_stdin.ignore_stdout.ignore_stderr
 
-        try assert_throw { local try cmd.spawn }
+        try assert_throw { try cmd.spawn }
       }
     }
   }
 
-  os.unix?.if_true {
+  if os.unix? {
     t.group('std::os::Command.spawn') do (g) {
       g.test('Spawning a command that ignores all input and output') {
         let cmd = Command.new('echo').ignore_stdin.ignore_stdout.ignore_stderr
@@ -194,7 +190,7 @@ def tests(t: Tests) {
       g.test('Spawning a non-existing command') {
         let cmd = Command.new('foo').ignore_stdin.ignore_stdout.ignore_stderr
 
-        try assert_throw { local try cmd.spawn }
+        try assert_throw { try cmd.spawn }
       }
     }
 

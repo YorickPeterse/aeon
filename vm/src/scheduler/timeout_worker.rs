@@ -1,6 +1,6 @@
 //! Rescheduling of processes with expired timeouts.
 use crate::arc_without_weak::ArcWithoutWeak;
-use crate::process::RcProcess;
+use crate::mem::process::ServerPointer;
 use crate::scheduler::process_scheduler::ProcessScheduler;
 use crate::scheduler::timeouts::{Timeout, Timeouts};
 use crossbeam_channel::{unbounded, Receiver, Sender};
@@ -16,7 +16,7 @@ const FRAGMENTATION_THRESHOLD: f64 = 0.1;
 const MAX_MESSAGES_PER_ITERATION: usize = 64;
 
 enum Message {
-    Suspend(RcProcess, ArcWithoutWeak<Timeout>),
+    Suspend(ServerPointer, ArcWithoutWeak<Timeout>),
     Terminate,
 }
 
@@ -47,7 +47,7 @@ struct Inner {
 ///
 /// To resolve this, the internal list of timeouts is cleaned up periodically.
 /// This is done by the timeout worker itself, not by processes sending
-/// messages. This ensures this cleanup work does not impact threads running
+/// messages.  This ensures this cleanup work does not impact threads running
 /// processes.
 pub struct TimeoutWorker {
     /// The inner part of the rescheduler that can only be used by the thread
@@ -80,16 +80,6 @@ impl TimeoutWorker {
             expired: AtomicUsize::new(0),
             sender,
         }
-    }
-
-    pub fn suspend(&self, process: RcProcess, duration: Duration) {
-        let timeout = Timeout::with_rc(duration);
-
-        process.suspend_with_timeout(timeout.clone());
-
-        self.sender
-            .send(Message::Suspend(process, timeout))
-            .expect("Failed to suspend because the channel was closed");
     }
 
     pub fn terminate(&self) {
@@ -126,6 +116,16 @@ impl TimeoutWorker {
                 self.wait_for_message();
             }
         }
+    }
+
+    pub fn suspend(
+        &self,
+        process: ServerPointer,
+        timeout: ArcWithoutWeak<Timeout>,
+    ) {
+        self.sender
+            .send(Message::Suspend(process, timeout))
+            .expect("Failed to suspend because the channel was closed");
     }
 
     fn reschedule_expired_processes(
@@ -210,7 +210,7 @@ impl TimeoutWorker {
         unsafe { &*self.inner.get() }
     }
 
-    #[cfg_attr(feature = "cargo-clippy", allow(mut_from_ref))]
+    #[cfg_attr(feature = "cargo-clippy", allow(clippy::mut_from_ref))]
     fn inner_mut(&self) -> &mut Inner {
         unsafe { &mut *self.inner.get() }
     }
@@ -221,7 +221,7 @@ mod tests {
     use super::*;
     use crate::arc_without_weak::ArcWithoutWeak;
     use crate::scheduler::process_scheduler::ProcessScheduler;
-    use crate::vm::test::setup;
+    use crate::test::setup;
     use std::thread;
     use std::time::Instant;
 
@@ -237,12 +237,11 @@ mod tests {
     #[test]
     fn test_suspend() {
         let worker = TimeoutWorker::new();
-        let (_machine, _block, process) = setup();
+        let (_alloc, _state, process) = setup();
 
-        worker.suspend(process.clone(), Duration::from_secs(1));
+        worker.suspend(*process, Timeout::with_rc(Duration::from_secs(1)));
 
         assert!(worker.inner().receiver.recv().is_ok());
-        assert!(process.acquire_rescheduling_rights().are_acquired());
     }
 
     #[test]
@@ -265,16 +264,18 @@ mod tests {
 
     #[test]
     fn test_run_with_fragmented_heap() {
+        let (_alloc, _state, proc_wrapper) = setup();
         let worker = TimeoutWorker::new();
         let scheduler = ProcessScheduler::new(1, 1);
-        let (_machine, _block, process) = setup();
+        let process = proc_wrapper.take_and_forget();
 
-        worker.suspend(process.clone(), Duration::from_secs(10));
+        for time in &[10_u64, 5_u64] {
+            let timeout = Timeout::with_rc(Duration::from_secs(*time));
 
-        // This drops the old timeout so we don't leak it.
-        process.acquire_rescheduling_rights();
+            process.state().waiting_for_future(Some(timeout.clone()));
+            worker.suspend(process, timeout);
+        }
 
-        worker.suspend(process.clone(), Duration::from_secs(5));
         worker.increase_expired_timeouts();
 
         // This makes sure the timeouts are present before we start the run
@@ -291,11 +292,14 @@ mod tests {
 
     #[test]
     fn test_run_with_message() {
+        let (_alloc, _state, proc_wrapper) = setup();
+        let process = proc_wrapper.take_and_forget();
         let worker = TimeoutWorker::new();
         let scheduler = ProcessScheduler::new(1, 1);
-        let (_machine, _block, process) = setup();
+        let timeout = Timeout::with_rc(Duration::from_secs(10));
 
-        worker.suspend(process.clone(), Duration::from_secs(10));
+        process.state().waiting_for_future(Some(timeout.clone()));
+        worker.suspend(process, timeout);
         worker.terminate();
         worker.run(&scheduler);
 
@@ -304,11 +308,13 @@ mod tests {
 
     #[test]
     fn test_run_with_reschedule() {
+        let (_alloc, _state, process) = setup();
         let worker = ArcWithoutWeak::new(TimeoutWorker::new());
         let scheduler = ArcWithoutWeak::new(ProcessScheduler::new(1, 1));
-        let (_machine, _block, process) = setup();
+        let timeout = Timeout::with_rc(Duration::from_millis(50));
 
-        worker.suspend(process.clone(), Duration::from_millis(50));
+        process.state().waiting_for_future(Some(timeout.clone()));
+        worker.suspend(*process, timeout);
 
         let handle = {
             let worker_clone = worker.clone();
@@ -338,31 +344,37 @@ mod tests {
         let duration =
             handle.join().expect("Failed to join the timeout worker");
 
-        assert!(rescheduled == Some(process));
+        assert!(rescheduled.is_some());
         assert!(duration >= Duration::from_millis(50));
         assert_eq!((*worker).inner().timeouts.len(), 0);
     }
 
     #[test]
     fn test_reschedule_expired_processes_with_expired_process() {
+        let (_alloc, _state, process) = setup();
         let worker = TimeoutWorker::new();
         let scheduler = ProcessScheduler::new(1, 1);
-        let (_machine, _block, process) = setup();
+        let timeout = Timeout::with_rc(Duration::from_secs(0));
 
-        worker.suspend(process.clone(), Duration::from_secs(0));
+        process.state().waiting_for_future(Some(timeout.clone()));
+        worker.suspend(*process, timeout);
         worker.wait_for_message();
         worker.reschedule_expired_processes(&scheduler);
 
-        assert!(scheduler.primary_pool.state.pop_global() == Some(process));
+        assert!(scheduler.primary_pool.state.pop_global().is_some());
     }
 
     #[test]
     fn test_reschedule_expired_processes_without_expired_process() {
+        let (_alloc, _state, proc_wrapper) = setup();
+        let process = proc_wrapper.take_and_forget();
         let worker = TimeoutWorker::new();
         let scheduler = ProcessScheduler::new(1, 1);
-        let (_machine, _block, process) = setup();
+        let timeout = Timeout::with_rc(Duration::from_secs(5));
 
-        worker.suspend(process.clone(), Duration::from_secs(5));
+        process.state().waiting_for_future(Some(timeout.clone()));
+        worker.suspend(process, timeout);
+        worker.wait_for_message();
         worker.reschedule_expired_processes(&scheduler);
 
         assert!(scheduler.primary_pool.state.pop_global().is_none());
@@ -434,7 +446,7 @@ mod tests {
     fn test_is_alive() {
         let worker = TimeoutWorker::new();
 
-        assert!(worker.is_alive(), true);
+        assert!(worker.is_alive());
 
         worker.handle_message(Message::Terminate);
 
@@ -454,19 +466,20 @@ mod tests {
 
     #[test]
     fn test_heap_is_fragmented() {
+        let (_alloc, _state, proc_wrapper) = setup();
+        let process = proc_wrapper.take_and_forget();
         let worker = TimeoutWorker::new();
-        let (_machine, _block, process) = setup();
 
         assert_eq!(worker.heap_is_fragmented(), false);
 
-        worker.suspend(process.clone(), Duration::from_secs(1));
+        for time in &[1_u64, 2_u64] {
+            let timeout = Timeout::with_rc(Duration::from_secs(*time));
 
-        // This drops the old timeout so we don't leak it.
-        process.acquire_rescheduling_rights();
+            process.state().waiting_for_future(Some(timeout.clone()));
+            worker.suspend(process, timeout);
+        }
 
-        worker.suspend(process.clone(), Duration::from_secs(2));
         worker.increase_expired_timeouts();
-
         worker.wait_for_message();
         worker.wait_for_message();
 
@@ -475,10 +488,13 @@ mod tests {
 
     #[test]
     fn test_defragment_heap_without_fragmentation() {
+        let (_alloc, _state, proc_wrapper) = setup();
+        let process = proc_wrapper.take_and_forget();
         let worker = TimeoutWorker::new();
-        let (_machine, _block, process) = setup();
+        let timeout = Timeout::with_rc(Duration::from_secs(1));
 
-        worker.suspend(process, Duration::from_secs(1));
+        process.state().waiting_for_future(Some(timeout.clone()));
+        worker.suspend(process, timeout);
         worker.wait_for_message();
         worker.defragment_heap();
 
@@ -488,17 +504,18 @@ mod tests {
 
     #[test]
     fn test_defragment_heap_with_fragmentation() {
+        let (_alloc, _state, proc_wrapper) = setup();
+        let process = proc_wrapper.take_and_forget();
         let worker = TimeoutWorker::new();
-        let (_machine, _block, process) = setup();
 
-        worker.suspend(process.clone(), Duration::from_secs(1));
+        for time in &[1_u64, 1_u64] {
+            let timeout = Timeout::with_rc(Duration::from_secs(*time));
 
-        // This drops the old timeout so we don't leak it.
-        process.acquire_rescheduling_rights();
+            process.state().waiting_for_future(Some(timeout.clone()));
+            worker.suspend(process, timeout);
+        }
 
-        worker.suspend(process, Duration::from_secs(1));
         worker.increase_expired_timeouts();
-
         worker.wait_for_message();
         worker.wait_for_message();
         worker.defragment_heap();

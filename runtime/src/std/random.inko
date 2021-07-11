@@ -1,21 +1,21 @@
 # Generating of random values.
 #
 # This module provides methods for generating random numbers and bytes.
-import std::conversion::(ToFloat, ToInteger)
+import std::conversion::(ToFloat, ToInt)
 
-extern def random_integer -> Integer
-extern def random_incremental_integer -> Integer
+extern def random_integer -> UnsignedInt
+extern def random_incremental_integer -> UnsignedInt
 extern def random_float -> Float
-extern def random_integer_range(min: Integer, max: Integer) -> Integer
-extern def random_float_range(min: Float, max: Float) -> Float
-extern def random_bytes(size: Integer) -> ByteArray
+extern def random_integer_range(min: ref Int, max: ref Int) -> Int
+extern def random_float_range(min: ref Float, max: ref Float) -> Float
+extern def random_bytes(size: ref UnsignedInt) -> ByteArray
 
-# Returns a random `Integer`.
-def integer -> Integer {
+# Returns a random `UnsignedInt`.
+def integer -> UnsignedInt {
   random_integer
 }
 
-# Returns a random `Integer` that is incremented on every request.
+# Returns a random `UnsignedInt` that is incremented on every request.
 #
 # The base number is a OS thread-specific randomly generated number. This
 # number is incremented upon calling this method. The number will wrap around
@@ -26,7 +26,7 @@ def integer -> Integer {
 #
 # # Examples
 #
-# Requesting an incremental random `Integer`:
+# Requesting an incremental random `Int`:
 #
 #     import std::random
 #
@@ -34,7 +34,7 @@ def integer -> Integer {
 #     let two = random.incremental_integer
 #
 #     two - one # => 1
-def incremental_integer -> Integer {
+def incremental_integer -> UnsignedInt {
   random_incremental_integer
 }
 
@@ -43,16 +43,16 @@ def float -> Float {
   random_float
 }
 
-# Returns a random `Integer` in the given range.
+# Returns a random `Int` in the given range.
 #
-# The returned `Integer` is greater than or equal to `min`, and lower than or
+# The returned `Int` is greater than or equal to `min`, and lower than or
 # equal to `max`.
 #
 # # Panics
 #
 # This method panics if `min` is equal to or greater than `max`.
-def integer_between(min: ToInteger, max: ToInteger) -> Integer {
-  random_integer_range(min.to_integer, max.to_integer)
+def integer_between(min: ToInt, max: ToInt) -> Int {
+  random_integer_range(min.to_int, max.to_int)
 }
 
 # Returns a random `Float` in the given range.
@@ -74,6 +74,6 @@ def float_between(min: ToFloat, max: ToFloat) -> Float {
 # # Panics
 #
 # This method might panic if no random bytes could be generated.
-def bytes(size: ToInteger) -> ByteArray {
-  random_bytes(size.to_integer)
+def bytes(size: ToUnsignedInt) -> ByteArray {
+  random_bytes(size.to_unsigned_int)
 }

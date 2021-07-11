@@ -6,8 +6,7 @@ import std::byte_array::ToByteArray
 import std::compiler::source_location::SourceLocation
 import std::compiler::token::*
 import std::conversion::ToString
-import std::fs::path::(ToPath, Path)
-import std::loop::(while)
+import std::fs::path::(IntoPath, Path)
 import std::map::Map
 import std::option::Option
 import std::range::Range
@@ -87,16 +86,15 @@ class EscapeMap {
     Self { @mapping = ByteArray.filled(amount: 128, value: MAX_BYTE) }
   }
 
-  def map(byte: Integer, to: Integer) -> Self {
+  move def map(byte: Int, to: Int) -> Self {
     @mapping[byte] = to
     self
   }
 
-  def get(input: Integer) -> ?Integer {
+  def get(input: Int) -> ?Int {
     let replacement = @mapping[input]
 
-    (replacement < MAX_BYTE)
-      .if(true: { Option.some(replacement) }, false: { Option.none })
+    if replacement < MAX_BYTE { Option.some(replacement) } else { Option.none }
   }
 }
 
@@ -111,26 +109,26 @@ class Lexer {
   @file: Path
 
   # The maximum byte position in the input stream.
-  @max_position: Integer
+  @max_position: Int
 
   # The current byte position in the input stream.
-  @position: Integer
+  @position: Int
 
   # The number of opening curly braces that have yet to be closed.
-  @curly_braces: Integer
+  @curly_braces: Int
 
   # The stack of curly brace counts to use for determining when a template
   # string expression should be closed.
-  @curly_brace_stack: Array!(Integer)
+  @curly_brace_stack: Array!(Int)
 
   # The stack of lexing states.
-  @states: Array!(Integer)
+  @states: Array!(Int)
 
   # The current line number.
-  @line: Integer
+  @line: Int
 
   # The current column number.
-  @column: Integer
+  @column: Int
 
   # The escape sequence literals supported by a single quoted string, and their
   # replacement bytes.
@@ -144,13 +142,14 @@ class Lexer {
   # their replacement bytes.
   @template_string_escapes: EscapeMap
 
-  static def new(input: ToByteArray, file: ToPath) -> Self {
+  static def new(input: ToByteArray, file: IntoPath) -> Self {
     let bytes = input.to_byte_array
+    let max = bytes.length
 
     Self {
       @input = bytes,
-      @file = file.to_path,
-      @max_position = bytes.length,
+      @file = file.into_path,
+      @max_position = max,
       @position = 0,
       @curly_braces = 0,
       @curly_brace_stack = Array.new,
@@ -186,6 +185,30 @@ class Lexer {
     }
   }
 
+  def current_position -> Int {
+    @position.clone
+  }
+
+  def current_column -> Int {
+    @column.clone
+  }
+
+  def current_line -> Int {
+    @line.clone
+  }
+
+  def source_location(line: Int, column: Int) -> SourceLocation {
+    SourceLocation.new(
+      file: @file.clone,
+      line_range: line..current_line,
+      column: column
+    )
+  }
+
+  def current_location -> SourceLocation {
+    source_location(line: current_line, column: current_column)
+  }
+
   # Returns `True` if there is input left to process.
   def next? -> Boolean {
     @position < @max_position
@@ -195,7 +218,7 @@ class Lexer {
   def next -> Token {
     consume_whitespace
 
-    let token = match(@states[-1]) {
+    let token = match @states[-1] {
       STATE_TEMPLATE_STRING -> { next_template_string_token }
       else -> { next_non_whitespace_token }
     }
@@ -209,8 +232,8 @@ class Lexer {
   }
 
   def next_non_whitespace_token -> Token {
-    match(current_byte) {
-      INTEGER_DIGIT_RANGE -> { number }
+    match current_byte {
+      INTEGER_DIGIT_RANGE -> { number(skip_after_start: False) }
       AT_SIGN -> { attribute }
       HASH -> { comment }
       CURLY_OPEN -> { curly_open }
@@ -230,14 +253,14 @@ class Lexer {
         )
       }
       COLON -> { colon }
-      SLASH -> { operator(type: 'div', assign_type: 'div_assign') }
+      SLASH -> { single_operator(type: 'div', assign_type: 'div_assign') }
       PERCENT -> { percent }
-      CARET -> { operator(type: 'xor', assign_type: 'xor_assign') }
-      AMPERSAND -> { operator(type: 'and', assign_type: 'and_assign') }
-      PIPE -> { operator(type: 'or', assign_type: 'or_assign') }
+      CARET -> { single_operator(type: 'xor', assign_type: 'xor_assign') }
+      AMPERSAND -> { single_operator(type: 'and', assign_type: 'and_assign') }
+      PIPE -> { single_operator(type: 'or', assign_type: 'or_assign') }
       STAR -> { star }
       MINUS -> { minus }
-      PLUS -> { operator(type: 'add', assign_type: 'add_assign') }
+      PLUS -> { single_operator(type: 'add', assign_type: 'add_assign') }
       EQUAL -> { assign }
       LOWER -> { lower }
       GREATER -> { greater }
@@ -252,16 +275,13 @@ class Lexer {
       UPPER_AZ_RANGE -> { constant }
       BACKTICK -> { template_string_open }
       else -> {
-        next?.if(
-          true: { invalid },
-          false: { NullToken.new(current_location) }
-        )
+        if next? { invalid } else { NullToken.new(current_location) }
       }
     }
   }
 
   def next_template_string_token -> Token {
-    match(current_byte) {
+    match current_byte {
       BACKTICK -> { return template_string_close }
       CURLY_OPEN -> { return template_string_expression_open }
       NULL -> { return NullToken.new(current_location) }
@@ -271,185 +291,182 @@ class Lexer {
     next_template_string_token
   }
 
-  def number(skip_after_start = False) -> Token {
-    let mut current = current_byte
-    let mut next = next_byte
+  def number(skip_after_start: Boolean) -> Token {
+    let mut first = current_byte
+    let mut second = next_byte
 
     # When lexing negative numbers (e.g. -10) we want to skip the first
     # character. This also means we need to peek one byte further, instead of
     # just looking at the next one.
-    skip_after_start.if_true {
-      current = next_byte
-      next = peek(offset: 2)
+    if skip_after_start {
+      first = next_byte
+      second = peek(offset: 2)
     }
 
     # "0x" is only valid at the start of an integer.
-    (INTEGER_DIGIT_RANGE.start == current)
-      .and { (next == LOWER_X).or { next == UPPER_X } }
-      .if(
-        true: { hexadecimal_integer(skip_after_start) },
-        false: { integer_or_float(skip_after_start) }
-      )
+    if INTEGER_DIGIT_RANGE.start == first
+      and (second == LOWER_X or second == UPPER_X)
+    {
+      hexadecimal_integer(skip_after_start)
+    } else {
+      integer_or_float(skip_after_start)
+    }
   }
 
-  def integer_or_float(skip_after_start = False) -> Token {
-    let start = @position
-    let line = @line
+  def integer_or_float(skip_after_start: Boolean) -> Token {
+    let start = current_position
+    let line = current_line
     let mut type = 'integer'
 
-    skip_after_start.if_true {
+    if skip_after_start { @position += 1 }
+
+    loop {
+      match let byte = current_byte {
+        INTEGER_DIGIT_RANGE, UNDERSCORE -> { True }
+        LOWER_E, UPPER_E when INTEGER_DIGIT_RANGE =~ next_byte -> {
+          type = 'float'
+        }
+        # If there is an exponent followed by "+" or "-", it's only valid if
+        # also followed by a digit. This means "10e+" is invalid, and "10e+2"
+        # is valid.
+        LOWER_E, UPPER_E
+        when next_byte == PLUS
+          or (next_byte == MINUS)
+          and (INTEGER_DIGIT_RANGE =~ peek(offset: 2))
+        -> {
+          @position += 1
+          type = 'float'
+        }
+        DOT when INTEGER_DIGIT_RANGE =~ next_byte -> { type = 'float' }
+        else -> { break }
+      }
+
       @position += 1
     }
-
-    while(
-      true: {
-        match(let byte = current_byte) {
-          INTEGER_DIGIT_RANGE, UNDERSCORE -> { True }
-          LOWER_E, UPPER_E when INTEGER_DIGIT_RANGE =~ next_byte -> {
-            type = 'float'
-            True
-          }
-          # If there is an exponent followed by "+" or "-", it's only valid if
-          # also followed by a digit. This means "10e+" is invalid, and "10e+2"
-          # is valid.
-          LOWER_E, UPPER_E
-          when
-            (next_byte == PLUS)
-              .or { next_byte == MINUS }
-              .and { INTEGER_DIGIT_RANGE =~ peek(offset: 2) }
-          -> {
-            @position += 1
-            type = 'float'
-            True
-          }
-          DOT when INTEGER_DIGIT_RANGE =~ next_byte -> {
-            type = 'float'
-            True
-          }
-          else -> { False }
-        }
-      },
-      then: { @position += 1 }
-    )
 
     token(type: type, start: start, line: line)
   }
 
-  def hexadecimal_integer(skip_after_start = False) -> Token {
-    let start = @position
-    let line = @line
+  def hexadecimal_integer(skip_after_start: Boolean) -> Token {
+    let start = current_position
+    let line = current_line
 
-    skip_after_start.if_true {
-      @position += 1
-    }
+    if skip_after_start { @position += 1 }
 
     # Advance 2 for "0x"
     @position += 2
 
-    while(
-      true: {
-        match(current_byte) {
-          INTEGER_DIGIT_RANGE, HEX_LOWER_DIGIT_RANGE,
-          HEX_UPPER_DIGIT_RANGE, UNDERSCORE -> { True }
-          else -> { False }
-        }
-      },
-      then: { @position += 1 }
-    )
+    loop {
+      match current_byte {
+        INTEGER_DIGIT_RANGE,
+        HEX_LOWER_DIGIT_RANGE,
+        HEX_UPPER_DIGIT_RANGE,
+        UNDERSCORE
+        -> { @position += 1 }
+        else -> { break }
+      }
+    }
 
     token(type: 'integer', start: start, line: line)
   }
 
   def comment -> Token {
-    let column = @column
+    let column = current_column
 
     advance_one_byte
 
-    let start = @position
+    let start = current_position
 
-    while({ next?.and { newline?.false? } }) { @position += 1 }
+    while next? and not newline? { @position += 1 }
 
-    let comment =
-      token(type: 'comment', start: start, line: @line, column: column)
+    let comment = token_with_column(
+      type: 'comment',
+      start: start,
+      line: current_line,
+      column: column
+    )
 
     advance_line
     comment
   }
 
   def attribute -> Token {
-    let start = @position
-    let line = @line
+    let start = current_position
+    let line = current_line
 
     # Advance 1 for the @ sign itself.
     @position += 1
 
-    while({ valid_identifier_byte? }) { @position += 1 }
+    while valid_identifier_byte? { @position += 1 }
+
     token(type: 'attribute', start: start, line: line)
   }
 
   def single_character_token(type: String) -> Token {
-    let start = @position
+    let start = current_position
 
     @position += 1
-    token(type: type, start: start, line: @line)
+    token(type: type, start: start, line: current_line)
   }
 
   def two_character_token(type: String) -> Token {
-    let start = @position
+    let start = current_position
 
     @position += 2
-    token(type: type, start: start, line: @line)
+    token(type: type, start: start, line: current_line)
   }
 
-  def operator(
-    type: String,
-    assign_type: String,
-    skip_after_start = False
-  ) -> Token {
-    let start = @position
+  def operator(type: String, assign_type: String, start: Int) -> Token {
+    if next_byte == EQUAL {
+      @position += 2
 
-    skip_after_start.if_true {
-      @position += 1
+      return binary_assign_token(assign_type, start, line: current_line)
     }
 
-    (next_byte == EQUAL).if(
-      true: {
-        @position += 2
-        binary_assign_token(type: assign_type, start: start, line: @line)
-      },
-      false: {
-        @position += 1
-        binary_token(type: type, start: start, line: @line)
-      }
-    )
+    @position += 1
+
+    binary_token(type, start, line: current_line)
+  }
+
+  # An operator consisting of a single token, such as `+`.
+  def single_operator(type: String, assign_type: String) -> Token {
+    operator(type, assign_type, start: current_position)
+  }
+
+  # An operator consisting of at least two tokens, such as `**`.
+  def double_operator(type: String, assign_type: String) -> Token {
+    let start = current_position
+
+    @position += 1
+
+    operator(type, assign_type, start)
   }
 
   def binary_operator(type: String, equality_type: String) -> Token {
-    let start = @position
-    let token_type = (next_byte == EQUAL).if(
-      true: {
-        @position += 2
-        equality_type
-      },
-      false: {
-        @position += 1
-        type
-      }
-    )
+    let start = current_position
+    let token_type = if next_byte == EQUAL {
+      @position += 2
 
-    binary_token(type: token_type, start: start, line: @line)
+      equality_type
+    } else {
+      @position += 1
+
+      type
+    }
+
+    binary_token(type: token_type, start: start, line: current_line)
   }
 
-  def string(quote: Integer, replacements: EscapeMap) -> Token {
-    let column = @column
-    let line = @line
+  def string(quote: Int, replacements: ref EscapeMap) -> Token {
+    let column = current_column
+    let line = current_line
     let buffer = ByteArray.new
     let line_buffer = ByteArray.new
 
     # Advance for the opening quote.
     advance_one_byte
 
-    while({ next?.and { current_byte != quote } }) {
+    while current_byte != quote and next? {
       append_string_byte(
         buffer: buffer,
         line_buffer: line_buffer,
@@ -468,42 +485,51 @@ class Lexer {
   }
 
   def append_string_byte(
-    buffer: ByteArray,
-    line_buffer: ByteArray,
-    replacements: EscapeMap
+    buffer: ref ByteArray,
+    line_buffer: ref ByteArray,
+    replacements: ref EscapeMap
   ) -> Boolean {
     let current = current_byte
 
-    (current == BACKSLASH).if_true {
-      replacements.get(next_byte).let do (replace_with) {
-        buffer.push(replace_with)
-        line_buffer.push(replace_with)
-
-        @position += 2
-        @column += 1
-
-        return True
-      }
+    if current == BACKSLASH
+      and append_escaped_string_byte(buffer, line_buffer, replacements)
+    {
+      return True
     }
 
     buffer.push(current)
     line_buffer.push(current)
 
-    newline?.if(
-      true: {
-        advance_line
-        line_buffer.clear
-      },
-      false: { @position += 1 }
-    )
+    if newline? {
+      advance_line
+      line_buffer.clear
+    } else {
+      @position += 1
+    }
 
     False
+  }
+
+  def append_escaped_string_byte(
+    buffer: ref ByteArray,
+    line_buffer: ref ByteArray,
+    replacements: ref EscapeMap
+  ) -> Boolean {
+    let replace_with = try replacements.get(next_byte).get else return False
+
+    buffer.push(replace_with)
+    line_buffer.push(replace_with)
+
+    @position += 2
+    @column += 1
+
+    True
   }
 
   def string_value(
     buffer: ByteArray,
     line_buffer: ByteArray,
-    start_line: Integer
+    start_line: Int
   ) -> String {
     let value = buffer.drain_to_string
 
@@ -512,10 +538,11 @@ class Lexer {
     #
     # To prevent allocating an additional String, we only use the line buffer if
     # needed.
-    let advance_column_by = (@line > start_line).if(
-      true: { line_buffer.drain_to_string.length },
-      false: { value.length }
-    )
+    let advance_column_by = if @line > start_line {
+      line_buffer.drain_to_string.length
+    } else {
+      value.length
+    }
 
     @column += advance_column_by
 
@@ -528,16 +555,17 @@ class Lexer {
   }
 
   def curly_close -> Token {
-    @curly_braces.positive?.if_true { @curly_braces -= 1 }
+    if @curly_braces.positive? { @curly_braces -= 1 }
 
-    (@curly_brace_stack.get(-1).get_or(-1) == @curly_braces).if(
-      true: {
-        @curly_brace_stack.pop
-        @states.pop
-        single_character_token('tstring_expr_close')
-      },
-      false: { single_character_token('curly_close') }
-    )
+    let count = try @curly_brace_stack.get(-1).get else -1
+
+    if count == @curly_braces {
+      @curly_brace_stack.pop
+      @states.pop
+      single_character_token('tstring_expr_close')
+    } else {
+      single_character_token('curly_close')
+    }
   }
 
   def template_string_open -> Token {
@@ -552,7 +580,7 @@ class Lexer {
 
   def template_string_expression_open -> Token {
     @states.push(STATE_DEFAULT)
-    @curly_brace_stack.push(@curly_braces)
+    @curly_brace_stack.push(@curly_braces.clone)
 
     @curly_braces += 1
 
@@ -560,43 +588,38 @@ class Lexer {
   }
 
   def template_string_text -> Token {
-    let column = @column
-    let line = @line
+    let column = current_column
+    let line = current_line
     let buffer = ByteArray.new
     let line_buffer = ByteArray.new
 
-    while(
-      true: {
-        # Template strings may be wrapped across lines with a backslash, like
-        # so:
-        #
-        #     `foo \
-        #       bar`
-        #
-        # In this case, the backslash and all whitespace that follows it should
-        # be skipped. This means the above is equivalent to:
-        #
-        #     `foo bar`
-        (current_byte == BACKSLASH)
-          .and { next_is_whitespace? }
-          .if_true {
-            advance_one_byte
-            consume_whitespace
-          }
-
-        match(current_byte) {
-          NULL, BACKTICK, CURLY_OPEN -> { False }
-          else -> { True }
-        }
-      },
-      then: {
-        append_string_byte(
-          buffer: buffer,
-          line_buffer: line_buffer,
-          replacements: @template_string_escapes
-        )
+    loop {
+      # Template strings may be wrapped across lines with a backslash, like
+      # so:
+      #
+      #     `foo \
+      #       bar`
+      #
+      # In this case, the backslash and all whitespace that follows it should
+      # be skipped. This means the above is equivalent to:
+      #
+      #     `foo bar`
+      if current_byte == BACKSLASH and next_is_whitespace? {
+        advance_one_byte
+        consume_whitespace
       }
-    )
+
+      match current_byte {
+        NULL, BACKTICK, CURLY_OPEN -> { break }
+        else -> {}
+      }
+
+      append_string_byte(
+        buffer: buffer,
+        line_buffer: line_buffer,
+        replacements: @template_string_escapes
+      )
+    }
 
     let location = source_location(line: line, column: column)
     let value =
@@ -606,74 +629,72 @@ class Lexer {
   }
 
   def colon -> Token {
-    let start = @position
-    let type = (next_byte == COLON).if(
-      true: {
-        @position += 2
-        'colon_colon'
-      },
-      false: {
-        @position += 1
-        'colon'
-      }
-    )
+    let start = current_position
+    let type = if next_byte == COLON {
+      @position += 2
 
-    token(type: type, start: start, @line)
+      'colon_colon'
+    } else {
+      @position += 1
+
+      'colon'
+    }
+
+    token(type, start, line: current_line)
   }
 
   def percent -> Token {
-    operator(type: 'mod', assign_type: 'mod_assign')
+    single_operator(type: 'mod', assign_type: 'mod_assign')
   }
 
   def star -> Token {
-    (next_byte == STAR).if_true {
-      return operator(
+    if next_byte == STAR {
+      return double_operator(
         type: 'pow',
         assign_type: 'pow_assign',
-        skip_after_start: True
       )
     }
 
-    operator(type: 'mul', assign_type: 'mul_assign')
+    single_operator(type: 'mul', assign_type: 'mul_assign')
   }
 
   def minus -> Token {
-    match(next_byte) {
+    match next_byte {
       INTEGER_DIGIT_RANGE -> { number(skip_after_start: True) }
       GREATER -> { arrow }
-      else -> { operator(type: 'sub', assign_type: 'sub_assign') }
+      else -> { single_operator(type: 'sub', assign_type: 'sub_assign') }
     }
   }
 
   def assign -> Token {
-    let start = @position
+    let start = current_position
+    let line = current_line
 
-    match(next_byte) {
+    match next_byte {
       EQUAL -> {
         @position += 2
-        binary_token(type: 'equal', start: start, line: @line)
+        binary_token(type: 'equal', start: start, line: line)
       }
       TILDE -> {
         @position += 2
-        binary_token(type: 'match', start: start, line: @line)
+        binary_token(type: 'match', start: start, line: line)
       }
       GREATER -> {
         @position += 2
-        token(type: 'double_arrow', start: start, line: @line)
+        token(type: 'double_arrow', start: start, line: line)
       }
       else -> {
         @position += 1
-        token(type: 'assign', start: start, line: @line)
+        token(type: 'assign', start: start, line: line)
       }
     }
   }
 
   def lower -> Token {
-    (next_byte == LOWER).if_true {
-      return operator(
+    if next_byte == LOWER {
+      return double_operator(
         type: 'shift_left',
         assign_type: 'shift_left_assign',
-        skip_after_start: True
       )
     }
 
@@ -681,11 +702,10 @@ class Lexer {
   }
 
   def greater -> Token {
-    (next_byte == GREATER).if_true {
-      return operator(
+    if next_byte == GREATER {
+      return double_operator(
         type: 'shift_right',
         assign_type: 'shift_right_assign',
-        skip_after_start: True
       )
     }
 
@@ -693,23 +713,23 @@ class Lexer {
   }
 
   def not_equal -> Token {
-    let start = @position
+    let start = current_position
 
     @position += 2
 
-    binary_token(type: 'not_equal', start: start, line: @line)
+    binary_token(type: 'not_equal', start: start, line: current_line)
   }
 
   def arrow -> Token {
-    let start = @position
+    let start = current_position
 
     @position += 2
 
-    token(type: 'arrow', start: start, line: @line)
+    token(type: 'arrow', start: start, line: current_line)
   }
 
   def exclamation -> Token {
-    match(next_byte) {
+    match next_byte {
       EQUAL -> { not_equal }
       PAREN_OPEN -> { two_character_token('type_args_open') }
       EXCLAMATION -> { two_character_token('throws') }
@@ -718,45 +738,57 @@ class Lexer {
   }
 
   def dot -> Token {
-    let start = @position
+    let start = current_position
 
     @position += 1
 
-    (current_byte == DOT).and { next_byte == DOT }.if_true {
+    if current_byte == DOT and next_byte == DOT {
       @position += 2
 
-      return binary_token(type: 'exclusive_range', start: start, line: @line)
+      return binary_token(
+        type: 'exclusive_range',
+        start: start,
+        line: current_line
+      )
     }
 
-    (current_byte == DOT).if_true {
+    if current_byte == DOT {
       @position += 1
 
-      return binary_token(type: 'inclusive_range', start: start, line: @line)
+      return binary_token(
+        type: 'inclusive_range',
+        start: start,
+        line: current_line
+      )
     }
 
-    token(type: 'dot', start: start, line: @line)
+    token(type: 'dot', start: start, line: current_line)
   }
 
   def question -> Token {
-    let start = @position
+    let start = current_position
 
     @position += 1
 
-    (current_byte == QUESTION).if_true {
+    if current_byte == QUESTION {
       @position += 1
 
-      return binary_token(type: 'question_question', start: start, line: @line)
+      return binary_token(
+        type: 'question_question',
+        start: start,
+        line: current_line
+      )
     }
 
-    token(type: 'question', start: start, line: @line)
+    token(type: 'question', start: start, line: current_line)
   }
 
   def underscore -> Token {
-    let start = @position
+    let start = current_position
 
-    while({ current_byte == UNDERSCORE }) { @position += 1 }
+    while current_byte == UNDERSCORE { @position += 1 }
 
-    UPPER_AZ_RANGE.cover?(current_byte).if_true {
+    if UPPER_AZ_RANGE.cover?(current_byte) {
       return identifier_or_constant(type: 'constant', start: start)
     }
 
@@ -764,16 +796,16 @@ class Lexer {
   }
 
   def identifier_or_keyword -> Token {
-    let start = @position
+    let start = current_position
 
-    while({ valid_identifier_byte? }) { @position += 1 }
+    while valid_identifier_byte? { @position += 1 }
 
-    let string = slice_string(start: start, stop: @position)
-    let location = source_location(@line)
+    let string = slice_string(start: start, stop: current_position)
+    let location = source_location(line: current_line, column: current_column)
 
     @column += string.length
 
-    match(string) {
+    match string {
       'as',
       'class',
       'def',
@@ -787,7 +819,9 @@ class Lexer {
       'let',
       'local',
       'match',
+      'move',
       'mut',
+      'ref',
       'return',
       'self',
       'static',
@@ -796,30 +830,30 @@ class Lexer {
       'try',
       'when',
       'yield' -> {
-        return KeywordToken.new(keyword: string, location: location)
+        KeywordToken.new(keyword: string, location: location)
       }
-      else -> {}
-    }
-
-    RegularToken.new(type: 'identifier', value: string, location: location)
+      else -> {
+        RegularToken.new(type: 'identifier', value: string, location: location)
+      }
+    } as Token
   }
 
   def constant -> Token {
-    identifier_or_constant(type: 'constant', start: @position)
+    identifier_or_constant(type: 'constant', start: current_position)
   }
 
-  def identifier_or_constant(type: String, start: Integer) -> Token {
-    while({ valid_identifier_byte? }) { @position += 1 }
-    token(type: type, start: start, line: @line)
+  def identifier_or_constant(type: String, start: Int) -> Token {
+    while valid_identifier_byte? { @position += 1 }
+    token(type: type, start: start, line: current_line)
   }
 
-  def token(
+  def token_with_column(
     type: String,
-    start: Integer,
-    line: Integer,
-    column = @column
+    start: Int,
+    line: Int,
+    column: Int
   ) -> Token {
-    let value = slice_string(start: start, stop: @position)
+    let value = slice_string(start: start, stop: current_position)
     let location = source_location(line: line, column: column)
 
     @column += value.length
@@ -827,18 +861,22 @@ class Lexer {
     RegularToken.new(type: type, value: value, location: location)
   }
 
-  def binary_token(type: String, start: Integer, line: Integer) -> Token {
-    let value = slice_string(start: start, stop: @position)
-    let location = source_location(line)
+  def token(type: String, start: Int, line: Int) -> Token {
+    token_with_column(type, start, line, current_column)
+  }
+
+  def binary_token(type: String, start: Int, line: Int) -> Token {
+    let value = slice_string(start: start, stop: current_position)
+    let location = source_location(line: line, column: current_column)
 
     @column += value.length
 
     BinaryToken.new(type: type, value: value, location: location)
   }
 
-  def binary_assign_token(type: String, start: Integer, line: Integer) -> Token {
-    let value = slice_string(start: start, stop: @position)
-    let location = source_location(line)
+  def binary_assign_token(type: String, start: Int, line: Int) -> Token {
+    let value = slice_string(start: start, stop: current_position)
+    let location = source_location(line: line, column: current_column)
 
     @column += value.length
 
@@ -846,27 +884,19 @@ class Lexer {
   }
 
   def invalid -> Token {
-    let value = slice_string(start: @position, stop: @position + 1)
-    let location = source_location(@line)
+    let value = slice_string(start: current_position, stop: @position + 1)
+    let location = source_location(line: current_line, column: current_column)
 
     # When we run into invalid input we want to immediately stop processing any
     # further input.
-    @position = @max_position
+    @position = @max_position.clone
 
     InvalidToken.new(value: value, location: location)
   }
 
-  def source_location(line: Integer, column = @column) -> SourceLocation {
-    SourceLocation.new(file: @file, line_range: line..@line, column: column)
-  }
-
-  def current_location -> SourceLocation {
-    source_location(line: @line)
-  }
-
   # Consumes any whitespace, until reaching the first non-whitespace character.
   def consume_whitespace {
-    match(current_byte) {
+    match current_byte {
       SPACE, TAB, CARRIAGE_RETURN -> {
         @position += 1
         @column += 1
@@ -879,7 +909,7 @@ class Lexer {
   }
 
   def next_is_whitespace? -> Boolean {
-    match(next_byte) {
+    match next_byte {
       SPACE, TAB, CARRIAGE_RETURN, NEWLINE -> { True }
       else -> { False }
     }
@@ -896,26 +926,26 @@ class Lexer {
     @column += 1
   }
 
-  def slice_string(start: Integer, stop: Integer) -> String {
+  def slice_string(start: Int, stop: Int) -> String {
     @input.slice(start: start, length: stop - start).drain_to_string
   }
 
-  def current_byte -> Integer {
-    next?.if(true: { @input[@position] }, false: { 0 })
+  def current_byte -> Int {
+    if next? { @input[@position] } else { 0 }
   }
 
-  def next_byte -> Integer {
+  def next_byte -> Int {
     peek(offset: 1)
   }
 
-  def peek(offset: Integer) -> Integer {
+  def peek(offset: Int) -> Int {
     let index = @position + offset
 
-    (index < @max_position).if(true: { @input[index] }, false: { 0 })
+    if index < @max_position { @input[index] } else { 0 }
   }
 
   def valid_identifier_byte? -> Boolean {
-    match(current_byte) {
+    match current_byte {
       INTEGER_DIGIT_RANGE, LOWER_AZ_RANGE, UPPER_AZ_RANGE -> { True }
       UNDERSCORE, QUESTION -> { True }
       else -> { False }

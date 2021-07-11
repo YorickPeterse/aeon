@@ -9,8 +9,7 @@ import std::compiler::module_name::ModuleName
 import std::compiler::parser::Parser
 import std::compiler::source_location::SourceLocation
 import std::fs::file::ReadOnlyFile
-import std::fs::path::(ToPath, Path)
-import std::loop::(while)
+import std::fs::path::(IntoPath, Path)
 import std::pair::Pair
 import std::process::(self, Process)
 import std::set::Set
@@ -60,7 +59,7 @@ trait ParseRequest {
     let source = read_source(diagnostics)
 
     let ast = try {
-      Parser.new(input: source, file: path).parse
+      Parser.new(input: source, file: path, parse_comments: False).parse
     } else (err) {
       diagnostics.failed_to_parse(message: err.to_string, location: err.location)
 
@@ -70,7 +69,7 @@ trait ParseRequest {
       )
     }
 
-    diagnostics.errors?.if_false {
+    if not diagnostics.errors? {
       desugar.hoist_imports(ast)
       desugar.add_implicit_imports(name: name, body: ast)
       desugar.add_implicit_symbols(ast)
@@ -78,7 +77,7 @@ trait ParseRequest {
     }
 
     let module = ParsedModule.new(name: name, ast: ast)
-    let result = Pair.new(first: module, second: diagnostics)
+    let result = Pair.new(module, diagnostics)
 
     reply_to.send(result)
   }
@@ -104,11 +103,11 @@ class ParseSource {
   # The process to send the parse results to.
   @reply_to: Process
 
-  static def new(name: ModuleName, source: ToByteArray, path: ToPath) -> Self {
+  static def new(name: ModuleName, source: ToByteArray, path: IntoPath) -> Self {
     Self {
       @name = name,
       @source = source.to_byte_array,
-      @path = path.to_path,
+      @path = path.into_path,
       @reply_to = process.current
     }
   }
@@ -143,8 +142,8 @@ class ParseFile {
   # The process to send the parse results to.
   @reply_to: Process
 
-  static def new(name: ModuleName, path: ToPath) -> Self {
-    Self { @name = name, @path = path.to_path, @reply_to = process.current }
+  static def new(name: ModuleName, path: IntoPath) -> Self {
+    Self { @name = name, @path = path.into_path, @reply_to = process.current }
   }
 }
 
@@ -193,7 +192,7 @@ class ModuleParser {
   def parse_source(
     name: ModuleName,
     source: ToByteArray,
-    path: ToPath
+    path: IntoPath
   ) -> Pair!(ParsedModule, Array!(ParsedModule)) {
     parse_recursively(ParseSource.new(name: name, source: source, path: path))
   }
@@ -201,7 +200,7 @@ class ModuleParser {
   # Parses a module stored somewhere on disk.
   def parse_file(
     name: ModuleName,
-    path: ToPath
+    path: IntoPath
   ) -> Pair!(ParsedModule, Array!(ParsedModule)) {
     parse_recursively(ParseFile.new(name: name, path: path))
   }
@@ -223,45 +222,43 @@ class ModuleParser {
     initial.schedule
     parsed.insert(initial.name)
 
-    while({ pending.positive? }) {
+    while pending.positive? {
       let result = process.receive as Pair!(ParsedModule, Diagnostics)
-      let module = result.first
+      let module = result.0
 
-      @diagnostics.append(result.second)
+      @diagnostics.append(result.1)
       modules.push(module)
       pending -= 1
 
       # When errors are produced we still want to wait for any pending results,
       # otherwise these messages may conflict with messages we may expect later
       # on.
-      @diagnostics.errors?.if_false {
-        module.ast.imports.each do (node) {
+      if not @diagnostics.errors? {
+        for node in module.ast.imports {
           let name = node.module_name
 
-          parsed
-            .insert(name)
-            .and { parse_dependency(name: name, location: node.location) }
-            .if_true { pending += 1 }
+          if parsed.insert(name)
+            and parse_dependency(name: name, location: node.location)
+          {
+            pending += 1
+          }
         }
       }
     }
 
     let parsed_first = modules.remove_at(index: 0)
 
-    Pair.new(first: parsed_first, second: modules)
+    Pair.new(parsed_first, modules)
   }
 
   # Schedules a single dependency for parsing.
   #
   # The return value is `True` if the dependency is scheduled.
   def parse_dependency(name: ModuleName, location: SourceLocation) -> Boolean {
-    @diagnostics.errors?.if_true {
-      return False
-    }
+    if @diagnostics.errors? { return False }
 
-    let path = name
-      .absolute_source_path(@config.source_directories)
-      .get_or_else {
+    let path =
+      try name.absolute_source_path(@config.source_directories).get else {
         @diagnostics.module_not_found(name: name.to_string, location: location)
         return False
       }

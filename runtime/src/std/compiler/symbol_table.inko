@@ -1,6 +1,5 @@
 # Symbols and symbol tables for mapping names to types and other information.
 import std::index::Index
-import std::iterator::Iterator
 import std::length::Length
 import std::map::Map
 import std::option::Option
@@ -11,7 +10,7 @@ class Symbol!(T) {
   @name: String
 
   # The ID of the symbol, unique to the table it is defined in.
-  @id: Integer
+  @id: Int
 
   # The type of the symbol.
   @type: T
@@ -19,56 +18,54 @@ class Symbol!(T) {
   # If the symbol is mutable or not.
   @mutable: Boolean
 
-  static def new(name: String, id: Integer, type: T, mutable: Boolean) -> Self {
+  static def new(name: String, id: Int, type: T, mutable: Boolean) -> Self {
     Self { @name = name, @id = id, @type = type, @mutable = mutable }
   }
 
   def name -> String {
-    @name
+    @name.clone
   }
 
-  def id -> Integer {
-    @id
+  def id -> Int {
+    @id.clone
   }
 
-  def type -> T {
+  def type -> ref T {
     @type
   }
 
   def mutable? -> Boolean {
-    @mutable
+    @mutable.clone
   }
 }
 
 # A collection of symbols and associated information such as their types, mapped
 # to their names.
 class SymbolTable!(T) {
-  # The names of the symbols and their corresponding Symbol objects.
-  @mapping: Map!(String, Symbol!(T))
-
   # An array of the symbols in the order they are defined in.
   @symbols: Array!(Symbol!(T))
+
+  # The names of the symbols and Symbol instances.
+  @mapping: Map!(String, ref Symbol!(T))
 
   static def new -> Self {
     Self { @mapping = Map.new, @symbols = Array.new }
   }
 
   # Defines a new symbol with the given type.
-  #
-  # Defining an already existing symbol will result in a panic.
-  def define(name: String, type: T, mutable = False) -> Symbol!(T) {
-    @mapping.get(name).let do (existing) {
-      let id = existing.id
-      let symbol =
-        Symbol.new(name: name, id: id, type: type, mutable: mutable)
+  def define(name: String, type: T, mutable: Boolean) -> ref Symbol!(T) {
+    let id_opt = @mapping.get(name).map do (sym) { sym.id }
+    let update = id_opt.some?
+    let id = try id_opt.get else @mapping.length
+    let symbol = Symbol.new(name: name, id: id, type: type, mutable: mutable)
 
-      return @mapping[name] = @symbols[id] = symbol
-    }
+    if update { @symbols[id] = symbol } else { @symbols.push(symbol) }
 
-    let symbol =
-      Symbol.new(name: name, id: @mapping.length, type: type, mutable: mutable)
+    let sym_ref = @symbols[id]
 
-    @mapping[name] = @symbols.push(symbol)
+    @mapping[name] = sym_ref
+
+    sym_ref
   }
 
   # Returns `True` if a symbol is defined for the given name.
@@ -78,32 +75,36 @@ class SymbolTable!(T) {
 
   # Returns `True` if the symbol table contains the given symbol.
   def contains?(symbol: Symbol!(T)) -> Boolean {
-    @symbols.get(symbol.id).get_or_else { return False }.same_object?(symbol)
+    try {
+      @symbols.get(symbol.id).map do (ours) { ours.same_object?(symbol) }.get
+    } else {
+      False
+    }
   }
 
   # Returns all the symbols defined.
-  def symbols -> Array!(Symbol!(T)) {
+  def symbols -> ref Array!(Symbol!(T)) {
     @symbols
   }
 
-  # Returns an `Iterator` over the symbols in this table.
-  def iter -> Iterator!(Symbol!(T), Never) {
-    @symbols.iter
+  # Yields references to the symbols in this table.
+  def iter => ref Symbol!(T) {
+    for sym in @symbols.iter { yield sym }
   }
 
-  def get(name: String) -> ?Symbol!(T) {
+  def get(name: String) -> ?ref Symbol!(T) {
     @mapping.get(name)
   }
 }
 
-impl Index!(String, Symbol!(T)) for SymbolTable {
-  def [](index: String) -> Symbol!(T) {
+impl Index!(String, ref Symbol!(T)) for SymbolTable {
+  def [](index: String) -> ref Symbol!(T) {
     @mapping[index]
   }
 }
 
 impl Length for SymbolTable {
-  def length -> Integer {
+  def length -> Int {
     @symbols.length
   }
 }

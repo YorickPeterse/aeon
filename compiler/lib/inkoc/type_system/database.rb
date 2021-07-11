@@ -10,7 +10,7 @@ module Inkoc
                   :ffi_pointer_type, :ip_socket_type, :unix_socket_type,
                   :process_type, :read_only_file_type, :write_only_file_type,
                   :read_write_file_type, :hasher_type, :generator_type,
-                  :child_process_type
+                  :child_process_type, :unsigned_integer_type
 
       def initialize
         @trait_type = new_builtin_object(Config::TRAIT_CONST)
@@ -37,6 +37,7 @@ module Inkoc
         @hasher_type = new_builtin_object(Config::HASHER_TYPE)
         @generator_type = initialize_generator_type
         @child_process_type = new_builtin_object(Config::CHILD_PROCESS_TYPE)
+        @unsigned_integer_type = new_builtin_object(Config::UNSIGNED_INTEGER_TYPE)
         @trait_id = -1
       end
 

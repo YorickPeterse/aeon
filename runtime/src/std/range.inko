@@ -1,7 +1,6 @@
 # Range data types and methods.
 import std::conversion::ToArray
 import std::hash::Hash
-import std::loop::(while)
 import std::operators::(Equal, Match, SmallerOrEqual)
 import std::successor::Successor
 
@@ -46,8 +45,8 @@ class Range!(T: Successor + SmallerOrEqual) {
   #
   #     (1..10).cover?(5)  # => True
   #     (1..10).cover?(15) # => False
-  def cover?(value: T) -> Boolean {
-    (@start <= value).and { value <= @end }
+  def cover?(value: ref T) -> Boolean {
+    @start <= value and value <= @end
   }
 }
 
@@ -64,7 +63,7 @@ impl Equal for Range {
   #
   #     1..10 == 1..5 # => False
   def ==(other: Self) -> Boolean when T: Equal {
-    (start == other.start).and { end == other.end }
+    start == other.start and end == other.end
   }
 }
 
@@ -81,7 +80,7 @@ impl ToArray!(T) for Range {
     let mut current = @start
     let max = @end
 
-    while({ current <= max }) {
+    while current <= max {
       values.push(current)
 
       current = current.successor
@@ -93,14 +92,14 @@ impl ToArray!(T) for Range {
 
 impl Match!(T) for Range {
   # Returns `True` if the given value falls in the range of `self`.
-  def =~(other: T) -> Boolean {
+  def =~(other: ref T) -> Boolean {
     cover?(other)
   }
 }
 
 trait ToRange!(T: Successor + SmallerOrEqual) {
   # Returns a `Range` starting at `self` up to (and including) `other`.
-  def ..(other: T) -> Range!(T)
+  move def ..(other: T) -> Range!(T)
 }
 
 impl Hash for Range {}

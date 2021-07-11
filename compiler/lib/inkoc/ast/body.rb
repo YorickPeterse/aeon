@@ -7,7 +7,7 @@ module Inkoc
       include Predicates
       include Inspect
 
-      attr_reader :location
+      attr_reader :location, :drop_variables
       attr_accessor :expressions, :locals
 
       # expr - The expressions of this body.
@@ -16,6 +16,7 @@ module Inkoc
         @expressions = expr
         @location = location
         @locals = nil
+        @drop_variables = []
       end
 
       def visitor_method
@@ -42,6 +43,14 @@ module Inkoc
 
       def location_of_last_expression
         last_expression&.location || location
+      end
+
+      def returns?
+        @expressions.any? { |n| n.is_a?(AST::Return) }
+      end
+
+      def throws?
+        @expressions.any? { |n| n.is_a?(AST::Throw) }
       end
     end
   end

@@ -1,20 +1,7 @@
-import std::map::(self, Pair, RandomState)
+import std::map::Pair
 import std::test::*
 
-def tests(t: Tests) {
-  t.group('std::map::RandomState.to_hasher') do (g) {
-    g.test('Creating a DefaultHasher') {
-      let state = RandomState.new
-      let hasher1 = state.to_hasher
-      let hasher2 = state.to_hasher
-
-      10.hash(hasher1)
-      10.hash(hasher2)
-
-      try assert_equal(hasher1.to_hash, hasher2.to_hash)
-    }
-  }
-
+def tests(t: ref Tests) {
   t.group('std::map::Pair.distance') do (g) {
     g.test('Obtaining the distance of a Pair') {
       let pair = Pair.new(key: 'key', value: 'value', hash: 0)
@@ -32,6 +19,29 @@ def tests(t: Tests) {
 
       try assert_true(pair1.replace_with?(pair2))
       try assert_false(pair2.replace_with?(pair1))
+    }
+  }
+
+  t.group('std::map::Pair.rehash?') do (g) {
+    g.test('Checking if a Pair needs to be rehashed') {
+      let pair = Pair.new(key: 'key', value: 'value', hash: 0)
+
+      try assert_false(pair.rehash?)
+
+      pair.prepare_for_rehash
+
+      try assert_true(pair.rehash?)
+    }
+  }
+
+  t.group('std::map::Pair.prepare_for_rehash') do (g) {
+    g.test('Preparing a Pair for rehashing it') {
+      let pair = Pair.new(key: 'key', value: 'value', hash: 0)
+
+      pair.increase_distance
+      pair.prepare_for_rehash
+
+      try assert_equal(pair.distance, -1)
     }
   }
 
@@ -95,37 +105,46 @@ def tests(t: Tests) {
     g.test('Rehashing an empty Map') {
       let map = Map.new
 
-      try assert_equal(map.buckets, Array.new(Option.none))
+      try assert_equal(map.buckets, Array.new(Option.none, Option.none))
 
       map.rehash
 
-      try assert_equal(map.buckets, Array.new(Option.none, Option.none))
+      try assert_equal(
+        map.buckets,
+        Array.new(Option.none, Option.none, Option.none, Option.none)
+      )
     }
 
     g.test('Rehashing a Map with pairs') {
-      let map = Map.new
+      let map: Map!(String, String) = Map.new
       let pair1 = Pair.new(key: 'a', value: 'value', hash: 0)
       let pair2 = Pair.new(key: 'b', value: 'value', hash: 1)
 
       map.rehash
-      map.insert_pair(pair: pair1)
-      map.insert_pair(pair: pair2)
+
+      map.buckets[0] = Option.some(pair1)
+      map.buckets[1] = Option.none
 
       # Moving the pair to a bucket it shouldn't be in allows us to test if
       # `resize` ends up moving pairs or not.
       pair2.increase_distance
 
-      map.buckets[1] = Option.none
       map.buckets[2] = Option.some(pair2)
-
       map.rehash
 
-      try assert_equal(pair1.distance, 0)
-      try assert_equal(pair2.distance, 0)
+      try assert_true(map.buckets[0].some?)
+      try assert_true(map.buckets[1].some?)
+      try assert_true(map.buckets[2].none?)
+      try assert_true(map.buckets[3].none?)
 
-      try assert_equal(map.buckets[0], Option.some(pair1))
-      try assert_equal(map.buckets[1], Option.some(pair2))
-      try assert_equal(map.buckets[2], Option.none)
+      let pair1_ref = try! map.buckets[0].get_ref
+      let pair2_ref = try! map.buckets[1].get_ref
+
+      try assert_equal(pair1_ref.key, 'a')
+      try assert_equal(pair2_ref.distance, 0)
+
+      try assert_equal(pair2_ref.key, 'b')
+      try assert_equal(pair2_ref.distance, 0)
     }
   }
 
@@ -137,7 +156,7 @@ def tests(t: Tests) {
       map.insert_pair(pair)
 
       try assert_equal(map.length, 1)
-      try assert_equal(map.buckets[0], Option.some(pair))
+      #try assert_equal(map.buckets[0], Option.some(pair))
     }
 
     g.test('Inserting a Pair into an existing bucket in a Map') {
@@ -149,11 +168,14 @@ def tests(t: Tests) {
       map.insert_pair(pair1)
       map.insert_pair(pair2)
 
-      try assert_equal(map.buckets[0], Option.some(pair1))
-      try assert_equal(map.buckets[1], Option.some(pair2))
+      let pair1_ref = try! map.buckets[0].get_ref
+      let pair2_ref = try! map.buckets[1].get_ref
 
-      try assert_equal(pair1.distance, 0)
-      try assert_equal(pair2.distance, 1)
+      try assert_equal(pair1_ref.key, 'a')
+      try assert_equal(pair1_ref.distance, 0)
+
+      try assert_equal(pair2_ref.key, 'b')
+      try assert_equal(pair2_ref.distance, 1)
     }
 
     g.test('Inserting a Pair using an already used key') {
@@ -165,7 +187,7 @@ def tests(t: Tests) {
       map.insert_pair(pair1)
       map.insert_pair(pair2)
 
-      try assert_equal(map.buckets[0], Option.some(pair2))
+      try assert_equal(try! { map.buckets[0].get_ref }.value, 'b')
     }
 
     g.test('Inserting a Pair after an unused bucket') {
@@ -178,14 +200,12 @@ def tests(t: Tests) {
       map.rehash
 
       map.insert_pair(pair2)
-      map.rehash
-
       map.insert_pair(pair3)
 
-      try assert_equal(map.buckets[0], Option.some(pair3))
-      try assert_equal(map.buckets[1], Option.some(pair2))
+      try assert_equal(try! { map.buckets[0].get_ref }.key, 'three')
+      try assert_equal(try! { map.buckets[1].get_ref }.key, 'two')
       try assert_equal(map.buckets[2], Option.none)
-      try assert_equal(map.buckets[3], Option.some(pair1))
+      try assert_equal(try! { map.buckets[3].get_ref }.key, 'one')
     }
   }
 
@@ -210,13 +230,14 @@ def tests(t: Tests) {
       let pair1 = Pair.new(key: 'a', value: 'a', hash: 0)
       let pair2 = Pair.new(key: 'b', value: 'b', hash: 0)
 
-      map.rehash
       map.insert_pair(pair1)
       map.insert_pair(pair2)
-      map.remove(pair1.key)
+      map.remove('a')
 
-      try assert_equal(map.buckets[0], Option.some(pair2))
-      try assert_equal(pair2.distance, 0)
+      let pair_ref = try! map.buckets[0].get_ref
+
+      try assert_equal(pair_ref.key, 'b')
+      try assert_equal(pair_ref.distance, 0)
     }
   }
 
@@ -254,34 +275,6 @@ def tests(t: Tests) {
     }
   }
 
-  t.group('std::map::Map.each') do (g) {
-    g.test('Iterating over the key-value pairs of an empty Map') {
-      let mut iters = 0
-      let map = Map.new
-
-      map.each do (_, _) { iters += 1 }
-
-      try assert_equal(iters, 0)
-    }
-
-    g.test('Iterating over the key-value pairs of a non-empty Map') {
-      let mut key_total = 0
-      let mut val_total = 0
-      let map = Map.new
-
-      map[1] = 10
-      map[2] = 20
-
-      map.each do (key, val) {
-        key_total += key
-        val_total += val
-      }
-
-      try assert_equal(key_total, 3)
-      try assert_equal(val_total, 30)
-    }
-  }
-
   t.group('std::map::Map.iter') do (g) {
     g.test('Creating an Iterator for an empty Map') {
       let map = Map.new
@@ -296,17 +289,20 @@ def tests(t: Tests) {
       map['name'] = 'Alice'
 
       let iter = map.iter
-      let pair = iter.next
+      let pair_opt = iter.next
 
-      try assert_true(pair.some?)
-      try assert_equal(pair.get.key, 'name')
-      try assert_equal(pair.get.value, 'Alice')
+      try assert_true(pair_opt.some?)
+
+      let (key, value) = try! pair_opt.get
+
+      try assert_equal(key, 'name')
+      try assert_equal(value, 'Alice')
     }
 
     g.test('Iterators will skip trailing empty buckets') {
       let map = Map.new
-      let pair1 = Pair.new(key: 'a', value: 'value', hash: 0)
-      let pair2 = Pair.new(key: 'b', value: 'value', hash: 1)
+      let pair1 = Pair.new(key: 'a', value: '1', hash: 0)
+      let pair2 = Pair.new(key: 'b', value: '2', hash: 1)
 
       map.rehash
       map.insert_pair(pair: pair1)
@@ -314,10 +310,16 @@ def tests(t: Tests) {
       map.rehash
 
       let iter = map.iter
+      let val1 = iter.next
+      let val2 = iter.next
+      let val3 = iter.next
 
-      try assert_equal(iter.next, Option.some(pair1))
-      try assert_equal(iter.next, Option.some(pair2))
-      try assert_true(iter.next.none?)
+      try assert_true(val1.some?)
+      try assert_true(val2.some?)
+      try assert_true(val3.none?)
+
+      try assert_equal(try! { val1.get }.1, '1')
+      try assert_equal(try! { val2.get }.1, '2')
     }
   }
 
@@ -396,24 +398,6 @@ def tests(t: Tests) {
     }
   }
 
-  t.group('std::map::Map.set') do (g) {
-    g.test('Setting the value of a non-existing key') {
-      let map = Map.new
-
-      try assert_equal(map.set('city', 'Amsterdam'), map)
-      try assert_equal(map['city'], 'Amsterdam')
-    }
-
-    g.test('Setting the value of an existing key') {
-      let map = Map.new
-
-      map.set('name', 'Alice')
-      map.set('name', 'Bob')
-
-      try assert_equal(map['name'], 'Bob')
-    }
-  }
-
   t.group('std::map::Map.[]') do (g) {
     g.test('Obtaining the value of a non-existing key') {
       try assert_panic("Map.new['name']")
@@ -448,9 +432,8 @@ def tests(t: Tests) {
     g.test('Setting the value of a non-existing key') {
       let map = Map.new
 
-      map['name'] = 'Alice'
+      map['city'] = 'Amsterdam'
 
-      try assert_equal(map['city'] = 'Amsterdam', 'Amsterdam')
       try assert_equal(map['city'], 'Amsterdam')
     }
 
@@ -458,8 +441,8 @@ def tests(t: Tests) {
       let map = Map.new
 
       map['name'] = 'Alice'
+      map['name'] = 'Bob'
 
-      try assert_equal(map['name'] = 'Bob', 'Bob')
       try assert_equal(map['name'], 'Bob')
     }
   }
@@ -479,6 +462,21 @@ def tests(t: Tests) {
 
       try assert_equal(map1.length, 1)
       try assert_equal(map2.length, 2)
+    }
+  }
+
+  t.group('std::map::Map.merge') do (g) {
+    g.test('Merging a Map into another Map') {
+      let map1 = Map.new
+      let map2 = Map.new
+
+      map1['name'] = 'Alice'
+      map2['city'] = 'Amsterdam'
+
+      map1.merge(map2)
+
+      try assert_equal(map1['name'], 'Alice')
+      try assert_equal(map1['city'], 'Amsterdam')
     }
   }
 }

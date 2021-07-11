@@ -2,9 +2,9 @@ pub mod socket_address;
 
 use crate::closable::ClosableSocket;
 use crate::duration;
+use crate::mem::process::ServerPointer;
 use crate::network_poller::Interest;
 use crate::network_poller::NetworkPoller;
-use crate::process::RcProcess;
 use crate::runtime_error::RuntimeError;
 use crate::socket::socket_address::SocketAddress;
 use socket2::{Domain, SockAddr, Socket as RawSocket, Type};
@@ -53,9 +53,9 @@ macro_rules! socket_u32_getter {
 macro_rules! socket_duration_setter {
     ($setter:ident) => {
         pub fn $setter(&self, value: f64) -> Result<(), RuntimeError> {
-            let dur = duration::from_f64(value)?;
+            let dur = duration::from_f64(value);
 
-            self.inner.$setter(dur)?;
+            self.inner.$setter(Some(dur))?;
 
             Ok(())
         }
@@ -67,7 +67,7 @@ macro_rules! socket_duration_getter {
         pub fn $getter(&self) -> Result<f64, RuntimeError> {
             let dur = self.inner.$getter()?;
 
-            Ok(duration::to_f64(dur))
+            Ok(dur.map(duration::to_f64).unwrap_or(0.0))
         }
     };
 }
@@ -76,7 +76,7 @@ macro_rules! socket_duration_getter {
 fn decode_sockaddr(
     sockaddr: SockAddr,
     unix: bool,
-) -> Result<(String, i64), RuntimeError> {
+) -> Result<(String, u64), RuntimeError> {
     let peer_result = if unix {
         SocketAddress::Unix(sockaddr).address()
     } else {
@@ -143,7 +143,7 @@ fn update_buffer_length_and_capacity(buffer: &mut Vec<u8>, read: usize) {
     buffer.shrink_to_fit();
 }
 
-fn socket_type(kind: u8) -> Result<Type, RuntimeError> {
+fn socket_type(kind: u64) -> Result<Type, RuntimeError> {
     let kind = match kind {
         0 => Type::stream(),
         1 => Type::dgram(),
@@ -195,15 +195,15 @@ impl Socket {
         })
     }
 
-    pub fn ipv4(kind_int: u8) -> Result<Socket, RuntimeError> {
+    pub fn ipv4(kind_int: u64) -> Result<Socket, RuntimeError> {
         Self::new(Domain::ipv4(), socket_type(kind_int)?, false)
     }
 
-    pub fn ipv6(kind_int: u8) -> Result<Socket, RuntimeError> {
+    pub fn ipv6(kind_int: u64) -> Result<Socket, RuntimeError> {
         Self::new(Domain::ipv6(), socket_type(kind_int)?, false)
     }
 
-    pub fn unix(kind_int: u8) -> Result<Socket, RuntimeError> {
+    pub fn unix(kind_int: u64) -> Result<Socket, RuntimeError> {
         #[cfg(unix)]
         {
             Self::new(Domain::unix(), socket_type(kind_int)?, true)
@@ -271,7 +271,7 @@ impl Socket {
 
     pub fn register(
         &mut self,
-        process: &RcProcess,
+        process: ServerPointer,
         poller: &NetworkPoller,
         interest: Interest,
     ) -> Result<(), RuntimeError> {
@@ -334,13 +334,13 @@ impl Socket {
         &self,
         buffer: &mut Vec<u8>,
         bytes: usize,
-    ) -> Result<(String, i64), RuntimeError> {
+    ) -> Result<(String, u64), RuntimeError> {
         let slice = socket_output_slice(buffer, bytes);
         let (read, sockaddr) = self.inner.recv_from(slice)?;
 
         update_buffer_length_and_capacity(buffer, read);
 
-        Ok(decode_sockaddr(sockaddr, self.unix)?)
+        decode_sockaddr(sockaddr, self.unix)
     }
 
     pub fn send_to(
@@ -354,16 +354,16 @@ impl Socket {
         Ok(self.inner.send_to(buffer, &sockaddr)?)
     }
 
-    pub fn local_address(&self) -> Result<(String, i64), RuntimeError> {
+    pub fn local_address(&self) -> Result<(String, u64), RuntimeError> {
         let sockaddr = self.inner.local_addr()?;
 
-        Ok(decode_sockaddr(sockaddr, self.unix)?)
+        decode_sockaddr(sockaddr, self.unix)
     }
 
-    pub fn peer_address(&self) -> Result<(String, i64), RuntimeError> {
+    pub fn peer_address(&self) -> Result<(String, u64), RuntimeError> {
         let sockaddr = self.inner.peer_addr()?;
 
-        Ok(decode_sockaddr(sockaddr, self.unix)?)
+        decode_sockaddr(sockaddr, self.unix)
     }
 
     pub fn shutdown_read(&self) -> Result<(), RuntimeError> {
@@ -452,6 +452,16 @@ impl Socket {
     pub fn close(&mut self) {
         self.inner.close()
     }
+
+    pub fn try_clone(&self) -> Result<Socket, RuntimeError> {
+        let sock = Socket {
+            inner: ClosableSocket::new(self.inner.try_clone()?),
+            registered: AtomicBool::new(false),
+            unix: self.unix,
+        };
+
+        Ok(sock)
+    }
 }
 
 impl io::Write for Socket {
@@ -470,29 +480,17 @@ impl io::Read for Socket {
     }
 }
 
-impl Clone for Socket {
-    fn clone(&self) -> Self {
-        Socket {
-            inner: ClosableSocket::new(
-                self.inner.try_clone().expect("Failed to clone the socket"),
-            ),
-            registered: AtomicBool::new(false),
-            unix: self.unix,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_clone() {
+    fn test_try_clone() {
         let socket1 = Socket::ipv4(0).unwrap();
 
         socket1.registered.store(true, Ordering::Release);
 
-        let socket2 = socket1.clone();
+        let socket2 = socket1.try_clone().unwrap();
 
         assert_eq!(socket2.registered.load(Ordering::Acquire), false);
         assert_eq!(socket2.unix, false);

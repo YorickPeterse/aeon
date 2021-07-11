@@ -1,9 +1,10 @@
 import std::byte_array::ToByteArray
+import std::clone::Clone
 import std::conversion::ToString
 import std::error::Error
-import std::loop::(while)
 import std::operators::Equal
 import std::string_buffer::StringBuffer
+import std::stdio::stdout
 
 # The byte for a single dot (".").
 let _DOT_BYTE = 46
@@ -35,7 +36,7 @@ let _IPV6_STRING_MAXIMUM_LENGTH = 45
 let _IPV4_TO_IPV6_SHIFT = 8
 
 # Converts a pair of IPv4 octets into a single IPv6 hextet.
-def octets_to_hextet(first: Integer, second: Integer) -> Integer {
+def octets_to_hextet(first: Int, second: Int) -> Int {
   first << _IPV4_TO_IPV6_SHIFT | second
 }
 
@@ -51,10 +52,11 @@ class AddressParseError {
 
 impl ToString for AddressParseError {
   def to_string -> String {
-    @address.empty?.if(
-      true: { 'The String to parse into an IP address is empty' },
-      false: { `{@address} isn't a valid IP address` }
-    )
+    if @address.empty? {
+      'The String to parse into an IP address is empty'
+    } else {
+      `{@address} isn't a valid IP address`
+    }
   }
 }
 
@@ -67,7 +69,7 @@ trait ToIpAddress {
 }
 
 # An IPv4 or IPv6 address.
-trait IpAddress: Equal + ToString + ToIpAddress {
+trait IpAddress: Equal + ToString + ToIpAddress + Clone {
   # Returns `True` if `self` is an IPv4 address.
   def v4? -> Boolean
 
@@ -87,12 +89,12 @@ trait IpAddress: Equal + ToString + ToIpAddress {
   def unspecified? -> Boolean
 
   # Returns the segments of the IP address.
-  def segments -> Array!(Integer)
+  def segments -> ref Array!(Int)
 }
 
 class Ipv6Address {
   # The segments/hextets of this IPv6 address.
-  @segments: Array!(Integer)
+  @segments: Array!(Int)
 
   # Parses an IPv6 address literal.
   #
@@ -121,65 +123,54 @@ class Ipv6Address {
     let mut radix = 16
 
     # No point in parsing the input if we're certain it's not a valid address.
-    (max > _IPV6_STRING_MAXIMUM_LENGTH).if_true {
-      throw AddressParseError.new(bytes)
-    }
+    if max > _IPV6_STRING_MAXIMUM_LENGTH { throw AddressParseError.new(bytes) }
 
-    while({ cursor < max }) {
-      while(
-        true: {
-          # IPv6 addresses can embed IPv4 addresses, so instead of reading until
-          # we encounter a ":" we will also stop reading when running into a ".".
-          (cursor < max)
-            .and { bytes[cursor] != _COLON_BYTE }
-            .and { bytes[cursor] != _DOT_BYTE }
-        },
-        then: {
-          segment_bytes.push(bytes[cursor])
-          cursor += 1
-        }
-      )
+    while cursor < max {
+      # IPv6 addresses can embed IPv4 addresses, so instead of reading until we
+      # encounter a ":" we will also stop reading when running into a ".".
+      while cursor < max
+        and bytes[cursor] != _COLON_BYTE
+        and bytes[cursor] != _DOT_BYTE
+      {
+        segment_bytes.push(bytes[cursor])
+        cursor += 1
+      }
 
       # The moment we encounter a dot we'll enter IPv4 mode, and remain in this
       # mode until we reach the end of the input, as embedded IPv4 addresses
       # must be at the end of an IPv6 address.
-      ipv4_mode
-        .false?
-        .and { (cursor < max).and { bytes[cursor] == _DOT_BYTE } }
-        .if_true {
-          ipv4_mode = True
-          radix = 10
-          max_hextet_value = _IPV4_OCTET_MAXIMUM
-        }
+      if not ipv4_mode
+        and cursor < max
+        and bytes[cursor] == _DOT_BYTE
+      {
+        ipv4_mode = True
+        radix = 10
+        max_hextet_value = _IPV4_OCTET_MAXIMUM
+      }
 
       # When the IP starts with a "::" we won't be able to read input, so the
       # byte buffer is empty.
-      segment_bytes.empty?.if_false {
+      if not segment_bytes.empty? {
         let int = try {
-          Integer.parse(string: segment_bytes.drain_to_string, radix: radix)
+          Int.parse(string: segment_bytes.drain_to_string, radix: radix)
         } else (error) {
           throw AddressParseError.new(bytes)
         }
 
-        (int < _IP_MINIMUM_VALUE).or { int > max_hextet_value }.if_true {
+        if int < _IP_MINIMUM_VALUE or int > max_hextet_value {
           throw AddressParseError.new(bytes)
         }
 
-        ipv4_mode.if(
-          true: { ipv4_segments.push(int) },
-          false: { segments.push(int) }
-        )
+        if ipv4_mode { ipv4_segments.push(int) } else { segments.push(int) }
       }
 
       cursor += 1
 
       # We have reached another ":", which is used to compress one or more empty
       # groups together.
-      (cursor < max).and { bytes[cursor] == _COLON_BYTE }.if_true {
+      if cursor < max and bytes[cursor] == _COLON_BYTE {
         # Zero compression can only be applied once.
-        compressed.if_true {
-          throw AddressParseError.new(bytes)
-        }
+        if compressed { throw AddressParseError.new(bytes) }
 
         compressed = True
 
@@ -193,27 +184,24 @@ class Ipv6Address {
         #
         # When the compression is at the end of the input (e.g. "1::") there is
         # no point in looking ahead, so we don't.
-        while({ look_ahead.and { pad_cursor < max } }) {
+        while pad_cursor < max and look_ahead {
           let byte = bytes[pad_cursor]
 
-          (byte == _COLON_BYTE).if_true { pad -= 1 }
+          if byte == _COLON_BYTE { pad -= 1 }
 
           # Two IPv4 octets can be stored in a single IPv6 hextet, meaning we'd
           # have to reduce padding by two. Since we already skip padding for the
           # ":" that preceeds the IPv4 address, we only reduce the padding by
           # one.
-          ipv4_padded
-            .false?
-            .and { byte == _DOT_BYTE }
-            .if_true {
-              ipv4_padded = True
-              pad -= 1
-            }
+          if not ipv4_padded and byte == _DOT_BYTE {
+            ipv4_padded = True
+            pad -= 1
+          }
 
           pad_cursor += 1
         }
 
-        while({ pad.positive? }) {
+        while pad.positive? {
           segments.push(0)
           pad -= 1
         }
@@ -222,36 +210,30 @@ class Ipv6Address {
       }
     }
 
-    (ipv4_segments.length == _IPV4_OCTETS).if_true {
-      segments[6] = octets_to_hextet(ipv4_segments[0], ipv4_segments[1])
-      segments[7] = octets_to_hextet(ipv4_segments[2], ipv4_segments[3])
+    if ipv4_segments.length == _IPV4_OCTETS {
+      segments[6] =
+        octets_to_hextet(ipv4_segments[0].clone, ipv4_segments[1].clone)
+
+      segments[7] =
+        octets_to_hextet(ipv4_segments[2].clone, ipv4_segments[3].clone)
     }
 
-    (segments.length == _IPV6_HEXTETS).if_false {
-      throw AddressParseError.new(bytes)
-    }
+    if segments.length != _IPV6_HEXTETS { throw AddressParseError.new(bytes) }
 
-    Ipv6Address.new(
-      segments[0],
-      segments[1],
-      segments[2],
-      segments[3],
-      segments[4],
-      segments[5],
-      segments[6],
-      segments[7],
-    )
+    let (a, b, c, d, e, f, g, h) = segments
+
+    Ipv6Address.new(a, b, c, d, e, f, g, h)
   }
 
   static def new(
-    a = 0,
-    b = 0,
-    c = 0,
-    d = 0,
-    e = 0,
-    f = 0,
-    g = 0,
-    h = 0
+    a: Int,
+    b: Int,
+    c: Int,
+    d: Int,
+    e: Int,
+    f: Int,
+    g: Int,
+    h: Int
   ) -> Self {
     Self { @segments = Array.new(a, b, c, d, e, f, g, h) }
   }
@@ -292,18 +274,18 @@ impl ToString for Ipv6Address {
   #     Ipv6Address.new.to_string # => '::'
   #     Ipv6Address.new(0, 0, 0, 0, 0, 0, 0, 1) # => '::1'
   def to_string -> String {
-    unspecified?.if_true { return '::' }
-    loopback?.if_true { return '::1' }
+    if unspecified? { return '::' }
+    if loopback? { return '::1' }
 
     let ipv4_compatible = ipv4_compatible?
     let ipv4_mapped = ipv4_mapped?
 
-    ipv4_compatible.or { ipv4_mapped }.if_true {
+    if ipv4_compatible or ipv4_mapped {
       # This value (256) is used to convert a hextet to the second and fourth
       # octet in an IPv4 address. For example, for a hextet 0x2ff this produces
       # an octet of 255.
       let hextet_to_octet_modulo = _IPV4_OCTET_MAXIMUM + 1
-      let prefix = ipv4_compatible.if(true: { '::' }, false: { '::ffff:' })
+      let prefix = if ipv4_compatible { '::' } else { '::ffff:' }
 
       return `{prefix}{@segments[6] >> _IPV4_TO_IPV6_SHIFT}\
         .{@segments[6] % hextet_to_octet_modulo}\
@@ -318,51 +300,45 @@ impl ToString for Ipv6Address {
 
     # Find the longest sequence of empty hextets, which we will compress
     # together.
-    @segments.each_with_index do (hextet, index) {
-      hextet.zero?.if(
-        true: {
-          current_len.zero?.if_true { current_at = index }
+    for (index, hextet) in @segments.iter.with_index {
+      if hextet.zero? {
+        if current_len.zero? { current_at = index }
 
-          current_len += 1
+        current_len += 1
 
-          (current_len > compression_len).if_true {
-            compression_len = current_len
-            compression_start = current_at
-          }
-        },
-        false: {
-          current_at = 0
-          current_len = 0
+        if current_len > compression_len {
+          compression_len = current_len
+          compression_start = current_at
         }
-      )
+      } else {
+        current_at = 0
+        current_len = 0
+      }
     }
 
     let buffer = StringBuffer.new
 
-    compression_len.positive?.if(
-      true: {
-        let compression_end = compression_start + compression_len
+    if compression_len.positive? {
+      let compression_end = compression_start + compression_len
 
-        @segments.each_with_index do (hextet, index) {
-          (index == compression_start).if_true { buffer.push(':') }
+      for (index, hextet) in @segments.iter.with_index {
+        if index == compression_start { buffer.push(':') }
 
-          (index < compression_start).or { index >= compression_end }.if_true {
-            index.positive?.if_true { buffer.push(':') }
+        if index < compression_start or index >= compression_end {
+          if index.positive? { buffer.push(':') }
 
-            buffer.push(hextet.format(radix: 16))
-          }
-        }
-
-        buffer.to_string
-      },
-      false: {
-        @segments.each_with_index do (hextet, index) {
           buffer.push(hextet.format(radix: 16))
-
-          (index < 7).if_true { buffer.push(':') }
         }
       }
-    )
+
+      buffer.to_string
+    } else {
+      for (index, hextet) in @segments.iter.with_index {
+        buffer.push(hextet.format(radix: 16))
+
+        if index < 7 { buffer.push(':') }
+      }
+    }
 
     buffer.to_string
   }
@@ -371,7 +347,13 @@ impl ToString for Ipv6Address {
 impl ToIpAddress for Ipv6Address {
   # Always returns `self`.
   def to_ip_address -> IpAddress {
-    self
+    clone
+  }
+}
+
+impl Clone for Ipv6Address {
+  def clone -> Self {
+    Self { @segments = @segments.clone }
   }
 }
 
@@ -387,7 +369,7 @@ impl IpAddress for Ipv6Address {
   }
 
   # Returns the hextets of this IPv4 address.
-  def segments -> Array!(Integer) {
+  def segments -> ref Array!(Int) {
     @segments
   }
 
@@ -403,7 +385,7 @@ impl IpAddress for Ipv6Address {
   #
   #     Ipv6Address.new(0x2001, 0xdb8).documentation # => True
   def documentation? -> Boolean {
-    (@segments[0] == 0x2001).and { @segments[1] == 0xdb8 }
+    @segments[0] == 0x2001 and @segments[1] == 0xdb8
   }
 
   # Returns `True` if `self` is a loopback address (::1).
@@ -417,14 +399,14 @@ impl IpAddress for Ipv6Address {
   #     Ipv6Address.new(0, 0, 0, 0, 0, 0, 0, 1).loopback? # => True
   #     Ipv6Address.new(0, 0, 0, 0, 0, 0, 0, 2).loopback? # => False
   def loopback? -> Boolean {
-    (@segments[0] == 0)
-      .and { @segments[1] == 0 }
-      .and { @segments[2] == 0 }
-      .and { @segments[3] == 0 }
-      .and { @segments[4] == 0 }
-      .and { @segments[5] == 0 }
-      .and { @segments[6] == 0 }
-      .and { @segments[7] == 1 }
+    @segments[0] == 0
+      and @segments[1] == 0
+      and @segments[2] == 0
+      and @segments[3] == 0
+      and @segments[4] == 0
+      and @segments[5] == 0
+      and @segments[6] == 0
+      and @segments[7] == 1
   }
 
   # Returns `True` if `self` is a multicast address (ff00::/8).
@@ -451,14 +433,14 @@ impl IpAddress for Ipv6Address {
   #     Ipv6Address.new(0, 0, 0, 0, 0, 0, 0, 0).unspecified? # => True
   #     Ipv6Address.new(0, 0, 0, 0, 0, 0, 0, 1).unspecified? # => False
   def unspecified? -> Boolean {
-    (@segments[0] == 0)
-      .and { @segments[1] == 0 }
-      .and { @segments[2] == 0 }
-      .and { @segments[3] == 0 }
-      .and { @segments[4] == 0 }
-      .and { @segments[5] == 0 }
-      .and { @segments[6] == 0 }
-      .and { @segments[7] == 0 }
+    @segments[0] == 0
+      and @segments[1] == 0
+      and @segments[2] == 0
+      and @segments[3] == 0
+      and @segments[4] == 0
+      and @segments[5] == 0
+      and @segments[6] == 0
+      and @segments[7] == 0
   }
 
   # Returns `True` if `self` is an IPv4-compatible IPv6 address.
@@ -471,12 +453,12 @@ impl IpAddress for Ipv6Address {
   #
   #     Ipv6Address.new(0, 0, 0, 0, 0, 0, 1, 1).ipv4_compatible? # => True
   def ipv4_compatible? -> Boolean {
-    (@segments[0] == 0)
-      .and { @segments[1] == 0 }
-      .and { @segments[2] == 0 }
-      .and { @segments[3] == 0 }
-      .and { @segments[4] == 0 }
-      .and { @segments[5] == 0 }
+    @segments[0] == 0
+      and @segments[1] == 0
+      and @segments[2] == 0
+      and @segments[3] == 0
+      and @segments[4] == 0
+      and @segments[5] == 0
   }
 
   # Returns `True` if `self` is an IPv4-mapped IPv6 address.
@@ -489,18 +471,18 @@ impl IpAddress for Ipv6Address {
   #
   #     Ipv6Address.new(0, 0, 0, 0, 0, 0xffff, 1, 1).ipv4_compatible? # => True
   def ipv4_mapped? -> Boolean {
-    (@segments[0] == 0)
-      .and { @segments[1] == 0 }
-      .and { @segments[2] == 0 }
-      .and { @segments[3] == 0 }
-      .and { @segments[4] == 0 }
-      .and { @segments[5] == _IPV6_HEXTET_MAXIMUM }
+    @segments[0] == 0
+      and @segments[1] == 0
+      and @segments[2] == 0
+      and @segments[3] == 0
+      and @segments[4] == 0
+      and @segments[5] == _IPV6_HEXTET_MAXIMUM
   }
 }
 
 class Ipv4Address {
   # The segments/octets of this IPv4 address.
-  @segments: Array!(Integer)
+  @segments: Array!(Int)
 
   # Parses an IPv4 address literal (e.g. 1.2.3.4).
   #
@@ -521,21 +503,21 @@ class Ipv4Address {
     let segment_bytes = ByteArray.new
 
     # No IPv4 address can be longer than 15 characters (255.255.255.255).
-    (max > 15).if_true { throw AddressParseError.new(bytes) }
+    if max > 15 { throw AddressParseError.new(bytes) }
 
-    while({ cursor < max }) {
-      while({ (cursor < max).and { bytes[cursor] != _DOT_BYTE } }) {
+    while cursor < max {
+      while cursor < max and bytes[cursor] != _DOT_BYTE {
         segment_bytes.push(bytes[cursor])
         cursor += 1
       }
 
       let int = try {
-        Integer.parse(segment_bytes.drain_to_string)
-      } else (error) {
+        Int.parse(string: segment_bytes.drain_to_string, radix: 10)
+      } else {
         throw AddressParseError.new(bytes)
       }
 
-      (int < _IP_MINIMUM_VALUE).or { int > _IPV4_OCTET_MAXIMUM }.if_true {
+      if int < _IP_MINIMUM_VALUE or int > _IPV4_OCTET_MAXIMUM {
         throw AddressParseError.new(bytes)
       }
 
@@ -544,14 +526,14 @@ class Ipv4Address {
       cursor += 1
     }
 
-    (segments.length == _IPV4_OCTETS).if_false {
-      throw AddressParseError.new(bytes)
-    }
+    if segments.length != _IPV4_OCTETS { throw AddressParseError.new(bytes) }
 
-    Ipv4Address.new(segments[0], segments[1], segments[2], segments[3])
+    let (a, b, c, d) = segments
+
+    Ipv4Address.new(a, b, c, d)
   }
 
-  static def new(a = 0, b = 0, c = 0, d = 0) -> Self {
+  static def new(a: Int, b: Int, c: Int, d: Int) -> Self {
     Self { @segments = Array.new(a, b, c, d) }
   }
 }
@@ -595,7 +577,13 @@ impl ToString for Ipv4Address {
 impl ToIpAddress for Ipv4Address {
   # Always returns `self`.
   def to_ip_address -> IpAddress {
-    self
+    clone
+  }
+}
+
+impl Clone for Ipv4Address {
+  def clone -> Self {
+    Self { @segments = @segments.clone }
   }
 }
 
@@ -611,7 +599,7 @@ impl IpAddress for Ipv4Address {
   }
 
   # Returns the octets of this IPv4 address.
-  def segments -> Array!(Integer) {
+  def segments -> ref Array!(Int) {
     @segments
   }
 
@@ -626,10 +614,10 @@ impl IpAddress for Ipv4Address {
   #     Ipv4Address.new(127, 0, 0, 1).broadcast? # => False
   #     Ipv4Address.new(255, 255, 255, 255).broadcast? # => True
   def broadcast? -> Boolean {
-    (@segments[0] == _IPV4_OCTET_MAXIMUM)
-      .and { @segments[1] == _IPV4_OCTET_MAXIMUM }
-      .and { @segments[2] == _IPV4_OCTET_MAXIMUM }
-      .and { @segments[3] == _IPV4_OCTET_MAXIMUM }
+    @segments[0] == _IPV4_OCTET_MAXIMUM
+      and @segments[1] == _IPV4_OCTET_MAXIMUM
+      and @segments[2] == _IPV4_OCTET_MAXIMUM
+      and @segments[3] == _IPV4_OCTET_MAXIMUM
   }
 
   # Returns `True` if `self` is in a range designated for documentation.
@@ -649,19 +637,15 @@ impl IpAddress for Ipv4Address {
   #     Ipv4Address.new(192, 0, 2, 0).documentation? # => True
   #     Ipv4Address.new(192, 1, 2, 0).documentation? # => False
   def documentation? -> Boolean {
-    (@segments[0] == 192)
-      .and { @segments[1] == 0 }
-      .and { @segments[2] == 2 }
-      .if_true { return True }
+    if @segments[0] == 192 and @segments[1] == 0 and @segments[2] == 2 {
+      return True
+    }
 
-    (@segments[0] == 198)
-      .and { @segments[1] == 51 }
-      .and { @segments[2] == 100 }
-      .if_true { return True }
+    if @segments[0] == 198 and @segments[1] == 51 and @segments[2] == 100 {
+      return True
+    }
 
-    (@segments[0] == 203)
-      .and { @segments[1] == 0 }
-      .and { @segments[2] == 113 }
+    @segments[0] == 203 and @segments[1] == 0 and @segments[2] == 113
   }
 
   # Returns `True` if `self` is link-local (169.254.0.0/16).
@@ -676,7 +660,7 @@ impl IpAddress for Ipv4Address {
   #     Ipv4Address.new(169, 254, 1, 0).link_local? # => True
   #     Ipv4Address.new(169, 255, 1, 0).link_local? # => False
   def link_local? -> Boolean {
-    (@segments[0] == 169).and { @segments[1] == 254 }
+    @segments[0] == 169 and @segments[1] == 254
   }
 
   # Returns `True` if `self` is a loopback address (127.0.0.0/8).
@@ -707,7 +691,7 @@ impl IpAddress for Ipv4Address {
   def multicast? -> Boolean {
     let first = @segments[0]
 
-    (first >= 224).and { first <= 239 }
+    first >= 224 and first <= 239
   }
 
   # Returns `True` if `self` is a private address.
@@ -727,14 +711,13 @@ impl IpAddress for Ipv4Address {
   #     Ipv4Address.new(10, 0, 0, 1).private? # => True
   #     Ipv4Address.new(127, 0, 0, 1).private? # => False
   def private? -> Boolean {
-    (@segments[0] == 10).if_true { return True }
+    if @segments[0] == 10 { return True }
 
-    (@segments[0] == 172)
-      .and { @segments[1] >= 16 }
-      .and { @segments[1] <= 31 }
-      .if_true { return True }
+    if @segments[0] == 172 and @segments[1] >= 16 and @segments[1] <= 31  {
+      return True
+    }
 
-    (@segments[0] == 192).and { @segments[1] == 168 }
+    @segments[0] == 192 and @segments[1] == 168
   }
 
   # Returns `True` if `self` is the special "unspecified" address (0.0.0.0).
@@ -746,10 +729,10 @@ impl IpAddress for Ipv4Address {
   #     Ipv4Address.new(0, 0, 0, 0).unspecified? # => True
   #     Ipv4Address.new(0, 0, 0, 1).unspecified? # => False
   def unspecified? -> Boolean {
-    (@segments[0] == 0)
-      .and { @segments[1] == 0 }
-      .and { @segments[2] == 0 }
-      .and { @segments[3] == 0 }
+    @segments[0] == 0
+      and @segments[1] == 0
+      and @segments[2] == 0
+      and @segments[3] == 0
   }
 
   # Converts this IP address to an IPv4-compatible IPv6 address.
@@ -772,8 +755,8 @@ impl IpAddress for Ipv4Address {
       0,
       0,
       0,
-      octets_to_hextet(@segments[0], @segments[1]),
-      octets_to_hextet(@segments[2], @segments[3]),
+      octets_to_hextet(@segments[0].clone, @segments[1].clone),
+      octets_to_hextet(@segments[2].clone, @segments[3].clone),
     )
   }
 
@@ -786,8 +769,8 @@ impl IpAddress for Ipv4Address {
       0,
       0,
       _IPV6_HEXTET_MAXIMUM,
-      octets_to_hextet(@segments[0], @segments[1]),
-      octets_to_hextet(@segments[2], @segments[3]),
+      octets_to_hextet(@segments[0].clone, @segments[1].clone),
+      octets_to_hextet(@segments[2].clone, @segments[3].clone),
     )
   }
 }
@@ -820,13 +803,13 @@ def parse(address: String) !! AddressParseError -> IpAddress {
   let bytes = address.to_byte_array
 
   # The address is definetely not an IPv4 or IPv6 address.
-  (bytes.length > _IPV6_STRING_MAXIMUM_LENGTH)
-    .if_true { throw AddressParseError.new(bytes) }
+  if bytes.length > _IPV6_STRING_MAXIMUM_LENGTH {
+    throw AddressParseError.new(bytes)
+  }
 
-  bytes.each do (byte) {
-    (byte == _DOT_BYTE).if_true { return try Ipv4Address.parse(bytes) }
-
-    (byte == _COLON_BYTE).if_true { return try Ipv6Address.parse(bytes) }
+  for byte in bytes.iter {
+    if byte == _DOT_BYTE { return try Ipv4Address.parse(bytes) }
+    if byte == _COLON_BYTE { return try Ipv6Address.parse(bytes) }
   }
 
   throw AddressParseError.new(address)
@@ -843,6 +826,6 @@ impl ToIpAddress for String {
   #
   #     try! '0.0.0.0'.to_ip_address # => Ipv4Address.new(0, 0, 0, 0)
   def to_ip_address !! AddressParseError -> IpAddress {
-    try parse(self)
+    try parse(self.clone)
   }
 }

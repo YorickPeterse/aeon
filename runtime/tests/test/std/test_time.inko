@@ -1,11 +1,41 @@
 import std::process
 import std::test::*
-import std::time::(self, Duration, Instant, SystemTime)
+import std::time::(self, Duration, Instant, DateTime)
 
 let MIN_UTC_OFFSET = -12 * 3600
 let MAX_UTC_OFFSET = 14 * 3600
 
-def tests(t: Tests) {
+def dummy_time -> DateTime {
+  DateTime.new(
+    year: 2021,
+    month: 5,
+    day: 30,
+    hour: 20,
+    minute: 27,
+    second: 6,
+    sub_second: 4.0,
+    utc_offset: 3600
+  )
+}
+
+def date(year: Int, month: Int, day: Int) -> DateTime {
+  DateTime.new(
+    year: year,
+    month: month,
+    day: day,
+    hour: 0,
+    minute: 0,
+    second: 0,
+    sub_second: 0.0,
+    utc_offset: 0
+  )
+}
+
+def year(year: Int) -> DateTime {
+  date(year: year, month: 1, day: 1)
+}
+
+def tests(t: ref Tests) {
   t.group('std::time::duration::Duration.to_seconds') do (g) {
     g.test('Converting a Duration to seconds') {
       try assert_equal(Duration.new(1.2).to_seconds, 1.2)
@@ -30,9 +60,9 @@ def tests(t: Tests) {
     }
   }
 
-  t.group('std::time::duration::Duration.to_integer') do (g) {
-    g.test('Converting a Duration to an Integer') {
-      try assert_equal(Duration.new(1.2).to_integer, 1)
+  t.group('std::time::duration::Duration.to_int') do (g) {
+    g.test('Converting a Duration to an Int') {
+      try assert_equal(Duration.new(1.2).to_int, 1)
     }
   }
 
@@ -106,474 +136,592 @@ def tests(t: Tests) {
     }
   }
 
-  t.group('std::time::SystemTime.now') do (g) {
-    g.test('Obtaining a SystemTime for the current local time') {
-      try assert_true(SystemTime.now > SystemTime.new)
+  t.group('std::time::DateTime.now') do (g) {
+    g.test('Obtaining a DateTime for the current local time') {
+      try assert_true(
+        DateTime.from_utc_timestamp(10) > DateTime.from_utc_timestamp(5)
+      )
     }
   }
 
-  t.group('std::time::SystemTime.utc') do (g) {
-    g.test('Obtaining a SystemTime using UTC') {
-      let utc = SystemTime.utc
+  t.group('std::time::DateTime.utc') do (g) {
+    g.test('Obtaining a DateTime using UTC') {
+      let utc = DateTime.utc
 
-      try assert_true(utc > SystemTime.new)
+      try assert_true(utc > DateTime.from_utc_timestamp(0))
       try assert_equal(utc.utc_offset, 0)
     }
   }
 
-  t.group('std::time::SystemTime.from_timestamp') do (g) {
-    g.test('Creating a SystemTime using the Unix timestamp 0') {
-      try assert_equal(
-        SystemTime.from_timestamp(time: 0, utc_offset: 0),
-        SystemTime.new(year: 1970)
-      )
+  t.group('std::time::DateTime.from_timestamp') do (g) {
+    g.test('Creating a DateTime using the Unix timestamp 0') {
+      let date = DateTime.from_timestamp(time: 0, utc_offset: 0)
+
+      try assert_equal(date.year, 1970)
+      try assert_equal(date.month, 1)
+      try assert_equal(date.day, 1)
+      try assert_equal(date.hour, 0)
+      try assert_equal(date.minute, 0)
+      try assert_equal(date.second, 0)
+      try assert_equal(date.sub_second, 0.0)
     }
 
-    g.test('Creating a SystemTime using a positive Unix timestamp') {
-      try assert_equal(
-        SystemTime.from_timestamp(5, utc_offset: 0),
-        SystemTime.new(year: 1970, hour: 0, second: 5)
-      )
+    g.test('Creating a DateTime using a positive Unix timestamp') {
+      let date = DateTime.from_timestamp(1_545_698_530, utc_offset: 0)
 
-      try assert_equal(
-        SystemTime.from_timestamp(1_545_698_530, utc_offset: 0),
-        SystemTime.new(
-          year: 2018,
-          month: 12,
-          day: 25,
-          hour: 0,
-          minute: 42,
-          second: 10
-        )
-      )
+      try assert_equal(date.year, 2018)
+      try assert_equal(date.month, 12)
+      try assert_equal(date.day, 25)
+      try assert_equal(date.hour, 0)
+      try assert_equal(date.minute, 42)
+      try assert_equal(date.second, 10)
     }
 
-    g.test('Creating a SystemTime using a negative Unix timestamp') {
-      try assert_equal(
-        SystemTime.from_timestamp(-5, utc_offset: 0),
-        SystemTime.new(
-          year: 1969,
-          month: 12,
-          day: 31,
-          hour: 23,
-          minute: 59,
-          second: 55
-        )
-      )
+    g.test('Creating a DateTime using a negative Unix timestamp') {
+      let date = DateTime.from_timestamp(-1_545_698_530, utc_offset: 0)
 
-      try assert_equal(
-        SystemTime.from_timestamp(-1_545_698_530, utc_offset: 0),
-        SystemTime.new(
-          year: 1921,
-          month: 1,
-          day: 7,
-          hour: 23,
-          minute: 17,
-          second: 50
-        )
-      )
+      try assert_equal(date.year, 1921)
+      try assert_equal(date.month, 1)
+      try assert_equal(date.day, 7)
+      try assert_equal(date.hour, 23)
+      try assert_equal(date.minute, 17)
+      try assert_equal(date.second, 50)
     }
   }
 
-  t.group('std::time::SystemTime.from_utc_timestamp') do (g) {
-    g.test('Creating a SystemTime using a positive Unix timestamp') {
-      try assert_equal(SystemTime.from_utc_timestamp(0), SystemTime.new(year: 1970))
+  t.group('std::time::DateTime.from_utc_timestamp') do (g) {
+    g.test('Creating a DateTime using a positive Unix timestamp') {
+      let date1 = DateTime.from_utc_timestamp(0)
+      let date2 = DateTime.from_utc_timestamp(5)
 
-      try assert_equal(
-        SystemTime.from_utc_timestamp(5),
-        SystemTime.new(year: 1970, second: 5)
-      )
+      try assert_equal(date1.year, 1970)
+      try assert_equal(date1.month, 1)
+      try assert_equal(date1.day, 1)
+      try assert_equal(date1.hour, 0)
+      try assert_equal(date1.minute, 0)
+      try assert_equal(date1.second, 0)
+
+      try assert_equal(date2.year, 1970)
+      try assert_equal(date2.month, 1)
+      try assert_equal(date2.day, 1)
+      try assert_equal(date2.hour, 0)
+      try assert_equal(date2.minute, 0)
+      try assert_equal(date2.second, 5)
     }
 
-    g.test('Creating a SystemTime using a negative Unix timestamp') {
-      try assert_equal(
-        SystemTime.from_utc_timestamp(-5),
-        SystemTime.new(
-          year: 1969,
-          month: 12,
-          day: 31,
-          hour: 23,
-          minute: 59,
-          second: 55
-        )
-      )
+    g.test('Creating a DateTime using a negative Unix timestamp') {
+      let date = DateTime.from_utc_timestamp(-5)
+
+      try assert_equal(date.year, 1969)
+      try assert_equal(date.month, 12)
+      try assert_equal(date.day, 31)
+      try assert_equal(date.hour, 23)
+      try assert_equal(date.minute, 59)
+      try assert_equal(date.second, 55)
     }
   }
 
-  t.group('std::time::SystemTime.hour') do (g) {
+  t.group('std::time::DateTime.hour') do (g) {
     g.test('Obtaining the hour') {
-      try assert_equal(SystemTime.new(hour: 4).hour, 4)
+      try assert_equal(dummy_time.hour, 20)
     }
   }
 
-  t.group('std::time::SystemTime.minute') do (g) {
+  t.group('std::time::DateTime.minute') do (g) {
     g.test('Obtaining the minute') {
-      try assert_equal(SystemTime.new(minute: 4).minute, 4)
+      try assert_equal(dummy_time.minute, 27)
     }
   }
 
-  t.group('std::time::SystemTime.second') do (g) {
+  t.group('std::time::DateTime.second') do (g) {
     g.test('Obtaining the second') {
-      try assert_equal(SystemTime.new(second: 4).second, 4)
+      try assert_equal(dummy_time.second, 6)
     }
   }
 
-  t.group('std::time::SystemTime.sub_second') do (g) {
+  t.group('std::time::DateTime.sub_second') do (g) {
     g.test('Obtaining the sub second') {
-      try assert_equal(SystemTime.new(sub_second: 4.0).sub_second, 4.0)
+      try assert_equal(dummy_time.sub_second, 4.0)
     }
   }
 
-  t.group('std::time::SystemTime.year') do (g) {
+  t.group('std::time::DateTime.year') do (g) {
     g.test('Obtaining the year') {
-      try assert_equal(SystemTime.new(year: 4).year, 4)
+      try assert_equal(dummy_time.year, 2021)
     }
   }
 
-  t.group('std::time::SystemTime.month') do (g) {
+  t.group('std::time::DateTime.month') do (g) {
     g.test('Obtaining the month') {
-      try assert_equal(SystemTime.new(month: 4).month, 4)
+      try assert_equal(dummy_time.month, 5)
     }
   }
 
-  t.group('std::time::SystemTime.day') do (g) {
+  t.group('std::time::DateTime.day') do (g) {
     g.test('Obtaining the day') {
-      try assert_equal(SystemTime.new(day: 4).day, 4)
+      try assert_equal(dummy_time.day, 30)
     }
   }
 
-  t.group('std::time::SystemTime.day_of_week') do (g) {
+  t.group('std::time::DateTime.day_of_week') do (g) {
     g.test('Obtaining the day of the week') {
-      try assert_equal(SystemTime.new(year: 2018, month: 12, day: 10).day_of_week, 1)
-      try assert_equal(SystemTime.new(year: 2018, month: 12, day: 11).day_of_week, 2)
-      try assert_equal(SystemTime.new(year: 2018, month: 12, day: 12).day_of_week, 3)
-      try assert_equal(SystemTime.new(year: 2018, month: 12, day: 13).day_of_week, 4)
-      try assert_equal(SystemTime.new(year: 2018, month: 12, day: 14).day_of_week, 5)
-      try assert_equal(SystemTime.new(year: 2018, month: 12, day: 15).day_of_week, 6)
-      try assert_equal(SystemTime.new(year: 2018, month: 12, day: 16).day_of_week, 7)
+      try assert_equal(date(year: 2018, month: 12, day: 10).day_of_week, 1)
+      try assert_equal(date(year: 2018, month: 12, day: 11).day_of_week, 2)
+      try assert_equal(date(year: 2018, month: 12, day: 12).day_of_week, 3)
+      try assert_equal(date(year: 2018, month: 12, day: 13).day_of_week, 4)
+      try assert_equal(date(year: 2018, month: 12, day: 14).day_of_week, 5)
+      try assert_equal(date(year: 2018, month: 12, day: 15).day_of_week, 6)
+      try assert_equal(date(year: 2018, month: 12, day: 16).day_of_week, 7)
 
-      try assert_equal(SystemTime.new(year: 2018, month: 12, day: 17).day_of_week, 1)
-      try assert_equal(SystemTime.new(year: 2018, month: 12, day: 18).day_of_week, 2)
-      try assert_equal(SystemTime.new(year: 2018, month: 12, day: 19).day_of_week, 3)
-      try assert_equal(SystemTime.new(year: 2018, month: 12, day: 20).day_of_week, 4)
-      try assert_equal(SystemTime.new(year: 2018, month: 12, day: 21).day_of_week, 5)
-      try assert_equal(SystemTime.new(year: 2018, month: 12, day: 22).day_of_week, 6)
-      try assert_equal(SystemTime.new(year: 2018, month: 12, day: 23).day_of_week, 7)
+      try assert_equal(date(year: 2018, month: 12, day: 17).day_of_week, 1)
+      try assert_equal(date(year: 2018, month: 12, day: 18).day_of_week, 2)
+      try assert_equal(date(year: 2018, month: 12, day: 19).day_of_week, 3)
+      try assert_equal(date(year: 2018, month: 12, day: 20).day_of_week, 4)
+      try assert_equal(date(year: 2018, month: 12, day: 21).day_of_week, 5)
+      try assert_equal(date(year: 2018, month: 12, day: 22).day_of_week, 6)
+      try assert_equal(date(year: 2018, month: 12, day: 23).day_of_week, 7)
     }
 
     g.test('Obtaining the day of the week for a date before the Unix epoch') {
-      try assert_equal(SystemTime.new(year: 1969, month: 12, day: 29).day_of_week, 1)
-      try assert_equal(SystemTime.new(year: 1969, month: 12, day: 30).day_of_week, 2)
-      try assert_equal(SystemTime.new(year: 1969, month: 12, day: 31).day_of_week, 3)
+      try assert_equal(date(year: 1969, month: 12, day: 29).day_of_week, 1)
+      try assert_equal(date(year: 1969, month: 12, day: 30).day_of_week, 2)
+      try assert_equal(date(year: 1969, month: 12, day: 31).day_of_week, 3)
     }
 
     g.test('Obtaining the day of the week for the Unix epoch') {
-      try assert_equal(SystemTime.new(year: 1970, month: 1, day: 1).day_of_week, 4)
+      try assert_equal(date(year: 1970, month: 1, day: 1).day_of_week, 4)
     }
   }
 
-  t.group('std::time::SystemTime.day_of_year') do (g) {
+  t.group('std::time::DateTime.day_of_year') do (g) {
     g.test('Obtaining the day of the year for a date before the Unix epoch') {
-      try assert_equal(SystemTime.new(year: 1969, month: 12, day: 29).day_of_year, 363)
-      try assert_equal(SystemTime.new(year: 1969, month: 12, day: 30).day_of_year, 364)
-      try assert_equal(SystemTime.new(year: 1969, month: 12, day: 31).day_of_year, 365)
+      try assert_equal(date(year: 1969, month: 12, day: 29).day_of_year, 363)
+      try assert_equal(date(year: 1969, month: 12, day: 30).day_of_year, 364)
+      try assert_equal(date(year: 1969, month: 12, day: 31).day_of_year, 365)
     }
 
     g.test('Obtaining the day of the year for a date on the Unix epoch') {
-      try assert_equal(SystemTime.new(year: 1970, month: 1, day: 1).day_of_year, 1)
-      try assert_equal(SystemTime.new(year: 1970, month: 1, day: 2).day_of_year, 2)
-      try assert_equal(SystemTime.new(year: 1970, month: 4, day: 1).day_of_year, 91)
+      try assert_equal(date(year: 1970, month: 1, day: 1).day_of_year, 1)
+      try assert_equal(date(year: 1970, month: 1, day: 2).day_of_year, 2)
+      try assert_equal(date(year: 1970, month: 4, day: 1).day_of_year, 91)
     }
 
     g.test('Obtaining the day of the year for a leap year') {
-      try assert_equal(SystemTime.new(year: 2016, month: 12, day: 31).day_of_year, 366)
+      try assert_equal(date(year: 2016, month: 12, day: 31).day_of_year, 366)
     }
 
     g.test('Obtaining the day of the year for a date after the Unix epoch') {
-      try assert_equal(SystemTime.new(year: 2018, month: 12, day: 31).day_of_year, 365)
+      try assert_equal(date(year: 2018, month: 12, day: 31).day_of_year, 365)
     }
   }
 
-  t.group('std::time::SystemTime.days_since_unix_epoch') do (g) {
+  t.group('std::time::DateTime.days_since_unix_epoch') do (g) {
     g.test('Obtaining the days leading up to the Unix epoch') {
       try assert_equal(
-        SystemTime.new(year: 1969, month: 12, day: 31).days_since_unix_epoch,
+        date(year: 1969, month: 12, day: 31).days_since_unix_epoch,
         -1
       )
 
       try assert_equal(
-        SystemTime.new(year: 1969, month: 12, day: 30).days_since_unix_epoch,
+        date(year: 1969, month: 12, day: 30).days_since_unix_epoch,
         -2
       )
 
-      try assert_equal(SystemTime.new(year: 1969, day: 1).days_since_unix_epoch, -365)
+      try assert_equal(
+        date(year: 1969, month: 1, day: 1).days_since_unix_epoch,
+        -365
+      )
     }
 
     g.test('Obtaining the days since the Unix epoch') {
-      try assert_equal(SystemTime.new(year: 1970, day: 1).days_since_unix_epoch, 0)
-      try assert_equal(SystemTime.new(year: 1970, day: 2).days_since_unix_epoch, 1)
-      try assert_equal(SystemTime.new(year: 1970, day: 3).days_since_unix_epoch, 2)
+      try assert_equal(
+        date(year: 1970, month: 1, day: 1).days_since_unix_epoch,
+        0
+      )
+
+      try assert_equal(
+        date(year: 1970, month: 1, day: 2).days_since_unix_epoch,
+        1
+      )
+
+      try assert_equal(
+        date(year: 1970, month: 1, day: 3).days_since_unix_epoch,
+        2
+      )
     }
 
     g.test('Obtaining the days since the Unix epoch for a leap year') {
       try assert_equal(
-        SystemTime.new(year: 2016, day: 3).days_since_unix_epoch,
+        date(year: 2016, month: 1, day: 3).days_since_unix_epoch,
         16803
       )
     }
   }
 
-  t.group('std::time::SystemTime.before_unix_epoch?') do (g) {
-    g.test('Checking if a SystemTime is before the Unix epoch') {
-      try assert_true(SystemTime.new(year: 1950).before_unix_epoch?)
-      try assert_false(SystemTime.new(year: 1970).before_unix_epoch?)
-      try assert_false(SystemTime.new(year: 1971).before_unix_epoch?)
+  t.group('std::time::DateTime.before_unix_epoch?') do (g) {
+    g.test('Checking if a DateTime is before the Unix epoch') {
+      try assert_true(year(1950).before_unix_epoch?)
+      try assert_false(year(1970).before_unix_epoch?)
+      try assert_false(year(1971).before_unix_epoch?)
     }
   }
 
-  t.group('std::time::SystemTime.leap_year?') do (g) {
-    g.test('Checking if a SystemTime is in a leap year') {
-      try assert_true(SystemTime.new(year: 2000).leap_year?)
-      try assert_true(SystemTime.new(year: 2016).leap_year?)
-      try assert_true(SystemTime.new(year: 2020).leap_year?)
-      try assert_true(SystemTime.new(year: 2024).leap_year?)
-      try assert_true(SystemTime.new(year: 2400).leap_year?)
+  t.group('std::time::DateTime.leap_year?') do (g) {
+    g.test('Checking if a DateTime is in a leap year') {
+      try assert_true(year(2000).leap_year?)
+      try assert_true(year(2016).leap_year?)
+      try assert_true(year(2020).leap_year?)
+      try assert_true(year(2024).leap_year?)
+      try assert_true(year(2400).leap_year?)
 
-      try assert_false(SystemTime.new(year: 1700).leap_year?)
-      try assert_false(SystemTime.new(year: 1800).leap_year?)
-      try assert_false(SystemTime.new(year: 1900).leap_year?)
-      try assert_false(SystemTime.new(year: 2017).leap_year?)
-      try assert_false(SystemTime.new(year: 2018).leap_year?)
-      try assert_false(SystemTime.new(year: 2019).leap_year?)
-      try assert_false(SystemTime.new(year: 2100).leap_year?)
+      try assert_false(year(1700).leap_year?)
+      try assert_false(year(1800).leap_year?)
+      try assert_false(year(1900).leap_year?)
+      try assert_false(year(2017).leap_year?)
+      try assert_false(year(2018).leap_year?)
+      try assert_false(year(2019).leap_year?)
+      try assert_false(year(2100).leap_year?)
     }
   }
 
-  t.group('std::time::SystemTime.utc_offset') do (g) {
+  t.group('std::time::DateTime.utc_offset') do (g) {
     g.test('Obtaining the offset relative to UTC') {
-      try assert_equal(SystemTime.new(utc_offset: 5).utc_offset, 5)
+      try assert_equal(dummy_time.utc_offset, 3600)
     }
   }
 
-  t.group('std::time::SystemTime.utc?') do (g) {
-    g.test('Checking if a SystemTime uses UTC') {
-      try assert_true(SystemTime.new.utc?)
-      try assert_false(SystemTime.new(utc_offset: 3600).utc?)
+  t.group('std::time::DateTime.utc?') do (g) {
+    g.test('Checking if a DateTime uses UTC') {
+      try assert_true(year(2021).utc?)
+      try assert_false(dummy_time.utc?)
     }
   }
 
-  t.group('std::time::SystemTime.seconds_since_unix_epoch') do (g) {
+  t.group('std::time::DateTime.seconds_since_unix_epoch') do (g) {
     g.test('Obtaining the number of seconds leading up to the Unix epoch') {
       try assert_equal(
-        SystemTime.new(year: 1969, month: 12, day: 31).seconds_since_unix_epoch,
+        date(year: 1969, month: 12, day: 31).seconds_since_unix_epoch,
         -86400
       )
     }
 
     g.test('Obtaining the number of seconds since the Unix epoch') {
-      try assert_equal(SystemTime.new(year: 1970).seconds_since_unix_epoch, 0)
-
-      try assert_equal(
-        SystemTime.new(year: 1970, hour: 1).seconds_since_unix_epoch,
-        3600
+      let date1 = year(1970)
+      let date2 = DateTime.new(
+        year: 1970,
+        month: 1,
+        day: 1,
+        hour: 1,
+        minute: 0,
+        second: 0,
+        sub_second: 0.0,
+        utc_offset: 0
       )
+
+      try assert_equal(date1.seconds_since_unix_epoch, 0)
+      try assert_equal(date2.seconds_since_unix_epoch, 3600)
     }
 
     g.test('Obtaining the number of seconds since the Unix epoch with a UTC offset') {
-      let time = SystemTime.new(year: 1970, hour: 1, utc_offset: 3600)
+      let time = DateTime.new(
+        year: 1970,
+        month: 1,
+        day: 1,
+        hour: 1,
+        minute: 0,
+        second: 0,
+        sub_second: 0.0,
+        utc_offset: 3600
+      )
 
       try assert_equal(time.seconds_since_unix_epoch, 0)
     }
   }
 
-  t.group('std::time::SystemTime.to_utc') do (g) {
-    g.test('Converting a SystemTime to a UTC based SystemTime') {
-      let utc = SystemTime.new(year: 1970, hour: 1, utc_offset: 3600).to_utc
+  t.group('std::time::DateTime.to_utc') do (g) {
+    g.test('Converting a DateTime to a UTC based DateTime') {
+      let utc = DateTime.from_timestamp(time: 0, utc_offset: 3600).to_utc
 
       try assert_equal(utc.utc_offset, 0)
-      try assert_equal(utc, SystemTime.new(year: 1970, hour: 0))
+      try assert_equal(utc.year, 1970)
+      try assert_equal(utc.hour, 0)
     }
   }
 
-  t.group('std::time::SystemTime.to_integer') do (g) {
-    g.test('Converting a SystemTime to an Integer') {
-      try assert_equal(
-        SystemTime.new(year: 1969, month: 12, day: 31).to_integer,
-        -86400
+  t.group('std::time::DateTime.to_int') do (g) {
+    g.test('Converting a DateTime to an Int') {
+      let date1 = date(year: 1969, month: 12, day: 31)
+      let date2 = year(1970)
+      let date3 = DateTime.new(
+        year: 1970,
+        month: 1,
+        day: 1,
+        hour: 1,
+        minute: 0,
+        second: 0,
+        sub_second: 0.0,
+        utc_offset: 0
       )
 
-      try assert_equal(SystemTime.new(year: 1970).to_integer, 0)
-      try assert_equal(SystemTime.new(year: 1970, hour: 1).to_integer, 3600)
+      try assert_equal(date1.to_int, -86400)
+      try assert_equal(date2.to_int, 0)
+      try assert_equal(date3.to_int, 3600)
     }
   }
 
-  t.group('std::time::SystemTime.to_float') do (g) {
-    g.test('Converting a SystemTime to a Float without sub second precision') {
-      try assert_equal(
-        SystemTime.new(year: 1969, month: 12, day: 31).to_float,
-        -86400.0
+  t.group('std::time::DateTime.to_float') do (g) {
+    g.test('Converting a DateTime to a Float without sub second precision') {
+      let date1 = date(year: 1969, month: 12, day: 31)
+      let date2 = year(1970)
+      let date3 = DateTime.new(
+        year: 1970,
+        month: 1,
+        day: 1,
+        hour: 1,
+        minute: 0,
+        second: 0,
+        sub_second: 0.0,
+        utc_offset: 0
       )
 
-      try assert_equal(SystemTime.new(year: 1970).to_float, 0.0)
-      try assert_equal(SystemTime.new(year: 1970, hour: 1).to_float, 3600.0)
+      try assert_equal(date1.to_float, -86400.0)
+      try assert_equal(date2.to_float, 0.0)
+      try assert_equal(date3.to_float, 3600.0)
     }
 
-    g.test('Converting a SystemTime to a Float with sub second precision') {
-      try assert_equal(
-        SystemTime.new(year: 1969, month: 12, day: 31, sub_second: 0.1).to_float,
-        -86399.9
+    g.test('Converting a DateTime to a Float with sub second precision') {
+      let date1 = DateTime.new(
+        year: 1969,
+        month: 12,
+        day: 31,
+        hour: 0,
+        minute: 0,
+        second: 0,
+        sub_second: 0.1,
+        utc_offset: 0
       )
 
-      try assert_equal(SystemTime.new(year: 1970, sub_second: 0.1).to_float, 0.1)
+      let date2 = DateTime.new(
+        year: 1970,
+        month: 1,
+        day: 1,
+        hour: 0,
+        minute: 0,
+        second: 0,
+        sub_second: 0.1,
+        utc_offset: 0
+      )
+
+      try assert_equal(date1.to_float, -86399.9)
+      try assert_equal(date2.to_float, 0.1)
     }
   }
 
-  t.group('std::time::SystemTime.+') do (g) {
-    g.test('Adding a Duration to a SystemTime using UTC') {
-      let time = SystemTime.new(year: 1970) + Duration.from_seconds(3600)
+  t.group('std::time::DateTime.+') do (g) {
+    g.test('Adding a Duration to a DateTime using UTC') {
+      let time = year(1970) + Duration.from_seconds(3600)
 
-      try assert_equal(time, SystemTime.new(year: 1970, hour: 1))
+      try assert_equal(time.year, 1970)
+      try assert_equal(time.hour, 1)
     }
 
-    g.test('Adding a Duration to a SystemTime using local time') {
-      let time = SystemTime.new(year: 1970, utc_offset: 3600)
-        + Duration.from_seconds(3600)
+    g.test('Adding a Duration to a DateTime using local time') {
+      let date1 = DateTime.new(
+        year: 1970,
+        month: 1,
+        day: 1,
+        hour: 0,
+        minute: 0,
+        second: 0,
+        sub_second: 0.0,
+        utc_offset: 3600
+      )
 
-      try assert_equal(time, SystemTime.new(year: 1970, hour: 1, utc_offset: 3600))
-    }
-  }
+      let date2 = date1 + Duration.from_seconds(3600)
 
-  t.group('std::time::SystemTime.-') do (g) {
-    g.test('Subtracting a Duration to a SystemTime using UTC') {
-      let time = SystemTime.new(year: 1970, hour: 1) - Duration.from_seconds(3600)
-
-      try assert_equal(time, SystemTime.new(year: 1970))
-    }
-
-    g.test('Subtracting a Duration to a SystemTime using local time') {
-      let time = SystemTime.new(year: 1970, hour: 1, utc_offset: 3600)
-        - Duration.from_seconds(3600)
-
-      try assert_equal(time, SystemTime.new(year: 1970, utc_offset: 3600))
+      try assert_equal(date2.year, 1970)
+      try assert_equal(date2.hour, 1)
+      try assert_equal(date2.utc_offset, 3600)
     }
   }
 
-  t.group('std::time::SystemTime.<') do (g) {
-    g.test('Comparing an older SystemTime with a newer SystemTime') {
-      try assert_true(SystemTime.new(year: 1970) < SystemTime.new(year: 1971))
-      try assert_true(SystemTime.new(year: 1970, hour: 2) < SystemTime.new(year: 1971))
+  t.group('std::time::DateTime.-') do (g) {
+    g.test('Subtracting a Duration from a DateTime using UTC') {
+      let date1 = DateTime.new(
+        year: 1970,
+        month: 1,
+        day: 1,
+        hour: 1,
+        minute: 0,
+        second: 0,
+        sub_second: 0.0,
+        utc_offset: 0
+      )
+
+      let date2 = date1 - Duration.from_seconds(3600)
+
+      try assert_equal(date2.year, 1970)
+      try assert_equal(date2.hour, 0)
     }
 
-    g.test('Comparing two identical SystemTime objects') {
-      try assert_false(SystemTime.new(year: 1970) < SystemTime.new(year: 1970))
+    g.test('Subtracting a Duration from a DateTime using local time') {
+      let date1 = DateTime.new(
+        year: 1970,
+        month: 1,
+        day: 1,
+        hour: 1,
+        minute: 0,
+        second: 0,
+        sub_second: 0.0,
+        utc_offset: 3600
+      )
+
+      let date2 = date1 - Duration.from_seconds(3600)
+
+      try assert_equal(date2.year, 1970)
+      try assert_equal(date2.hour, 0)
+      try assert_equal(date2.utc_offset, 3600)
+    }
+  }
+
+  t.group('std::time::DateTime.<') do (g) {
+    g.test('Comparing an older DateTime with a newer DateTime') {
+      try assert_true(year(1970) < year(1971))
+      try assert_true(
+        date(year: 1970, month: 2, day: 1) < date(year: 1971, month: 2, day: 1)
+      )
     }
 
-    g.test('Comparing a newer SystemTime with an older SystemTime') {
-      try assert_false(SystemTime.new(year: 1970) < SystemTime.new(year: 1969))
+    g.test('Comparing two identical DateTime objects') {
+      try assert_false(year(1970) < year(1970))
+    }
+
+    g.test('Comparing a newer DateTime with an older DateTime') {
+      try assert_false(year(1970) < year(1969))
 
       try assert_false(
-        SystemTime.new(year: 1970, hour: 2) < SystemTime.new(year: 1970, hour: 1)
+        date(year: 1970, month: 2, day: 1) < date(year: 1970, month: 1, day: 1)
       )
     }
   }
 
-  t.group('std::time::SystemTime.<=') do (g) {
-    g.test('Comparing an older SystemTime with a newer SystemTime') {
-      try assert_true(SystemTime.new(year: 1970) <= SystemTime.new(year: 1971))
-      try assert_true(SystemTime.new(year: 1970) <= SystemTime.new(year: 1970))
+  t.group('std::time::DateTime.<=') do (g) {
+    g.test('Comparing an older DateTime with a newer DateTime') {
+      try assert_true(year(1970) <= year(1971))
+      try assert_true(year(1970) <= year(1970))
 
       try assert_true(
-        SystemTime.new(year: 1970, hour: 2) <= SystemTime.new(year: 1971)
+        date(year: 1970, month: 2, day: 1) <= date(year: 1971, month: 2, day: 1)
       )
     }
 
-    g.test('Comparing a newer SystemTime with an older SystemTime') {
-      try assert_false(SystemTime.new(year: 1970) <= SystemTime.new(year: 1969))
+    g.test('Comparing a newer DateTime with an older DateTime') {
+      try assert_false(year(1970) <= year(1969))
 
       try assert_false(
-        SystemTime.new(year: 1970, hour: 2) <= SystemTime.new(year: 1970, hour: 1)
+        date(year: 1972, month: 2, day: 1) <= date(year: 1970, month: 2, day: 1)
       )
     }
   }
 
-  t.group('std::time::SystemTime.>') do (g) {
-    g.test('Comparing a newer SystemTime with an older SystemTime') {
-      try assert_true(SystemTime.new(year: 1971) > SystemTime.new(year: 1970))
-      try assert_true(SystemTime.new(year: 1970, hour: 2) > SystemTime.new(year: 1970))
+  t.group('std::time::DateTime.>') do (g) {
+    g.test('Comparing a newer DateTime with an older DateTime') {
+      try assert_true(year(1971) > year(1970))
+      try assert_true(
+        date(year: 1972, month: 2, day: 1) > date(year: 1970, month: 2, day: 1)
+      )
     }
 
-    g.test('Comparing two SystemTime objects in the same year') {
-      try assert_false(SystemTime.new(year: 1970) > SystemTime.new(year: 1970))
+    g.test('Comparing two DateTime objects in the same year') {
+      try assert_false(year(1970) > year(1970))
     }
 
-    g.test('Comparing an older SystemTime with a newer SystemTime') {
-      try assert_false(SystemTime.new(year: 1969) > SystemTime.new(year: 1970))
+    g.test('Comparing an older DateTime with a newer DateTime') {
+      try assert_false(year(1969) > year(1970))
 
       try assert_false(
-        SystemTime.new(year: 1970, hour: 1) > SystemTime.new(year: 1970, hour: 2)
+        date(year: 1970, month: 1, day: 1) > date(year: 1970, month: 2, day: 1)
       )
     }
   }
 
-  t.group('std::time::SystemTime.>=') do (g) {
-    g.test('Comparing a newer SystemTime with an older SystemTime') {
-      try assert_true(SystemTime.new(year: 1971) >= SystemTime.new(year: 1970))
+  t.group('std::time::DateTime.>=') do (g) {
+    g.test('Comparing a newer DateTime with an older DateTime') {
+      try assert_true(year(1971) >= year(1970))
 
       try assert_true(
-        SystemTime.new(year: 1970, hour: 2) >= SystemTime.new(year: 1970)
+        date(year: 1970, month: 2, day: 1) >= date(year: 1970, month: 1, day: 1)
       )
     }
 
-    g.test('Comparing two SystemTime objects in the same year') {
-      try assert_true(
-        SystemTime.new(year: 1970, hour: 2) >= SystemTime.new(year: 1970, hour: 2)
-      )
-
-      try assert_true(SystemTime.new(year: 1970) >= SystemTime.new(year: 1970))
+    g.test('Comparing two DateTime objects in the same year') {
+      try assert_true(year(1970) >= year(1970))
     }
 
-    g.test('Comparing an older SystemTime with a newer SystemTime') {
-      try assert_false(SystemTime.new(year: 1969) >= SystemTime.new(year: 1970))
+    g.test('Comparing an older DateTime with a newer DateTime') {
+      try assert_false(year(1969) >= year(1970))
 
       try assert_false(
-        SystemTime.new(year: 1970, hour: 1) >= SystemTime.new(year: 1970, hour: 2)
+        date(year: 1970, month: 1, day: 1) >= date(year: 1970, month: 2, day: 1)
       )
     }
   }
 
-  t.group('std::time::SystemTime.==') do (g) {
-    g.test('Comparing two SystemTime objects that are equal') {
-      try assert_equal(SystemTime.new, SystemTime.new)
-      try assert_equal(SystemTime.new(year: 1970), SystemTime.new(year: 1970))
+  t.group('std::time::DateTime.==') do (g) {
+    g.test('Comparing two DateTime objects that are equal') {
+      try assert_equal(year(2021), year(2021))
     }
 
-    g.test('Comparing two SystemTime objects that are not equal') {
-      try assert_not_equal(SystemTime.new, SystemTime.new(year: 1970))
-      try assert_not_equal(SystemTime.new(year: 1971), SystemTime.new(year: 1970))
-
-      try assert_not_equal(
-        SystemTime.new(sub_second: 0.1),
-        SystemTime.new(sub_second: 0.2)
+    g.test('Comparing two DateTime objects that are not equal') {
+      let date1 = DateTime.new(
+        year: 1970,
+        month: 1,
+        day: 1,
+        hour: 1,
+        minute: 0,
+        second: 0,
+        sub_second: 0.1,
+        utc_offset: 0
       )
+
+      let date2 = DateTime.new(
+        year: 1970,
+        month: 1,
+        day: 1,
+        hour: 1,
+        minute: 0,
+        second: 0,
+        sub_second: 0.2,
+        utc_offset: 0
+      )
+
+      try assert_not_equal(year(2021), year(2020))
+      try assert_not_equal(date1, date2)
+    }
+  }
+
+  t.group('std::time::Instant.now') do (g) {
+    g.test('Obtaining the current monotonic time') {
+      try assert_true(Instant.now.to_float > 0.0)
     }
   }
 
   t.group('std::time::Instant.new') do (g) {
-    g.test('Obtaining the current monotonic time') {
-      try assert_true(Instant.new.to_float > 0.0)
+    g.test('Manually creating an Instant') {
+      try assert_equal(Instant.new(4.0).to_float, 4.0)
     }
   }
 
-  t.group('std::time::Instant.to_integer') do (g) {
-    g.test('Converting a Instant to an Integer') {
-      try assert_true(Instant.new.to_integer >= 0)
-      try assert_equal(Instant.new(10.0).to_integer, 10)
+  t.group('std::time::Instant.to_int') do (g) {
+    g.test('Converting a Instant to an Int') {
+      try assert_true(Instant.now.to_int >= 0)
+      try assert_equal(Instant.new(10.0).to_int, 10)
     }
   }
 
   t.group('std::time::Instant.to_float') do (g) {
     g.test('Converting a Instant to a Float') {
-      try assert_true(Instant.new.to_float >= 0.0)
+      try assert_true(Instant.now.to_float >= 0.0)
       try assert_equal(Instant.new(10.0).to_float, 10.0)
     }
   }

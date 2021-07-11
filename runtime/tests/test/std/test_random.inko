@@ -3,20 +3,20 @@ import std::process
 import std::random
 import std::test::*
 
-def tests(t: Tests) {
+def tests(t: ref Tests) {
   t.group('std::random.integer') do (g) {
-    g.test('Generating a random Integer') {
+    g.test('Generating a random Int') {
       let int = random.integer
       let int_mirror = ObjectMirror.new(int)
 
       # There isn't much we can test, other than making sure the value is indeed
-      # an Integer.
-      try assert_true(int_mirror.instance_of?(Integer))
+      # an Int.
+      try assert_true(int_mirror.instance_of?(Int))
     }
   }
 
   t.group('std::random.incremental_integer') do (g) {
-    g.test('Generating a random incremental Integer') {
+    g.test('Generating a random incremental Int') {
       # We pin the code below so that the process isn't moved between threads
       # before the assertion. A proces being moved could result in it producing
       # the same value twice.
@@ -41,28 +41,28 @@ def tests(t: Tests) {
   }
 
   t.group('std::random.integer_between') do (g) {
-    g.test('Generating an Integer in a range') {
+    g.test('Generating an Int in a range') {
       let min = 0
       let max = 10
       let val = random.integer_between(min: min, max: max)
 
-      try assert_true((val >= min).and { val <= max })
+      try assert_true(val >= min and val <= max)
     }
 
-    g.test('Generating an Integer in a really big range') {
+    g.test('Generating an Int in a really big range') {
       let min = 1_000_000_000_000_000_000_000
       let max = 5_000_000_000_000_000_000_000
       let val = random.integer_between(min: min, max: max)
 
-      try assert_true((val >= min).and { val <= max })
+      try assert_true(val >= min and val <= max)
     }
 
-    g.test('Generating a negative Integer') {
+    g.test('Generating a negative Int') {
       let min = -10
       let max = 0
       let val = random.integer_between(min: min, max: max)
 
-      try assert_true((val >= min).and { val <= max })
+      try assert_true(val >= min and val <= max)
     }
 
     g.test('Using a minimum value greater than the maximum value') {
@@ -88,7 +88,7 @@ def tests(t: Tests) {
       let max = 10.0
       let val = random.float_between(min: min, max: max)
 
-      try assert_true((val >= min).and { val <= max })
+      try assert_true(val >= min and val <= max)
     }
 
     g.test('Generating a negative Float') {
@@ -96,7 +96,7 @@ def tests(t: Tests) {
       let max = 0.0
       let val = random.float_between(min: min, max: max)
 
-      try assert_true((val >= min).and { val <= max })
+      try assert_true(val >= min and val <= max)
     }
 
     g.test('Using a minimum value greater than the maximum value') {

@@ -9,12 +9,6 @@ module Inkoc
       include GenericType
       include NewInstance
 
-      SINGLETON = new.freeze
-
-      def self.singleton
-        SINGLETON
-      end
-
       def new_instance(*)
         self
       end
@@ -55,7 +49,9 @@ module Inkoc
         NullSymbol.singleton
       end
 
-      def type_compatible?(other, *)
+      def type_compatible?(other, state)
+        return type_compatible?(other.type, state) if other.reference?
+
         other.is_a?(Any) || compatible_with_type_parameter?(other)
       end
 

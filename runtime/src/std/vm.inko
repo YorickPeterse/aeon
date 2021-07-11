@@ -15,6 +15,6 @@
 #     import std::vm
 #
 #     vm.exit(1)
-def exit(status: Integer) -> Never {
+def exit(status: Int) -> Never {
   _INKOC.exit(status)
 }

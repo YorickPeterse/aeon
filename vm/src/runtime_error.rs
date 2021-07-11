@@ -1,5 +1,5 @@
 //! Errors that can be produced at VM runtime.
-use crate::object_pointer::ObjectPointer;
+use crate::mem::allocator::Pointer;
 use std::convert::From;
 use std::io;
 use std::net::AddrParseError;
@@ -12,7 +12,7 @@ pub enum RuntimeError {
     ErrorMessage(String),
 
     /// An error to throw as-is.
-    Error(ObjectPointer),
+    Error(Pointer),
 
     /// A fatal error that should result in the VM terminating.
     Panic(String),
@@ -31,10 +31,7 @@ impl RuntimeError {
     }
 
     pub fn should_poll(&self) -> bool {
-        match self {
-            RuntimeError::WouldBlock => true,
-            _ => false,
-        }
+        matches!(self, RuntimeError::WouldBlock)
     }
 }
 
@@ -63,7 +60,7 @@ impl From<io::Error> for RuntimeError {
                 _ => 0,
             };
 
-            RuntimeError::Error(ObjectPointer::integer(code))
+            RuntimeError::Error(Pointer::int(code))
         }
     }
 }

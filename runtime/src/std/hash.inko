@@ -1,64 +1,67 @@
 # Types and methods for hashing data.
 
-# A default hasher suitable for all Inko types.
-#
-# Different instances of a `DefaultHasher` may produce different hash values
-# for the same object. The internal hashing algorithm may also change, and so
-# the exact hash values should not be relied upon.
-let DefaultHasher = _INKOC.get_hasher_prototype
-
-_INKOC.set_object_name(DefaultHasher, 'DefaultHasher')
-
-impl Object for DefaultHasher {}
-
-extern def hasher_new(key0: Integer, key1: Integer) -> DefaultHasher
-extern def hasher_write(hasher: DefaultHasher, value: Object) -> DefaultHasher
-extern def hasher_to_hash(hasher: DefaultHasher) -> Integer
-
-# Trait for hashing objects.
+# A type used for hashing objects.
 #
 # A `Hasher` is a streaming hasher: instead of feeding it a single value and
 # receiving a hash right away, you write individual values to the `Hasher`. Once
 # you're done you send the `to_hash` message to the `Hasher` to obtain the final
 # hashed value. This approach makes it easier to hash multiple values together
 # such as the values in an `Array`.
-trait Hasher {
-  # Writes the given object into this hasher.
-  def write(value: Object) -> Self
+#
+# Different instances of a `Hasher` may produce different hash values for the
+# same object. The internal hashing algorithm may also change, and so the exact
+# hash values should not be relied upon.
+let Hasher = _INKOC.get_hasher_prototype
 
-  # Returns the hash for the values written so far.
+_INKOC.set_object_name(Hasher, 'Hasher')
+
+impl Object for Hasher {}
+
+extern def hasher_new(key0: ref Int, key1: ref Int) -> Hasher
+extern def hasher_write(hasher: ref Hasher, value: ref Any)
+extern def hasher_to_hash(hasher: ref Hasher) -> Int
+
+# We define this external function here so we don't have to import
+# `std::random`. This is undesired as `std::hash` is loaded quite early in the
+# runtime bootstrapping process.
+extern def random_incremental_integer -> Int
+
+impl Hasher {
+  # Returns a new `Hasher` with a default set of keys.
   #
-  # This method should not reset the internal state of the `Hasher`.
-  def to_hash -> Integer
-}
-
-# A value that can be hashed.
-trait Hash {
-  # Writes the hash for `self` into the given `Hasher`.
-  def hash(hasher: Hasher) {
-    hasher.write(self)
+  # See `Hasher.new` for more information.
+  static def default -> Self {
+    new(random_incremental_integer, random_incremental_integer)
   }
-}
 
-impl DefaultHasher {
-  # Returns a new `DefaultHasher`.
+  # Returns a new `Hasher`.
   #
   # The given keys will be used as secrets for the hasher.
   #
   # # Panics
   #
-  # This method will panic if any of the provided keys are below zero.
-  static def new(key0: Integer, key1: Integer) -> Self {
+  # This method panics if one of the two keys is less than zero.
+  static def new(key0: Int, key1: Int) -> Self {
     hasher_new(key0, key1)
   }
-}
 
-impl Hasher for DefaultHasher {
-  def write(value: Object) -> Self {
+  # Writes the given object into this hasher.
+  def write(value: ref Any) {
     hasher_write(self, value)
   }
 
-  def to_hash -> Integer {
+  # Returns the hash for the values written so far.
+  #
+  # The internal state is reset after calling this method.
+  def to_hash -> Int {
     hasher_to_hash(self)
+  }
+}
+
+# A value that can be hashed.
+trait Hash {
+  # Writes the hash for `self` into the given `Hasher`.
+  def hash(hasher: ref Hasher) {
+    hasher.write(self)
   }
 }

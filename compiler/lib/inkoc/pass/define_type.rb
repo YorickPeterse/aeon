@@ -13,6 +13,19 @@ module Inkoc
         super(compiler, mod)
 
         @deferred_methods = []
+        @loop_nesting = 0
+      end
+
+      def enter_loop
+        @loop_nesting += 1
+        retval = yield
+        @loop_nesting -= 1
+
+        retval
+      end
+
+      def inside_loop?
+        @loop_nesting.positive?
       end
 
       def process_deferred_methods
@@ -29,8 +42,15 @@ module Inkoc
         type
       end
 
-      def on_integer(*)
+      def on_integer(node, _)
+        max = (1 << 64) - 1
+
+        diagnostics.integer_too_large(node.location) if node.value > max
         typedb.integer_type.new_instance
+      end
+
+      def on_unsigned_integer(*)
+        typedb.unsigned_integer.new_instance
       end
 
       def on_float(*)
@@ -56,10 +76,12 @@ module Inkoc
           return TypeSystem::Error.new
         end
 
+        trait_ref = TypeSystem::Reference.new(trait)
+
         node.members.each do |member|
           type = define_type(member, scope)
 
-          if !type.error? && !type.type_compatible?(trait, @state)
+          if !type.error? && !type.type_compatible?(trait_ref, @state)
             diagnostics.missing_to_string_trait(type, member.location)
           end
         end
@@ -78,6 +100,10 @@ module Inkoc
 
         type.self_type = scope.self_type
 
+        if !node.lambda_type? && node.moving
+          type.moving = true
+        end
+
         arg_types = node.arguments.map do |arg|
           define_type_instance(arg, scope)
         end
@@ -87,8 +113,8 @@ module Inkoc
         if node.returns
           type.return_type = define_type_instance(node.returns, scope)
         else
-          type.return_type = TypeSystem::Any.singleton
-          type.ignore_return = true
+          type.discard_return_value = true
+          type.return_type = @state.typedb.nil_type.new_instance
         end
 
         if node.throws
@@ -102,16 +128,22 @@ module Inkoc
       alias on_lambda_type on_block_type
 
       def on_attribute(node, scope)
+        loc = node.location
         name = node.name
         symbol = scope.self_type.lookup_attribute(name)
 
         if symbol.nil?
           diagnostics
-            .undefined_attribute_error(scope.self_type, name, node.location)
+            .undefined_attribute_error(scope.self_type, name, loc)
 
           TypeSystem::Error.new
         else
+          node.variable_state = scope.variable_state(name)
+
+          diagnostics.moved_variable(name, loc) if node.variable_state.moved?
+
           remap_send_return_type(symbol.type.with_rigid_type_parameters, scope)
+            .as_reference_or_owned(owned: scope.self_type.owned?)
         end
       end
 
@@ -124,6 +156,9 @@ module Inkoc
         if local
           node.depth = depth
           node.symbol = local
+          node.variable_state = scope.variable_state(name)
+
+          diagnostics.moved_variable(name, loc) if node.variable_state.moved?
 
           local.increment_references
           remap_send_return_type(local.type, scope)
@@ -193,11 +228,12 @@ module Inkoc
 
         node.receiver_type = receiver
 
-        if receiver.error?
-          receiver
-        else
-          send_to_known_type(node, receiver, scope)
-        end
+        node.type =
+          if receiver.error?
+            receiver
+          else
+            send_to_known_type(node, receiver, scope)
+          end
       end
 
       def send_to_known_type(node, source, scope)
@@ -210,6 +246,15 @@ module Inkoc
         if node.receiver && method.extern
           diagnostics.external_functions_with_receiver(node.location)
           return TypeSystem::Error.new
+        end
+
+        if method.moving && source.reference?
+          diagnostics.moving_method_unavailable(source, node.location)
+          return TypeSystem::Error.new
+        end
+
+        if method.moving && node.receiver
+          move_if_variable(node.receiver, scope)
         end
 
         unless verify_method_bounds(source, method, node.location)
@@ -231,6 +276,22 @@ module Inkoc
         return method if method.error?
 
         verify_argument_types_and_initialize(node, source, method, scope)
+      end
+
+      def move_if_variable(node, scope)
+        return unless node.identifier? || node.attribute?
+        return unless node.type.owned?
+        return unless node.variable_state
+        return if copy_on_move?(node.type)
+
+        node.variable_state.move
+        scope.add_moved_variable(node.name, node.location)
+      end
+
+      def unmove_moved_variables(scope, names)
+        names.each do |name|
+          scope.variable_state(name)&.unmove
+        end
       end
 
       def call_imported_method(node, scope)
@@ -277,6 +338,7 @@ module Inkoc
       def verify_argument_types_and_initialize(node, source, method, scope)
         node.arguments.each_with_index do |arg_node, index|
           rest = false
+          arg_value_node = arg_node
 
           if arg_node.keyword_argument?
             keyword_type = method.keyword_argument_type(arg_node.name, source)
@@ -290,6 +352,7 @@ module Inkoc
               )
             end
 
+            arg_value_node = arg_node.value
             exp_arg = keyword_type
           else
             exp_arg, rest = method.argument_type_at(index, source)
@@ -298,7 +361,7 @@ module Inkoc
           exp_arg = exp_arg.resolve_type_parameters(source, method)
 
           given_arg =
-            if arg_node.closure? && exp_arg.block?
+            if arg_value_node.closure? && exp_arg.block?
               # When passing a closure to a closure we want to infer the
               # arguments of our given closure according to the arguments of the
               # expected closure.
@@ -335,8 +398,8 @@ module Inkoc
               #     process.spawn lambda {
               #       ...
               #     }
-              if arg_node.block_without_signature? && exp_arg.lambda?
-                arg_node.infer_as_lambda
+              if arg_value_node.block_without_signature? && exp_arg.lambda?
+                arg_value_node.infer_as_lambda
               end
 
               define_type(arg_node, scope, exp_arg)
@@ -354,6 +417,8 @@ module Inkoc
             return diagnostics.type_error(exp_arg, given_arg, arg_node.location)
           end
 
+          move_if_variable(arg_value_node, scope) if compare_with.owned?
+
           compare_with.initialize_as(given_arg, method, source)
         end
 
@@ -365,7 +430,7 @@ module Inkoc
           node.throw_type = remap_send_return_type(throw_type, scope)
         end
 
-        remap_send_return_type(return_type, scope)
+        remap_send_return_type(return_type, scope).with_rigid_type_parameters
       end
       # rubocop: enable Metrics/AbcSize
       # rubocop: enable Metrics/BlockLength
@@ -415,20 +480,47 @@ module Inkoc
           define_types(node.expressions, scope).last ||
           typedb.nil_type.new_instance
 
+        # TODO: there must be a better way to do this
+        last_var_name =
+          if (last_expr = node.expressions.last) &&
+            last_expr.is_a?(AST::Identifier) &&
+            last_expr.symbol &&
+            !last_expr.block_type
+            last_expr.symbol.name
+          end
+
         check_unused_locals(node.expressions)
 
         block_type = scope.block_type
 
         block_type.inferred_return_type = type if block_type.infer_return_type
+
         expected_type =
           block_type.return_type.resolve_self_type(scope.self_type)
 
-        if !block_type.yield_type && !block_type.ignore_return
-          if !type.never? && !type.type_compatible?(expected_type, @state)
-            loc = node.location_of_last_expression
+        unless block_type.yield_type
+          loc = node.location_of_last_expression
 
+          if !type.never? && !type.type_compatible?(expected_type, @state)
             diagnostics.return_type_error(expected_type, type, loc)
           end
+
+          if !type.never? && type.owned? && expected_type.reference?
+            diagnostics.return_type_error(expected_type, type, loc)
+          end
+        end
+
+        # TODO: is there a better way of tracking this?
+        # TODO: when the last expression is a variable, we should not drop it
+        # TODO: do the same when that variable is returned using `return`
+        # TODO: how do we handle captured and moved owned variables?
+        scope.locals.each do |local|
+          state = scope.variable_state(local.name)
+
+          next if state.nil? || state.moved?
+          next if last_var_name && last_var_name == local.name
+
+          node.drop_variables << local
         end
 
         type
@@ -441,6 +533,10 @@ module Inkoc
         node.type ||= type
       end
 
+      def on_group(node, scope)
+        define_types(node.expressions, scope).last
+      end
+
       def on_return(node, scope)
         never = TypeSystem::Never.new
         rtype =
@@ -450,7 +546,12 @@ module Inkoc
             typedb.nil_type.new_instance
           end
 
-        block = scope.block_boundary
+        # TODO: remove
+        if scope.block_type.closure?
+          diagnostics.warn('explicit return in closure', node.location)
+        end
+
+        block = scope.block_type
 
         if block
           expected = block.return_type.resolve_self_type(scope.self_type)
@@ -481,6 +582,9 @@ module Inkoc
       end
 
       def on_yield(node, scope)
+        # The value yielded is moved, so we return Nil instead.
+        rtype = @state.typedb.nil_type.new_instance
+
         vtype =
           if node.value
             define_type(node.value, scope)
@@ -492,20 +596,23 @@ module Inkoc
 
         unless method
           diagnostics.yield_outside_method(node.location)
-          return vtype
+          return rtype
         end
 
         unless method.yield_type
           diagnostics.yield_without_yield_defined(node.location)
-          return vtype
+          return rtype
         end
 
         unless vtype.type_compatible?(method.yield_type, @state)
           diagnostics.type_error(method.yield_type, vtype, node.value_location)
         end
 
+        move_if_variable(node.value, scope)
+
         method.yields = true
-        vtype
+
+        rtype
       end
 
       def on_try(node, scope)
@@ -524,11 +631,7 @@ module Inkoc
 
         if (throw_type = node.throw_type)
           if curr_block.infer_throw_type?
-            if node.local
-              curr_block.throw_type = throw_type
-            elsif (fn = scope.block_boundary) && fn.infer_throw_type?
-              fn.throw_type = throw_type
-            end
+            curr_block.throw_type = throw_type
           end
         else
           diagnostics.redundant_try_warning(node.location)
@@ -539,29 +642,23 @@ module Inkoc
 
       def on_try_with_else(node, scope)
         try_type = node.expression.type
-        throw_type = node.throw_type || TypeSystem::Any.singleton
+        throw_type = node.throw_type || TypeSystem::Any.new
+        else_scope = scope.inherit
 
-        node.else_block_type = TypeSystem::Block.new(
-          name: Config::ELSE_BLOCK_NAME,
-          prototype: @state.typedb.block_type
-        )
+        moved, else_type = else_scope.locals.with_unique_names do
+          else_scope.record_moved_variables do
+            if (else_arg_name = node.else_argument_name)
+              node.else_argument_symbol =
+                else_scope.define_local(else_arg_name, throw_type)
+            end
 
-        else_scope = TypeScope.new(
-          scope.self_type,
-          node.else_block_type,
-          @module,
-          locals: node.else_body.locals,
-          parent: scope
-        )
-
-        else_scope.define_receiver_type
-
-        if (else_arg_name = node.else_argument_name)
-          node.else_block_type.arguments.define(else_arg_name, throw_type)
-          else_scope.locals.define(else_arg_name, throw_type)
+            on_inline_body(node.else_body, else_scope)
+          end
         end
 
-        else_type = define_type(node.else_body, else_scope)
+        if node.else_body.returns? || node.else_body.throws?
+          unmove_moved_variables(else_scope, moved)
+        end
 
         if else_type.type_compatible?(try_type, @state)
           try_type
@@ -573,11 +670,11 @@ module Inkoc
       def on_throw(node, scope)
         type = define_type(node.value, scope)
 
-        if node.local && scope.block_type.infer_throw_type?
+        if scope.block_type.infer_throw_type?
           scope.block_type.throw_type = type
-        elsif (fn = scope.block_boundary) && fn.infer_throw_type?
-          fn.throw_type = type
         end
+
+        move_if_variable(node.value, scope)
 
         TypeSystem::Never.new
       end
@@ -607,7 +704,7 @@ module Inkoc
         end
 
         block_type = TypeSystem::Block
-          .closure(typedb.block_type, return_type: TypeSystem::Any.singleton)
+          .closure(typedb.block_type, return_type: TypeSystem::Any.new)
 
         self_type = type.new_instance_with_rigid_type_parameters
         new_scope = TypeScope
@@ -632,7 +729,7 @@ module Inkoc
         # that the trait is implemented for, instead of referring to the type of
         # the outer scope.
         impl_block = TypeSystem::Block
-          .closure(typedb.block_type, return_type: TypeSystem::Any.singleton)
+          .closure(typedb.block_type, return_type: TypeSystem::Any.new)
 
         self_type = object.new_instance_with_rigid_type_parameters
         impl_scope = TypeScope
@@ -713,18 +810,28 @@ module Inkoc
 
         type = TypeSystem::Block.named_method(node.name, typedb.block_type)
 
-        new_scope = TypeScope.new(
-          scope.self_type,
-          type,
-          @module,
-          locals: node.body.locals
-        )
+        type.moving = node.move
 
+        self_type = scope
+          .self_type
+          .new_instance_with_rigid_type_parameters
+          .as_reference_or_owned(owned: node.move)
+
+        new_scope =
+          TypeScope.new(self_type, type, @module, locals: node.body.locals)
+
+        define_attribute_states(scope.self_type, new_scope)
         define_method_bounds(node, new_scope)
         define_block_signature(node, new_scope)
         define_generator_signature(node, new_scope) if node.yields
 
         store_type(type, scope, node.location)
+
+        self_type.type_parameters.each do |param|
+          if (bounded = type.method_bounds[param.name])
+            self_type.type_parameter_instances.define(param, bounded)
+          end
+        end
 
         @deferred_methods << DeferredMethod.new(node, new_scope)
 
@@ -756,8 +863,15 @@ module Inkoc
       def on_required_method(node, scope)
         type = TypeSystem::Block.named_method(node.name, typedb.block_type)
 
-        new_scope = TypeScope
-          .new(scope.self_type, type, @module, locals: node.body.locals)
+        type.moving = node.move
+
+        self_type = scope
+          .self_type
+          .new_instance_with_rigid_type_parameters
+          .as_reference_or_owned(owned: node.move)
+
+        new_scope =
+          TypeScope.new(self_type, type, @module, locals: node.body.locals)
 
         define_block_signature(node, new_scope)
         define_generator_signature(node, new_scope) if node.yields
@@ -782,11 +896,10 @@ module Inkoc
       end
 
       def on_match(node, scope)
+        new_scope = scope.inherit
         location = node.location
-        expr_type = define_type(node.expression, scope) if node.expression
-
+        expr_type = define_type(node.expression, new_scope)
         bind_to = node.bind_to&.name || '__inkoc_match'
-
         operators_mod = @state.module(Config::OPERATORS_MODULE)
 
         unless operators_mod
@@ -797,27 +910,36 @@ module Inkoc
           return @state.diagnostics.pattern_matching_unavailable(location)
         end
 
-        scope.locals.with_unique_names do
-          if expr_type
-            node.bind_to_symbol = scope.locals.define(bind_to, expr_type)
-          end
-
+        new_scope.locals.with_unique_names do
+          node.bind_to_symbol = new_scope.define_local(bind_to, expr_type)
           arm_types = []
+          moved_vars = Set.new
 
           node.arms.each do |arm|
-            arm_type = define_type(arm, scope, expr_type, node.bind_to_symbol)
+            moved, arm_type =
+              define_type(arm, new_scope, expr_type, node.bind_to_symbol)
+
+            unmove_moved_variables(new_scope, moved)
+            moved_vars.merge(moved)
 
             return arm_type if arm_type.error?
 
             arm_types << arm_type
           end
 
-          else_type =
-            if node.match_else
-              define_type(node.match_else, scope)
-            else
-              typedb.nil_type.new_instance
+          if node.match_else
+            moved, else_type = new_scope.record_moved_variables do
+              define_type(node.match_else, new_scope)
             end
+
+            moved_vars.merge(moved)
+          else
+            else_type = typedb.nil_type.new_instance
+          end
+
+          moved_vars.each do |name|
+            new_scope.variable_state(name).move
+          end
 
           return_type = arm_types[0] || else_type
           check_types = arm_types[1..-1] || []
@@ -828,7 +950,7 @@ module Inkoc
             type.type_compatible?(return_type, @state)
           end
 
-          return_type = TypeSystem::Any.singleton unless all_compatible
+          return_type = TypeSystem::Any.new unless all_compatible
 
           return_type || else_type
         end
@@ -839,48 +961,54 @@ module Inkoc
       end
 
       def on_match_type(node, scope, matching_type, bind_to_symbol)
+        # TODO: don't support `as X` when X is a trait. Traits should only exist
+        # at compile-time, as reflection/runtime checking for them is too slow
+        # and best to be avoided.
         unless matching_type
-          return @state.diagnostics.match_type_test_unavailable(node.location)
+          return [
+            [],
+            @state.diagnostics.match_type_test_unavailable(node.location)
+          ]
         end
 
         pattern_type = define_type_instance(node.pattern, scope)
+          .as_reference_or_owned(owned: matching_type.owned?)
 
-        return pattern_type if pattern_type.error?
+        return [[], pattern_type] if pattern_type.error?
 
         bind_to_symbol.with_temporary_type(pattern_type) do
           match_guard(node.guard, scope) if node.guard
-          on_inline_body(node.body, scope)
+          scope.record_moved_variables { on_inline_body(node.body, scope) }
         end
       end
 
       def on_match_expression(node, scope, matching_type, _)
         location = node.location
 
-        if matching_type&.any?
-          return @state.diagnostics.pattern_match_any(location)
+        if matching_type.any?
+          return [[], @state.diagnostics.pattern_match_any(location)]
         end
 
         operators_mod = @state.module(Config::OPERATORS_MODULE)
         match_trait = operators_mod.lookup_type(Config::MATCH_CONST)
+          .new_instance([matching_type])
 
         node.patterns.each do |pattern|
           type = define_type(pattern, scope)
 
           return type if type.error?
 
-          if matching_type
-            unless type.implements_trait?(match_trait)
-              return @state.diagnostics.invalid_match_pattern(type, location)
-            end
-          else
-            unless type.type_compatible?(typedb.boolean_type, @state)
-              return @state.diagnostics.invalid_boolean_match_pattern(location)
-            end
+          unless type.type_compatible?(match_trait, @state)
+            return [
+              [],
+              @state.diagnostics.invalid_match_pattern(type, match_trait, location)
+            ]
           end
         end
 
         match_guard(node.guard, scope) if node.guard
-        on_inline_body(node.body, scope)
+
+        scope.record_moved_variables { on_inline_body(node.body, scope) }
       end
 
       def match_guard(node, scope)
@@ -891,11 +1019,144 @@ module Inkoc
         end
       end
 
+      def on_if(node, scope)
+        rtype = nil
+        moved_vars = Set.new
+        unmove_after = Set.new
+
+        node.conditions.each do |cond|
+          cond_type = define_type(cond.condition, scope)
+          body_scope = scope.inherit
+
+          unless cond_type.responds_to_truthy?
+            diagnostics
+              .invalid_condition_type(cond_type, cond.condition.location)
+          end
+
+          moved, body_type = body_scope.locals.with_unique_names do
+            body_scope.record_moved_variables do
+              on_inline_body(cond.body, body_scope)
+            end
+          end
+
+          unmove_after.merge(moved) if cond.body.returns? || cond.body.throws?
+
+          unmove_moved_variables(scope, moved)
+          moved_vars.merge(moved)
+
+          if rtype && !body_type.type_compatible?(rtype, @state)
+            rtype = TypeSystem::Any.new
+          end
+
+          rtype ||= body_type
+        end
+
+        if node.else_body
+          else_scope = scope.inherit
+
+          moved, else_type = else_scope.locals.with_unique_names do
+            else_scope.record_moved_variables do
+              on_inline_body(node.else_body, else_scope)
+            end
+          end
+
+          moved_vars.merge(moved)
+
+          unless else_type.type_compatible?(rtype, @state)
+            rtype = TypeSystem::Any.new
+          end
+        end
+
+        moved_vars.each do |name|
+          scope.variable_state(name)&.move unless unmove_after.include?(name)
+        end
+
+        if node.else_body
+          rtype || TypeSystem::Any.new
+        else
+          TypeSystem::Any.new
+        end
+      end
+
+      def on_and(node, scope)
+        left = define_type(node.left, scope)
+        right = define_type(node.right, scope)
+
+        unless left.responds_to_truthy?
+          diagnostics.invalid_condition_type(left, node.left.location)
+        end
+
+        unless right.responds_to_truthy?
+          diagnostics.invalid_condition_type(right, node.right.location)
+        end
+
+        @state.typedb.boolean_type.new_instance
+      end
+
+      def on_or(node, scope)
+        left = define_type(node.left, scope)
+        right = define_type(node.right, scope)
+
+        unless left.responds_to_truthy?
+          diagnostics.invalid_condition_type(left, node.left.location)
+        end
+
+        unless right.responds_to_truthy?
+          diagnostics.invalid_condition_type(right, node.right.location)
+        end
+
+        @state.typedb.boolean_type.new_instance
+      end
+
+      def on_not(node, scope)
+        expr = define_type(node.expression, scope)
+
+        unless expr.responds_to_truthy?
+          diagnostics.invalid_condition_type(expr, node.expression.location)
+        end
+
+        @state.typedb.boolean_type.new_instance
+      end
+
+      def on_loop(node, scope)
+        body_scope = scope.inherit
+        existing = scope.locals.symbols.map(&:name).to_set
+
+        body_scope.locals.with_unique_names do
+          enter_loop { on_inline_body(node.body, body_scope) }
+        end
+
+        # This is such a hack, but sadly due to not using a graph-based IR this
+        # is the least hacky we can do :<
+        body_scope.moved_variables.each do |name, loc|
+          next unless body_scope.variable_state(name).moved?
+
+          if existing.include?(name) || name.start_with?('@')
+            diagnostics.moved_without_reassignment(name, loc)
+          end
+        end
+
+        TypeSystem::Never.new
+      end
+
+      def on_next(node, scope)
+        diagnostics.next_outside_loop(node.location) unless inside_loop?
+        TypeSystem::Never.new
+      end
+
+      def on_break(node, scope)
+        diagnostics.break_outside_loop(node.location) unless inside_loop?
+        TypeSystem::Never.new
+      end
+
       def on_block(node, scope, expected_block = nil)
-        block_type = TypeSystem::Block
-          .closure(typedb.block_type, return_type: TypeSystem::Any.singleton)
+        block_type = TypeSystem::Block.closure(
+          typedb.block_type,
+          return_type: @state.typedb.nil_type.new_instance
+        )
 
         locals = node.body.locals
+        block_type.moving = true if node.moving || expected_block&.moving
 
         new_scope = TypeScope.new(
           scope.self_type,
@@ -905,6 +1166,8 @@ module Inkoc
           parent: scope
         )
 
+        node.type_scope = new_scope
+
         define_block_signature(node, new_scope, expected_block)
         define_type(node.body, new_scope)
 
@@ -912,12 +1175,25 @@ module Inkoc
           arg.type = arg.type.with_rigid_type_parameters
         end
 
+        new_scope.each_moved_and_captured_variable do |name, loc|
+          next unless scope.variable_state(name).moved?
+          next if block_type.moving
+
+          diagnostics.moved_without_reassignment(name, loc)
+        end
+
+        if expected_block&.throw_type && !block_type.throw_type
+          block_type.throw_type = TypeSystem::Never.new
+        end
+
         block_type
       end
 
       def on_lambda(node, scope, expected_block = nil)
-        block_type = TypeSystem::Block
-          .lambda(typedb.block_type, return_type: TypeSystem::Any.singleton)
+        block_type = TypeSystem::Block.lambda(
+          typedb.block_type,
+          return_type: @state.typedb.nil_type.new_instance
+        )
 
         new_scope = TypeScope.new(
           @module.type,
@@ -942,6 +1218,8 @@ module Inkoc
 
         vtype = define_type(node.value, scope)
         callback = node.variable.define_variable_visitor_method
+
+        move_if_variable(node.value, scope)
 
         public_send(callback, node.variable, vtype, scope, node.mutable?)
       end
@@ -968,7 +1246,7 @@ module Inkoc
           value_type = diagnostics
             .redefine_existing_local_error(name, node.location)
         else
-          node.symbol = scope.locals.define(name, value_type, mutable)
+          node.symbol = scope.define_local(name, value_type, mutable)
         end
 
         value_type
@@ -983,6 +1261,7 @@ module Inkoc
             .redefine_existing_attribute_error(name, node.location)
         else
           scope.self_type.define_attribute(name, vtype, true)
+          scope.self_type.attribute_names << name
 
           vtype
         end
@@ -1000,7 +1279,7 @@ module Inkoc
 
         store_type_as_global(name, value_type, scope, node.location)
 
-        value_type
+        @state.typedb.nil_type.new_instance
       end
 
       def on_reassign_variable(node, scope)
@@ -1030,7 +1309,9 @@ module Inkoc
         node.symbol = existing
         node.depth = depth
 
-        existing.type
+        scope.unmove_variable(name)
+
+        @state.typedb.nil_type.new_instance
       end
 
       def on_reassign_attribute(node, value_type, scope)
@@ -1042,36 +1323,164 @@ module Inkoc
               .reassign_undefined_attribute_error(name, node.location)
         end
 
-        unless existing.mutable?
-          diagnostics.reassign_immutable_attribute_error(name, node.location)
-          return existing.type
+        existing_type = existing
+          .type
+          .resolve_type_parameters(scope.self_type, scope.enclosing_method)
+
+        unless value_type.type_compatible?(existing_type, @state)
+          diagnostics.type_error(existing_type, value_type, node.location)
         end
 
-        unless value_type.type_compatible?(existing.type, @state)
-          diagnostics.type_error(existing.type, value_type, node.location)
+        scope.variable_state(name).unmove
+
+        @state.typedb.nil_type.new_instance
+      end
+
+      def on_destructure_array(node, scope)
+        value = define_type(node.value, scope)
+
+        is_array = value.type_instance_of?(@state.typedb.array_type)
+        is_byte_array = value.type_instance_of?(@state.typedb.byte_array_type)
+
+        if !is_array && !is_byte_array
+          pair_mod = @state.module(Config::PAIR_MODULE)
+          pair_type = pair_mod&.lookup_type(Config::PAIR_TYPE)
+          triple_type = pair_mod&.lookup_type(Config::TRIPLE_TYPE)
+
+          if pair_type && value.type_instance_of?(pair_type)
+            return on_destructure_pair(node, scope)
+          end
+
+          if triple_type && value.type_instance_of?(triple_type)
+            return on_destructure_triple(node, scope)
+          end
+
+          diagnostics.destructure_array(node.value.location)
+
+          return TypeSystem::Error.new
         end
 
-        value_type
+        node.value_kind = :byte_array if is_byte_array
+
+        member_type =
+          if is_array
+            param = value.type_parameters.first
+            param_type = value
+              .lookup_type_parameter_instance(param)
+              .as_reference_or_owned(owned: value.owned?)
+          else
+            @state.typedb.integer_type.new_instance
+          end
+
+        node.variables.each do |var|
+          lname = var.variable.name
+
+          next if var.variable.ignore?
+
+          if scope.locals.defined?(lname)
+            diagnostics
+              .redefine_existing_local_error(lname, var.variable.location)
+
+            next
+          end
+
+          if var.value_type
+            vtype = define_type_instance(var.value_type, scope)
+
+            unless member_type.cast_to?(vtype, @state)
+              diagnostics
+                .invalid_cast_error(member_type, vtype, var.value_type.location)
+            end
+          else
+            vtype = member_type
+          end
+
+          var.symbol = scope.define_local(lname, vtype, var.mutable?)
+        end
+
+        move_if_variable(node.value, scope)
+
+        @state.typedb.nil_type.new_instance
+      end
+
+      def on_destructure_pair(node, scope)
+        node.value_kind = :pair
+        destruct_tuple(2, node, scope)
+      end
+
+      def on_destructure_triple(node, scope)
+        node.value_kind = :triple
+        destruct_tuple(3, node, scope)
+      end
+
+      def destruct_tuple(maximum, node, scope)
+        if node.variables.length > maximum
+          diagnostics.too_many_destructuring_variables(
+            node.value.type,
+            maximum,
+            node.location
+          )
+
+          return TypeSystem::Error.new
+        end
+
+        pair_type = node.value.type
+
+        node.variables.each_with_index do |var, index|
+          lname = var.variable.name
+
+          next if var.variable.ignore?
+
+          if scope.locals.defined?(lname)
+            diagnostics
+              .redefine_existing_local_error(lname, var.variable.location)
+
+            next
+          end
+
+          param = pair_type.type_parameters.at_index(index)
+          param_type = pair_type
+            .lookup_type_parameter_instance(param)
+
+          if param_type
+            param_type = param_type.as_reference_or_owned(owned: pair_type.owned?)
+          else
+            param_type = TypeSystem::Error.new
+          end
+
+          if var.value_type
+            vtype = define_type_instance(var.value_type, scope)
+
+            unless param_type.cast_to?(vtype, @state)
+              diagnostics
+                .invalid_cast_error(param_type, vtype, var.value_type.location)
+            end
+          else
+            vtype = param_type
+          end
+
+          var.symbol = scope.define_local(lname, vtype, var.mutable?)
+        end
+
+        move_if_variable(node.value, scope)
+
+        @state.typedb.nil_type.new_instance
       end
 
       def on_define_argument(arg_node, scope, default_type = nil)
         block_type = scope.block_type
         name = arg_node.name
 
-        vtype = type_for_argument_value(arg_node, scope)
         def_type = defined_type_for_argument(arg_node, scope)
         arg_type = determine_argument_type(
           arg_node,
           def_type,
-          vtype,
           scope.block_type,
           default_type
         )
 
         symbol =
-          if arg_node.default
-            block_type.define_optional_argument(name, arg_type)
-          elsif arg_node.rest?
+          if arg_node.rest?
             block_type.define_rest_argument(
               name,
               @state.typedb.new_array_of_type(arg_type)
@@ -1080,7 +1489,7 @@ module Inkoc
             block_type.define_required_argument(name, arg_type)
           end
 
-        scope.locals.define(symbol.name, symbol.type.with_rigid_type_parameters)
+        scope.define_local(symbol.name, symbol.type.with_rigid_type_parameters)
         arg_type
       end
 
@@ -1090,13 +1499,22 @@ module Inkoc
         scope.self_type.define_type_parameter(node.name, traits)
       end
 
-      def on_keyword_argument(node, scope)
-        define_type(node.value, scope)
+      def on_keyword_argument(node, scope, expected_block = nil)
+        if expected_block
+          define_type(node.value, scope, expected_block)
+        else
+          define_type(node.value, scope)
+        end
       end
 
       def on_type_cast(node, scope)
         to_cast = define_type(node.expression, scope)
-        cast_to = define_type_instance(node.cast_to, scope)
+        cast_to = remap_send_return_type(
+          define_type_instance(node.cast_to, scope),
+          scope
+        )
+
+        cast_to = cast_to.with_rigid_type_parameters
 
         if to_cast.cast_to?(cast_to, @state)
           cast_to
@@ -1144,6 +1562,8 @@ module Inkoc
           defined = object.lookup_attribute(name)
           given = define_type(attr.value, scope)
 
+          move_if_variable(attr.value, scope)
+
           if defined.nil?
             diagnostics.undefined_attribute_error(object, name, attr.location)
             next
@@ -1167,22 +1587,27 @@ module Inkoc
           end
         end
 
-        object.attributes.each do |sym|
-          next if set.include?(sym.name)
-          next unless sym.name.start_with?('@')
-          next if sym.name.start_with?('@_')
+        object.attribute_names.each do |name|
+          next if set.include?(name)
 
-          diagnostics.unassigned_attribute(sym.name, node.location)
+          diagnostics.unassigned_attribute(name, node.location)
         end
 
         instance
+      end
+
+      def on_reference_value(node, scope)
+        # TODO: error unless type is owned
+        type = define_type(node.expression, scope)
+
+        TypeSystem::Reference.wrap(type)
       end
 
       def define_block_signature(node, scope, expected_block = nil)
         define_type_parameters(node, scope)
         define_argument_types(node, scope, expected_block)
         define_throw_type(node, scope)
-        define_return_type(node, scope)
+        define_return_type(node, scope, expected_block)
 
         scope.define_receiver_type
         scope.block_type.define_call_method
@@ -1204,6 +1629,14 @@ module Inkoc
           .typedb
           .generator_type
           .new_instance([yield_type, throw_type])
+      end
+
+      def define_attribute_states(self_type, scope)
+        return unless self_type.object?
+
+        self_type.base_type.attribute_names.each do |name|
+          scope.define_variable_state(name)
+        end
       end
 
       def define_method_bounds(node, scope)
@@ -1269,6 +1702,7 @@ module Inkoc
       end
 
       def define_argument_types_with_expected_block(node, scope, expected_block)
+        expected_block = expected_block.type if expected_block.reference?
         expected_args = expected_block.arguments
 
         node.arguments.zip(expected_args) do |arg_node, exp_arg|
@@ -1286,24 +1720,31 @@ module Inkoc
         scope.block_type.throw_type = define_type_instance(node.throws, scope)
       end
 
-      def define_return_type(node, scope)
+      def define_return_type(node, scope, expected_block = nil)
         scope.block_type.return_type =
           if node.returns
             scope.block_type.infer_return_type = false
             node.returns.late_binding = true
 
             define_type_instance(node.returns, scope)
-          elsif scope.block_type.method?
-            scope.block_type.ignore_return = true
-            @state.typedb.nil_type.new_instance
           else
-            TypeSystem::Any.singleton
-          end
-      end
+            # If a block is directly passed as an argument, and the target
+            # block doesn't care about the return type (= it's left out), we
+            # also discard the return type of the input block. This allows for
+            # code such as this:
+            #
+            #     def foo(block: do) {
+            #       block.call
+            #     }
+            #
+            #     foo { 10 }
+            #     foo { 'bar' }
+            if expected_block&.discard_return_value
+              scope.block_type.discard_return_value = true
+            end
 
-      # Returns the type of an argument's default value, if any.
-      def type_for_argument_value(arg_node, scope)
-        define_type_instance(arg_node.default, scope) if arg_node.default
+            expected_block&.return_type || @state.typedb.nil_type.new_instance
+          end
       end
 
       # Returns the type for an explicitly defined argument type, if any.
@@ -1326,41 +1767,33 @@ module Inkoc
       end
 
       # Determines which type to use for an argument.
-      #
-      # rubocop: disable Metrics/CyclomaticComplexity
-      # rubocop: disable Metrics/PerceivedComplexity
       def determine_argument_type(
         node,
         defined_type,
-        value_type,
         block_type,
         default_type = nil
       )
         type =
-          if defined_type && value_type
-            unless value_type.type_compatible?(defined_type, @state)
-              diagnostics
-                .type_error(defined_type, value_type, node.default.location)
-            end
-
+          if defined_type
             defined_type
-          elsif defined_type
-            defined_type
-          elsif value_type
-            value_type
+          elsif default_type
+            default_type
           else
-            if default_type
-              default_type
-            else
-              diagnostics.argument_type_missing(node.location)
-              TypeSystem::Error.new
-            end
+            diagnostics.argument_type_missing(node.location)
+            TypeSystem::Error.new
           end
 
         type.remap_using_method_bounds(block_type)
       end
-      # rubocop: enable Metrics/PerceivedComplexity
-      # rubocop: enable Metrics/CyclomaticComplexity
+
+      def copy_on_move?(type)
+        trait =
+          @state.module(Config::CLONE_MODULE)&.lookup_type(Config::COPY_CONST)
+
+        return false unless trait
+
+        type.implements_trait?(trait, @state)
+      end
     end
     # rubocop: enable Metrics/ClassLength
   end

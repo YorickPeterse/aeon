@@ -38,16 +38,16 @@ class Message {
   @type_parameter_types: TypeParameterTypes
 
   # The total number of (unique) arguments specified.
-  @total_arguments: Integer
+  @total_arguments: Int
 
   # The number of required arguments that have been provided.
-  @required_arguments: Integer
+  @required_arguments: Int
 
   # The keyword arguments that have been specifed.
   @keyword_arguments: Set!(String)
 
   # The index of the first optional argument.
-  @first_optional_argument: Integer
+  @first_optional_argument: Int
 
   static def new(receiver: Type, block: BlockType) -> Self {
     Self {
@@ -73,19 +73,19 @@ class Message {
     @type_parameter_types
   }
 
-  def maximum_arguments -> Integer {
+  def maximum_arguments -> Int {
     @block.arguments.length
   }
 
-  def minimum_arguments -> Integer {
+  def minimum_arguments -> Int {
     @block.required_arguments
   }
 
-  def total_arguments -> Integer {
+  def total_arguments -> Int {
     @total_arguments
   }
 
-  def required_arguments -> Integer {
+  def required_arguments -> Int {
     @required_arguments
   }
 
@@ -93,8 +93,8 @@ class Message {
     @total_arguments += 1
   }
 
-  def increment_required_arguments(index: Integer) {
-    (index < @first_optional_argument).if_true { @required_arguments += 1 }
+  def increment_required_arguments(index: Int) {
+    if index < @first_optional_argument { @required_arguments += 1 }
   }
 
   def add_keyword_argument(name: String) -> Boolean {
@@ -106,8 +106,7 @@ class Message {
   }
 
   def too_many_arguments? -> Boolean {
-    (@total_arguments > @block.arguments.length)
-      .and { @block.rest_argument?.false? }
+    @total_arguments > @block.arguments.length and not @block.rest_argument?
   }
 }
 
@@ -119,7 +118,7 @@ impl TypeCheckScope for Message {
   def lookup_type_parameter_type(parameter: TypeParameterType) -> ?Type {
     let from_local = @type_parameter_types.get(parameter)
 
-    from_local.if_true { return from_local }
+    if from_local { return from_local }
 
     @receiver.lookup_type_parameter_type(parameter)
   }
@@ -127,10 +126,11 @@ impl TypeCheckScope for Message {
   def assign_type_parameter(parameter: TypeParameterType, type: Type) {
     let rec = @receiver
 
-    rec.defines_type_parameter?(parameter).if(
-      true: { rec.assign_type_parameter(parameter: parameter, type: type) },
-      false: { @type_parameter_types[parameter] = type }
-    )
+    if rec.defines_type_parameter?(parameter) {
+      rec.assign_type_parameter(parameter: parameter, type: type)
+    } else {
+      @type_parameter_types[parameter] = type
+    }
   }
 }
 
@@ -158,7 +158,7 @@ trait TypePass {
   # arguments, so we dispatch to a dedicated method for constants. For all other
   # nodes we use the regular visitor methods.
   def visit_type_node(node: TypeNode, types: TypeScope) -> Type {
-    let return_type = match(let matched = node) {
+    let return_type = match let matched = node {
       as Constant -> { visit_constant_as_type(node: matched, types: types) }
       as ClosureTypeNode -> { visit_closure_type(node: matched, types: types) }
       as LambdaTypeNode -> { visit_lambda_type(node: matched, types: types) }
@@ -175,7 +175,7 @@ trait TypePass {
   }
 
   def visit_constant(node: Constant, types: TypeScope) -> Type {
-    let symbol = types.lookup_type_as_value(node.name).get_or_else {
+    let symbol = try types.lookup_type_as_value(node.name).get else {
       type_checker
         .diagnostics
         .undefined_constant(name: node.name, location: node.location)
@@ -190,18 +190,18 @@ trait TypePass {
     # When no type arguments are given, we want to keep the type as-is. For
     # example, referring to `Array` should return that exact type, instead of
     # returning a type instance of `Array`.
-    node.type_arguments.empty?.if_true { return node.resolved_type = type }
+    if node.type_arguments.empty? { return node.resolved_type = type }
 
     constant_as_type_instance(type: type, node: node, types: types)
   }
 
   def visit_constant_as_type(node: Constant, types: TypeScope) -> Type {
-    let type = match(node.name) {
+    let type = match node.name {
       NEVER_TYPE -> { NeverType.new }
       SELF_TYPE -> { SelfType.new }
       ANY_TYPE -> { AnyType.new }
       else -> {
-        let symbol = types.lookup_type(node.name).get_or_else {
+        let symbol = try types.lookup_type(node.name).get else {
           type_checker
             .diagnostics
             .undefined_constant(name: node.name, location: node.location)
@@ -220,7 +220,7 @@ trait TypePass {
 
   def visit_option_type(node: OptionTypeNode, types: TypeScope) -> Type {
     let wrapped = visit_type_node(node: node.type, types: types)
-    let opt_type = type_checker.option_object.get_or_else {
+    let opt_type = try type_checker.option_object.get else {
       type_checker.diagnostics.option_type_not_found(node.location)
 
       return node.resolved_type = ErrorType.new
@@ -301,13 +301,12 @@ trait TypePass {
     table: SymbolTable!(TypeParameterType),
     types: TypeScope
   ) {
-    visit_type_parameter_requirements(node: node, types: types).let do (req) {
-      let param = TypeParameterType.new(name: node.name, required_traits: req)
+    let req = try visit_type_parameter_requirements(node, types).get else return
+    let param = TypeParameterType.new(name: node.name, required_traits: req)
 
-      table.define(name: param.name, type: param)
+    table.define(name: param.name, type: param)
 
-      node.resolved_type = param
-    }
+    node.resolved_type = param
   }
 
   def visit_type_parameter_requirements(
@@ -316,8 +315,8 @@ trait TypePass {
   ) -> ?Array!(TraitInstance) {
     let required = Array.new
 
-    node.required_traits.each do (const) {
-      match(let type = visit_constant_as_type(node: const, types: types)) {
+    for const in node.required_traits {
+      match let type = visit_constant_as_type(node: const, types: types) {
         as TraitInstance -> { required.push(type) }
         else -> {
           type_checker
@@ -339,20 +338,15 @@ trait TypePass {
   ) -> Type {
     # Not all types can be initialised, such as Never or an already initialised
     # type.
-    node
-      .type_arguments
-      .length
-      .positive?
-      .and { type.initialise?.false? }
-      .if_true {
-        type_checker
-          .diagnostics
-          .invalid_initialise(name: type.type_name, location: node.location)
+    if node.type_arguments.length.positive? and not type.initialise? {
+      type_checker
+        .diagnostics
+        .invalid_initialise(name: type.type_name, location: node.location)
 
-        return node.resolved_type = ErrorType.new
-      }
+      return node.resolved_type = ErrorType.new
+    }
 
-    (type.number_of_type_parameters != node.type_arguments.length).if_true {
+    if type.number_of_type_parameters != node.type_arguments.length {
       type_checker.diagnostics.invalid_number_of_type_arguments(
         expected: type.number_of_type_parameters,
         given: node.type_arguments.length,
@@ -376,7 +370,7 @@ trait TypePass {
     table: SymbolTable!(TypeParameterType),
     types: TypeScope
   ) {
-    nodes.each do (param_node) {
+    for param_node in nodes {
       visit_define_type_parameter(node: param_node, table: table, types: types)
     }
   }
@@ -390,7 +384,7 @@ trait TypePass {
     block: BlockType,
     types: TypeScope
   ) {
-    nodes.each_with_index do (node, index) {
+    for (index, node) in nodes.iter.with_index {
       block.define_required_argument(
         name: index.to_string,
         type: visit_type_node(node: node, types: types)
@@ -406,9 +400,7 @@ trait TypePass {
   ) -> Boolean {
     let builtins = type_checker.builtins
 
-    type
-      .type_compatible?(with: with, builtins: builtins, scope: scope)
-      .if_true { return True }
+    if type.type_compatible?(with, builtins, scope) { return True }
 
     type_checker.diagnostics.wrong_type(
       expected: with.type_name,
@@ -429,7 +421,7 @@ trait ExpressionTypePass: TypePass {
   ) -> Type {
     let mut return_type: Type = type_checker.builtins.nil_singleton
 
-    node.children.each do (child) {
+    for child in node.children {
       return_type =
         visit_expression(node: child, types: types, variables: variables)
     }
@@ -442,7 +434,7 @@ trait ExpressionTypePass: TypePass {
     types: TypeScope,
     variables: VariableScope
   ) -> Type {
-    match(let matched = node) {
+    match let matched = node {
       as IntegerLiteral -> { visit_integer_literal(matched) }
       as FloatLiteral -> { visit_float_literal(matched) }
       as StringLiteral -> { visit_string_literal(matched) }
@@ -538,7 +530,7 @@ trait ExpressionTypePass: TypePass {
     let type = variables
       .lookup_with_parents(name)
       .map do (sym) {
-        variables.symbols.contains?(sym).if_false {
+        if not variables.symbols.contains?(sym) {
           types.block.let do (block) { block.captures }
         }
 
@@ -557,15 +549,14 @@ trait ExpressionTypePass: TypePass {
           sym.type
         }
       }
-      .get_or_else {
-        type_checker
-          .diagnostics
-          .undefined_identifier(name: name, location: node.location)
 
-        ErrorType.new
-      }
+    node.resolved_type = try type.get else {
+      type_checker
+        .diagnostics
+        .undefined_identifier(name: name, location: node.location)
 
-    node.resolved_type = type
+      ErrorType.new
+    }
   }
 
   def visit_instruction(
@@ -579,7 +570,7 @@ trait ExpressionTypePass: TypePass {
     # VM instructions are not part of the public API, and are an implementation
     # detail. To prevent users from using/abusing them, we only allow them to be
     # used in a limited number of places.
-    module.name.std?.if_false {
+    if not module.name.std? {
       type_checker.diagnostics.instructions_not_available(node.location)
 
       return node.resolved_type = ErrorType.new
@@ -588,7 +579,7 @@ trait ExpressionTypePass: TypePass {
     # We deliberately don't check if the given argument types are also expected.
     # The direct use of VM instructions is rare, and the amount of
     # complexity/boilerplate necessary to validate the arguments is significant.
-    node.arguments.each do (arg) {
+    for arg in node.arguments {
       visit_expression(node: arg, types: types, variables: variables)
     }
 
@@ -596,7 +587,7 @@ trait ExpressionTypePass: TypePass {
 
     # We don't expose all VM instructions to the runtime; only those that are
     # truly necessary.
-    let rtype = match(name) {
+    let rtype = match name {
       'set_attribute' -> { AnyType.new }
       'get_attribute' -> { AnyType.new }
       'get_true' -> { builtins.true_singleton }
@@ -683,7 +674,6 @@ trait ExpressionTypePass: TypePass {
       'byte_array_equals' -> { builtins.boolean_type.new_instance }
       'byte_array_to_string' -> { builtins.string_type.new_instance }
       'set_object_name' -> { builtins.string_type.new_instance }
-      'if' -> { node.arguments[1].resolved_type.get.new_instance }
       'module_load' -> { builtins.module_type.new_instance }
       'module_get' -> { builtins.module_type.new_instance }
       'generator_resume' -> { NeverType.new }
@@ -703,35 +693,34 @@ trait ExpressionTypePass: TypePass {
     types: TypeScope,
     variables: VariableScope
   ) -> Type {
-    let receiver =
+    let receiver = try {
       node
-        .receiver
-        .map do (receiver) {
-          visit_expression(node: receiver, types: types, variables: variables)
-        }
-        .get_or(types.self_type)
+        .receiver.map do (node) { visit_expression(node, types, variables) }
+        .get
+    } else {
+      types.self_type
+    }
 
-    receiver.error?.if_true { return node.resolved_type = receiver }
+    if receiver.error? { return node.resolved_type = receiver }
 
     let name = node.message
-    let block = receiver.closure_or_lambda?.and { name == CALL_MESSAGE }.if(
-      true: { receiver as BlockType },
-      false: {
-        let sym = receiver.lookup_method(name).get_or_else {
-          type_checker.diagnostics.undefined_message(
-            type: receiver.type_name,
-            name: name,
-            location: node.location
-          )
+    let block = if receiver.closure_or_lambda? and name == CALL_MESSAGE {
+      receiver as BlockType
+    } else {
+      let sym = try receiver.lookup_method(name).get else {
+        type_checker.diagnostics.undefined_message(
+          type: receiver.type_name,
+          name: name,
+          location: node.location
+        )
 
-          return node.resolved_type = ErrorType.new
-        }
-
-        sym.type as BlockType
+        return node.resolved_type = ErrorType.new
       }
-    )
 
-    block.external_function?.and { node.receiver.some? }.if_true {
+      sym.type as BlockType
+    }
+
+    if block.external_function? and node.receiver.some? {
       type_checker.diagnostics.external_function_with_receiver(node.location)
 
       return node.resolved_type = ErrorType.new
@@ -741,8 +730,8 @@ trait ExpressionTypePass: TypePass {
 
     let message = Message.new(receiver: receiver, block: block)
 
-    node.arguments.each do (node) {
-      match(let matched = node) {
+    for node in node.arguments {
+      match let matched = node {
         as KeywordArgument -> {
           visit_keyword_argument(
             node: matched,
@@ -772,11 +761,11 @@ trait ExpressionTypePass: TypePass {
     #     numbers.push('foo')
     #
     # When the Array is first created, its type parameter T is not assigned. The
-    # first push() assigns it to Integer. By persisting this assignment in the
+    # first push() assigns it to Int. By persisting this assignment in the
     # numbers array, we can correctly detect the second push() is invalid.
     message.type_parameter_types.copy_into_type(receiver)
 
-    message.not_enough_arguments?.if_true {
+    if message.not_enough_arguments? {
       type_checker.diagnostics.invalid_number_of_arguments(
         given: message.required_arguments,
         expected: message.minimum_arguments,
@@ -786,7 +775,7 @@ trait ExpressionTypePass: TypePass {
       return node.resolved_type = ErrorType.new
     }
 
-    message.too_many_arguments?.if_true {
+    if message.too_many_arguments? {
       type_checker.diagnostics.invalid_number_of_arguments(
         given: message.total_arguments,
         expected: message.maximum_arguments,
@@ -803,21 +792,15 @@ trait ExpressionTypePass: TypePass {
       parent: types.parent
     )
 
-    block
-      .available_to?(
-        type: receiver,
-        builtins: type_checker.builtins,
-        scope: send_scope
+    if not block.available_to?(receiver, type_checker.builtins, send_scope) {
+      type_checker.diagnostics.method_not_available(
+        receiver: receiver.type_name,
+        method: block.type_name,
+        location: node.location
       )
-      .if_false {
-        type_checker.diagnostics.method_not_available(
-          receiver: receiver.type_name,
-          method: block.type_name,
-          location: node.location
-        )
 
-        return node.resolved_type = ErrorType.new
-      }
+      return node.resolved_type = ErrorType.new
+    }
 
     assign_throw_and_return_type(node: node, block: block, types: message)
   }
@@ -832,7 +815,7 @@ trait ExpressionTypePass: TypePass {
     let val = node.value
     let type = visit_expression(node: val, types: types, variables: variables)
 
-    message.add_keyword_argument(name).if_false {
+    if not message.add_keyword_argument(name) {
       type_checker
         .diagnostics
         .duplicate_keyword_argument(argument: name, location: node.location)
@@ -844,7 +827,7 @@ trait ExpressionTypePass: TypePass {
 
     message.increment_argument_count
 
-    let sym = message.block.arguments.get(name).get_or_else {
+    let sym = try message.block.arguments.get(name).get else {
       type_checker
         .diagnostics
         .undefined_keyword_argument(argument: name, location: node.location)
@@ -884,11 +867,10 @@ trait ExpressionTypePass: TypePass {
     #
     # When there is no rest argument, the excessive number of arguments is
     # handled in the method that visits the Send node.
-    let sym = sym_opt.get_or_else {
-      message.block.rest_argument?.if(
-        true: { message.block.arguments.symbols[-1] },
-        false: { return }
-      )
+    let sym = try sym_opt.get else {
+      if not message.block.rest_argument? { return }
+
+      message.block.arguments.symbols[-1]
     }
 
     type_compatible?(
@@ -910,12 +892,11 @@ trait ExpressionTypePass: TypePass {
 
     node.resolved_throw_type = try_expression_throw_type(node.expression)
 
-    node.local_throw?.if(
-      true: { visit_local_try(node: node, types: types, variables: variables) },
-      false: {
-        visit_nonlocal_try(node: node, types: types, variables: variables)
-      }
-    )
+    if node.local_throw? {
+      visit_local_try(node: node, types: types, variables: variables)
+    } else {
+      visit_nonlocal_try(node: node, types: types, variables: variables)
+    }
 
     node.resolved_type.get
   }
@@ -926,16 +907,17 @@ trait ExpressionTypePass: TypePass {
     variables: VariableScope
   ) {
     let throw_type = node.resolved_throw_type.get
-    let block = types.block.get_or_else {
+    let block = try types.block.get else {
       type_checker.diagnostics.invalid_local_try(node.location)
       return
     }
 
-    node.with_else?.if_false {
+    if not node.with_else? {
       block.throws
 
-      block.throw_type.some?.and { block.throw_type.get.infer? }.if_true {
+      if block.throw_type.some? and block.throw_type.get.infer? {
         block.throw_type = throw_type
+
         return
       }
 
@@ -958,20 +940,21 @@ trait ExpressionTypePass: TypePass {
     variables: VariableScope
   ) {
     let throw_type = node.resolved_throw_type.get
-    let block = types.block_scope_boundary.get_or_else {
+    let block = try types.block_scope_boundary.get else {
       type_checker.diagnostics.invalid_try(node.location)
       return
     }
 
-    node.with_else?.if_false {
+    if not node.with_else? {
       block.throws
 
-      block.throw_type.some?.and { block.throw_type.get.infer? }.if_true {
+      if block.throw_type.some? and block.throw_type.get.infer? {
         block.throw_type = throw_type
+
         return
       }
 
-      let expected = block.throw_type.get_or_else {
+      let expected = try block.throw_type.get else {
         type_checker.diagnostics.unexpected_nonlocal_throw(
           type: throw_type.type_name,
           location: node.location
@@ -1039,7 +1022,7 @@ trait ExpressionTypePass: TypePass {
   ) -> Type {
     let name = node.name
     let receiver = types.self_type
-    let symbol = receiver.lookup_attribute(name).get_or_else {
+    let symbol = try receiver.lookup_attribute(name).get else {
       type_checker
         .diagnostics
         .undefined_attribute(
@@ -1061,7 +1044,7 @@ trait ExpressionTypePass: TypePass {
       .lookup_method(name)
       .map do (sym) {
         node.symbol = sym
-        assign_throw_and_return_type(node: node, block: sym.type, types: types)
+        assign_throw_and_return_type(node, block: sym.type, types)
       }
       .else {
         module.lookup_type(name).map do (sym) {
@@ -1069,15 +1052,14 @@ trait ExpressionTypePass: TypePass {
           sym.type
         }
       }
-      .get_or_else {
-        type_checker
-          .diagnostics
-          .undefined_identifier(name: name, location: node.location)
 
-        ErrorType.new
-      }
+    node.resolved_type = try type.get else {
+      type_checker
+        .diagnostics
+        .undefined_identifier(name: name, location: node.location)
 
-    node.resolved_type = type
+      ErrorType.new
+    }
   }
 
   def visit_define_local(
@@ -1093,18 +1075,12 @@ trait ExpressionTypePass: TypePass {
       variables: variables
     )
 
-    variables.symbols.get(name).if(
-      true: {
-        type_checker
-          .diagnostics
-          .redefine_local_variable(name: name, location: node.location)
-      },
-      false: {
-        variables
-          .symbols
-          .define(name: name, type: target_type, mutable: node.mutable?)
-      }
-    )
+    if variables.symbols.get(name) {
+      type_checker.diagnostics.redefine_local_variable(name, node.location)
+    }
+    else {
+      variables.symbols.define(name, target_type, mutable: node.mutable?)
+    }
 
     node.resolved_type = target_type
   }
@@ -1118,7 +1094,7 @@ trait ExpressionTypePass: TypePass {
     let value_type =
       visit_expression(node: node.value, types: types, variables: variables)
 
-    let symbol = variables.lookup_with_parents(name).get_or_else {
+    let symbol = try variables.lookup_with_parents(name).get else {
       type_checker
         .diagnostics
         .undefined_local_variable(name: name, location: node.location)
@@ -1129,21 +1105,22 @@ trait ExpressionTypePass: TypePass {
     node.symbol = symbol
     node.resolved_type = value_type
 
-    symbol.mutable?.if_false {
+    if not symbol.mutable? {
       type_checker
         .diagnostics
-        .assign_immutable_local_variable(name: name, location: node.location)
+        .assign_immutable_local_variable(name, node.location)
 
       return value_type
     }
 
-    type_compatible?(
+    if not type_compatible?(
       type: value_type,
       with: symbol.type,
       scope: types,
       location: node.location
-    )
-      .if_false { return value_type }
+    ) {
+      return value_type
+    }
 
     value_type
   }
@@ -1160,7 +1137,7 @@ trait ExpressionTypePass: TypePass {
 
     node.resolved_type = value_type
 
-    let existing = existing_opt.get_or_else {
+    let existing = try existing_opt.get else {
       type_checker.diagnostics.undefined_attribute(
         type: types.self_type.type_name,
         attribute: name,
@@ -1172,13 +1149,14 @@ trait ExpressionTypePass: TypePass {
 
     node.symbol = existing
 
-    type_compatible?(
+    if not type_compatible?(
       type: value_type,
       with: existing.type.internal_type,
       scope: types,
       location: node.location
-    )
-      .if_false { return value_type }
+    ) {
+      return value_type
+    }
 
     value_type
   }
@@ -1193,10 +1171,10 @@ trait ExpressionTypePass: TypePass {
       visit_expression(node: value_node, types: types, variables: variables)
 
     let defined_type = visit_optional_type_node(node: type_node, types: types)
-    let mut target_type = defined_type.get_or(assigned_type)
+    let mut target_type = try defined_type.get else assigned_type
 
     defined_type.let do (defined) {
-      defined.self_type?.if_true {
+      if defined.self_type? {
         type_checker.diagnostics.invalid_self_type(type_node.get.location)
 
         # Using Self in a variable makes no sense, so we overwrite the target
@@ -1227,13 +1205,13 @@ trait ExpressionTypePass: TypePass {
       visit_expression(node: expr, types: types, variables: variables)
     }
 
-    node.cases.empty?.if_true {
+    if node.cases.empty? {
       type_checker.diagnostics.match_without_cases(node.location)
 
       return node.resolved_type = ErrorType.new
     }
 
-    node.else_branch.if_false {
+    if not node.else_branch {
       type_checker.diagnostics.match_not_exhaustive(node.location)
 
       return node.resolved_type = ErrorType.new
@@ -1241,27 +1219,25 @@ trait ExpressionTypePass: TypePass {
 
     let case_types = Array.new
 
-    node.cases.each do (case) {
-      let type = match(let matched = case) {
+    for case in node.cases {
+      let type = match let matched = case {
         as MatchExpressions -> {
-          input_type.if(
-            true: {
-              visit_match_expressions_with_input(
-                node: matched,
-                input_type: input_type.get,
-                input_binding: input_binding,
-                types: types,
-                variables: variables
-              )
-            },
-            false: {
-              visit_match_expressions_without_input(
-                node: matched,
-                types: types,
-                variables: variables
-              )
-            }
-          )
+          if input_type {
+            visit_match_expressions_with_input(
+              node: matched,
+              input_type: input_type.get,
+              input_binding: input_binding,
+              types: types,
+              variables: variables
+            )
+          }
+          else {
+            visit_match_expressions_without_input(
+              node: matched,
+              types: types,
+              variables: variables
+            )
+          }
         }
         as MatchType -> {
           visit_match_type(
@@ -1275,7 +1251,7 @@ trait ExpressionTypePass: TypePass {
         else -> { panic('This MatchCase node is not supported') }
       }
 
-      type.error?.if_true { return node.resolved_type = type }
+      if type.error? { return node.resolved_type = type }
       case_types.push(type)
     }
 
@@ -1310,7 +1286,7 @@ trait ExpressionTypePass: TypePass {
       body_vars.symbols.define(name: binding, type: input_type)
     }
 
-    let match_type = type_checker.pattern_match_trait.get_or_else {
+    let match_type = try type_checker.pattern_match_trait.get else {
       type_checker.diagnostics.match_trait_not_found(node.location)
 
       return node.resolved_type = ErrorType.new
@@ -1318,20 +1294,18 @@ trait ExpressionTypePass: TypePass {
 
     let match_ins = match_type.new_instance(Array.new(input_type))
 
-    node.patterns.each do (node) {
+    for node in node.patterns {
       let builtins = type_checker.builtins
       let pattern_type =
         visit_expression(node: node, types: types, variables: body_vars)
 
-      pattern_type
-        .type_compatible?(with: match_ins, builtins: builtins, scope: types)
-        .if_false {
-          type_checker.diagnostics.match_trait_not_implemented(
-            type: pattern_type.type_name,
-            match_trait: match_ins.type_name,
-            location: node.location
-          )
-        }
+      if not pattern_type.type_compatible?(with: match_ins, builtins, types) {
+        type_checker.diagnostics.match_trait_not_implemented(
+          type: pattern_type.type_name,
+          match_trait: match_ins.type_name,
+          location: node.location
+        )
+      }
     }
 
     node.guard.let do (guard) {
@@ -1354,7 +1328,7 @@ trait ExpressionTypePass: TypePass {
 
     node.body.type_scope = types
 
-    node.patterns.each do (node) {
+    for node in node.patterns {
       require_boolean_type(
         type: visit_expression(node: node, types: types, variables: body_vars),
         location: node.location
@@ -1380,18 +1354,18 @@ trait ExpressionTypePass: TypePass {
     variables: VariableScope
   ) -> Type {
     let pattern = node.pattern
-    let match_type = types.lookup_type(pattern.name)
-      .map do (sym) {
-        pattern.symbol = sym
-        sym.type.new_instance
-      }
-      .get_or_else {
-        type_checker
-          .diagnostics
-          .undefined_constant(name: pattern.name, location: pattern.location)
-
-        ErrorType.new
-      }
+    let match_type = try {
+      types
+        .lookup_type(pattern.name)
+        .map do (sym) {
+          pattern.symbol = sym
+          sym.type.new_instance
+        }
+        .get
+    } else {
+      type_checker.diagnostics.undefined_constant(pattern.name, pattern.location)
+      ErrorType.new
+    }
 
     pattern.resolved_type = match_type
 
@@ -1399,7 +1373,7 @@ trait ExpressionTypePass: TypePass {
 
     node.body.type_scope = types
 
-    input_type.if_false {
+    if not input_type {
       type_checker.diagnostics.unavailable_type_match(node.location)
     }
 
@@ -1460,23 +1434,17 @@ trait ExpressionTypePass: TypePass {
     variables: VariableScope
   ) -> Type {
     let tname = node.name
-    let type = (tname == SELF_TYPE).if(
-      true: { types.self_type },
-      false: {
-        types
-          .lookup_type(tname)
-          .get_or_else {
-            type_checker
-              .diagnostics
-              .undefined_constant(name: node.name, location: node.location)
+    let type = if tname == SELF_TYPE {
+      types.self_type
+    } else {
+      try types.lookup_type(tname).map do (sym) { sym.type }.get else {
+        type_checker.diagnostics.undefined_constant(node.name, node.location)
 
-            return node.resolved_type = ErrorType.new
-          }
-          .type
+        return node.resolved_type = ErrorType.new
       }
-    )
+    }
 
-    let class_type = match(let matched = type) {
+    let class_type = match let matched = type {
       as ClassType -> { matched }
       else -> {
         type_checker
@@ -1487,7 +1455,7 @@ trait ExpressionTypePass: TypePass {
       }
     }
 
-    class_type.builtin?.if_true {
+    if class_type.builtin? {
       type_checker.diagnostics.unsupported_constructor(node.location)
 
       return node.resolved_type = ErrorType.new
@@ -1502,44 +1470,38 @@ trait ExpressionTypePass: TypePass {
       parent: types.parent
     )
 
-    node.attributes.each do (attr) {
+    for attr in node.attributes {
       let name = attr.name
       let loc = attr.location
       let sym = instance.lookup_attribute(name)
       let vtype =
         visit_expression(node: attr.value, types: types, variables: variables)
 
-      match {
-        assigned.contains?(name) -> {
-          type_checker
-            .diagnostics
-            .already_assigned_attribute(name: name, location: loc)
-        }
-        sym.none? -> {
-          type_checker.diagnostics.undefined_attribute(
-            type: class_type.type_name,
-            attribute: name,
-            location: loc
-          )
-        }
-        else -> {
-          type_compatible?(
-            type: vtype,
-            with: sym.get.type.public_type,
-            scope: scope,
-            location: loc
-          )
+      if assigned.contains?(name) {
+        type_checker
+          .diagnostics
+          .already_assigned_attribute(name: name, location: loc)
+      } else if sym.none? {
+        type_checker.diagnostics.undefined_attribute(
+          type: class_type.type_name,
+          attribute: name,
+          location: loc
+        )
+      } else {
+        type_compatible?(
+          type: vtype,
+          with: sym.get.type.public_type,
+          scope: scope,
+          location: loc
+        )
 
-          assigned.insert(name)
-        }
+        assigned.insert(name)
       }
     }
 
-    class_type.attributes.symbols.each do (attr) {
-      assigned.contains?(attr.name).if_false {
-        type_checker
-          .diagnostics
-          .unassigned_attribute(name: attr.name, location: node.location)
+    for attr in class_type.attributes.symbols {
+      if not assigned.contains?(attr.name) {
+        type_checker.diagnostics.unassigned_attribute(attr.name, node.location)
       }
     }
 
@@ -1571,19 +1533,16 @@ trait ExpressionTypePass: TypePass {
     # |:------------|:------------|:-------|:----------------------------------
     # | String      | ToString    | OK     | String implements ToString
     # | ToString    | String      | OK     | Unsafe without a runtime check
-    # | String      | Integer     | not OK | Both are different objects
+    # | String      | Int     | not OK | Both are different objects
     # | Object      | String      | OK     | All objects implement Object
-    # | ToString    | ToInteger   | not OK | The traits have nothing in common
-    from
-      .type_compatible?(with: to, builtins: builtins, scope: types)
-      .or { to.type_compatible?(with: from, builtins: builtins, scope: types) }
-      .if_false {
-        type_checker.diagnostics.invalid_cast(
-          type: from.type_name,
-          cast_to: to.type_name,
-          location: node.location
-        )
-      }
+    # | ToString    | ToInt   | not OK | The traits have nothing in common
+    if not from.type_compatible?(with: to, builtins, types)
+      and not to.type_compatible?(with: from, builtins, types)
+    {
+      type_checker
+        .diagnostics
+        .invalid_cast(from.type_name, to.type_name, node.location)
+    }
 
     node.resolved_type = to.substitute(RigidTypeScope.from_type_scope(types))
   }
@@ -1611,10 +1570,10 @@ trait ExpressionTypePass: TypePass {
       variables: body_vars
     )
 
-    closure.return_type.infer?.if_true { closure.return_type = returned }
+    if closure.return_type.infer? { closure.return_type = returned }
 
     closure.throw_type.let do (type) {
-      type.infer?.if_true { closure.unset_throw_type }
+      if type.infer? { closure.unset_throw_type }
     }
 
     node.resolved_type = closure
@@ -1688,7 +1647,7 @@ trait ExpressionTypePass: TypePass {
     rigid_types: RigidTypeScope,
     variables: VariableScope
   ) -> Type {
-    match(let matched = node) {
+    match let matched = node {
       as DefineRequiredArgument -> {
         visit_define_required_argument(
           node: matched,
@@ -1762,19 +1721,18 @@ trait ExpressionTypePass: TypePass {
       variables: variables
     )
 
-    let arg_type = defined_type.if(
-      true: {
-        type_compatible?(
-          type: default_type,
-          with: defined_type.get,
-          scope: types,
-          location: node.default_value.location
-        )
+    let arg_type = if defined_type {
+      type_compatible?(
+        type: default_type,
+        with: defined_type.get,
+        scope: types,
+        location: node.default_value.location
+      )
 
-        defined_type.get
-      },
-      false: { default_type }
-    )
+      defined_type.get
+    } else {
+      default_type
+    }
 
     let var_type = arg_type.substitute(rigid_types)
 
@@ -1827,21 +1785,23 @@ trait ExpressionTypePass: TypePass {
     types: TypeScope,
     variables: VariableScope
   ) -> Type {
-    let type = node
-      .expression
-      .map do (expr) {
-        visit_expression(node: expr, types: types, variables: variables)
-      }
-      .get_or(type_checker.builtins.nil_singleton)
+    let type = try {
+      node
+        .expression
+        .map do (node) { visit_expression(node, types, variables) }
+        .get
+    } else {
+      type_checker.builtins.nil_singleton
+    }
 
     let surrounding_block = types.block_scope_boundary
-    let block = surrounding_block.get_or_else {
+    let block = try surrounding_block.get else {
       type_checker.diagnostics.invalid_return(node.location)
 
       return node.resolved_type = ErrorType.new
     }
 
-    block.return_type.infer?.if_true {
+    if block.return_type.infer? {
       block.return_type = type
 
       return node.resolved_type = NeverType.new
@@ -1865,25 +1825,29 @@ trait ExpressionTypePass: TypePass {
     let type =
       visit_expression(node: node.expression, types: types, variables: variables)
 
-    node.local_throw?.if(
-      true: { visit_local_throw(node: node, type: type, types: types) },
-      false: { visit_nonlocal_throw(node: node, type: type, types: types) }
-    )
+    if node.local_throw? {
+      visit_local_throw(node: node, type: type, types: types)
+    } else {
+      visit_nonlocal_throw(node: node, type: type, types: types)
+    }
 
     node.resolved_type = type
   }
 
   def visit_local_throw(node: Throw, type: Type, types: TypeScope) {
-    let block = types.block.get_or_else {
+    let block = try types.block.get else {
       type_checker.diagnostics.invalid_local_throw(node.location)
+
       return
     }
 
     let throws = block.throw_type.get
 
     block.throws
-    throws.infer?.if_true {
+
+    if throws.infer? {
       block.throw_type = type
+
       return
     }
 
@@ -1896,19 +1860,20 @@ trait ExpressionTypePass: TypePass {
   }
 
   def visit_nonlocal_throw(node: Throw, type: Type, types: TypeScope) {
-    let block = types.block_scope_boundary.get_or_else {
+    let block = try types.block_scope_boundary.get else {
       type_checker.diagnostics.invalid_throw(node.location)
+
       return
     }
 
-    block.throw_type.some?.and { block.throw_type.get.infer? }.if_true {
+    if block.throw_type.some? and block.throw_type.get.infer? {
       block.throws
       block.throw_type = type
 
       return
     }
 
-    let throws = block.throw_type.get_or_else {
+    let throws = try block.throw_type.get else {
       type_checker
         .diagnostics
         .unexpected_nonlocal_throw(type: type.type_name, location: node.location)
@@ -1936,12 +1901,13 @@ trait ExpressionTypePass: TypePass {
 
     node.resolved_type = type
 
-    let block = types.yield_boundary.get_or_else {
+    let block = try types.yield_boundary.get else {
       type_checker.diagnostics.invalid_yield(node.location)
+
       return type
     }
 
-    let yield_type = block.yield_type.get_or_else {
+    let yield_type = try block.yield_type.get else {
       type_checker
         .diagnostics
         .unexpected_yield(type: type.type_name, location: node.location)
@@ -1980,7 +1946,7 @@ trait ExpressionTypePass: TypePass {
 
     let rigid_types = RigidTypeScope.from_type_scope(types)
 
-    arguments.each do (arg) {
+    for arg in arguments {
       visit_define_argument(
         node: arg,
         block: block,
@@ -2002,11 +1968,11 @@ trait ExpressionTypePass: TypePass {
       visit_expressions(node: body, types: types, variables: variables)
 
     block.throw_type.let do (type) {
-      type.infer?.if_true { block.unset_throw_type }
+      if type.infer? { block.unset_throw_type }
     }
 
     block.throw_type.let do (throws) {
-      block.throws?.if_false {
+      if not block.throws? {
         type_checker.diagnostics.missing_local_throw(
           type: throws.type_name,
           location: location
@@ -2016,12 +1982,12 @@ trait ExpressionTypePass: TypePass {
 
     # For closures and lambdas, the return type is inferred according to the
     # last expression in the body.
-    block.return_type.infer?.if_true {
+    if block.return_type.infer? {
       block.return_type = returned
       return
     }
 
-    last_expression_is_return?(body).if_true { return }
+    if last_expression_is_return?(body) { return }
 
     type_compatible?(
       type: returned,
@@ -2032,7 +1998,7 @@ trait ExpressionTypePass: TypePass {
   }
 
   def last_expression_is_return?(body: Body) -> Boolean {
-    match(body.children.get(-1)) {
+    match body.children.get(-1) {
       as Return -> { True }
       else -> { False }
     }
@@ -2041,7 +2007,7 @@ trait ExpressionTypePass: TypePass {
   def require_boolean_type(type: Type, location: SourceLocation) {
     let bool_type = type_checker.builtins.boolean_type
 
-    type.object_instance_of?(bool_type).if_true { return }
+    if type.object_instance_of?(bool_type) { return }
 
     type_checker.diagnostics.wrong_type(
       expected: bool_type.type_name,
@@ -2059,15 +2025,17 @@ trait ExpressionTypePass: TypePass {
     let first = case_types[0]
     let builtins = type_checker.builtins
 
-    case_types.each do (type) {
-      type
-        .type_compatible?(with: first, builtins: builtins, scope: scope)
-        .if_false { return AnyType.new }
+    for type in case_types {
+      if not type.type_compatible?(with: first, builtins, scope) {
+        return AnyType.new
+      }
     }
 
-    else_type
-      .type_compatible?(with: first, builtins: builtins, scope: scope)
-      .if(true: { first }, false: { AnyType.new })
+    if else_type.type_compatible?(with: first, builtins, scope) {
+      first
+    } else {
+      AnyType.new
+    }
   }
 
   def try_else_return_type(
@@ -2076,22 +2044,25 @@ trait ExpressionTypePass: TypePass {
     else_type: Type,
     types: TypeScope
   ) -> Type {
-    try_type.error?.or { else_type.error? }.if_true { return ErrorType.new }
+    if try_type.error? or else_type.error? { return ErrorType.new }
 
-    type_compatible?(
+    if type_compatible?(
       type: else_type,
       with: try_type,
       scope: types,
       location: node.else_body.location
-    )
-      .if(true: { try_type }, false: { ErrorType.new })
+    ) {
+      try_type
+    } else {
+      ErrorType.new
+    }
   }
 
-  def valid_instruction_arguments?(node: Send, required: Integer) -> Boolean {
+  def valid_instruction_arguments?(node: Send, required: Int) -> Boolean {
     let given = node.arguments.length
     let loc = node.location
 
-    (given < required).if_true {
+    if given < required {
       type_checker.diagnostics.invalid_number_of_arguments(
         given: given,
         expected: required,
@@ -2101,7 +2072,7 @@ trait ExpressionTypePass: TypePass {
       return False
     }
 
-    (given > required).if_true {
+    if given > required {
       type_checker.diagnostics.invalid_number_of_arguments(
         given: given,
         expected: required,
@@ -2129,7 +2100,7 @@ trait ExpressionTypePass: TypePass {
       .resolve_return_type(throw_type: throws, builtins: builtins, scope: types)
 
     throws.let do (throws) {
-      block.yield_type.if_false { node.resolved_throw_type = throws }
+      if not block.yield_type { node.resolved_throw_type = throws }
     }
 
     check_error_handling(node: node, block: block, throw_type: throws)
@@ -2138,7 +2109,7 @@ trait ExpressionTypePass: TypePass {
   }
 
   def try_expression_throw_type(expression: Node) -> Type {
-    match(let expr = expression) {
+    match let expr = expression {
       as TryExpressionNode when expr.resolved_throw_type.some? -> {
         expr.resolved_throw_type.get
       }
@@ -2161,12 +2132,13 @@ trait ExpressionTypePass: TypePass {
     #
     # Generator methods don't throw themselves, it's the resume method that
     # throws. As such we'll allow the omission of `try` for generator methods.
-    node
-      .inside_try?
-      .or { throw_type.none? }
-      .or { throw_type.get.never? }
-      .or { block.yield_type.some? }
-      .if_true { return }
+    if node.inside_try?
+      or throw_type.none?
+      or throw_type.get.never?
+      or block.yield_type.some?
+    {
+      return
+    }
 
     type_checker
       .diagnostics
@@ -2219,17 +2191,17 @@ class TypeCheckImports {
   def visit_import(node: Import) {
     let name = node.module_name
 
-    @type_checker.module(name).if_true { return }
+    if @type_checker.module(name) { return }
 
-    let ast = @type_checker.syntax_tree(name).get_or_else { return }
+    let ast = try @type_checker.syntax_tree(name).get else return
 
-    @type_checker.check(name: name, ast: ast)
+    @type_checker.check(name, ast)
   }
 }
 
 impl Pass for TypeCheckImports {
   def run(ast: Body) -> Boolean {
-    ast.imports.each do (node) {
+    for node in ast.imports {
       visit_import(node)
     }
 
@@ -2251,23 +2223,22 @@ class DefineImportedSymbolTypes {
 
   def visit_import(node: Import) {
     let name = node.module_name
-    let module = @type_checker.module(name).get_or_else {
+    let module = try @type_checker.module(name).get else {
       # We don't need to add an error, as that will have already been when
       # parsing all modules.
       return
     }
 
-    node.import_all?.if_true {
+    if node.import_all? {
       import_all(import_from: module, location: node.location)
       return
     }
 
-    node.symbols.each do (symbol) {
-      symbol.expose?.if_true {
-        symbol.import_self?.if(
-          true: { import_self(import_from: module, symbol: symbol) },
-          false: { import_symbol(import_from: module, symbol: symbol) }
-        )
+    for symbol in node.symbols {
+      if symbol.expose? and symbol.import_self? {
+        import_self(import_from: module, symbol: symbol)
+      } else if symbol.expose? {
+        import_symbol(import_from: module, symbol: symbol)
       }
     }
   }
@@ -2275,7 +2246,7 @@ class DefineImportedSymbolTypes {
   def import_all(import_from: ModuleType, location: SourceLocation) {
     let globals = @module.globals
 
-    import_from.constants.symbols.each do (sym) {
+    for sym in import_from.constants.symbols {
       define_import_type(
         table: globals,
         name: sym.name,
@@ -2284,7 +2255,7 @@ class DefineImportedSymbolTypes {
       )
     }
 
-    import_from.methods.symbols.each do (sym) {
+    for sym in import_from.methods.symbols {
       define_import_type(
         table: globals,
         name: sym.name,
@@ -2295,10 +2266,8 @@ class DefineImportedSymbolTypes {
   }
 
   def import_self(import_from: ModuleType, symbol: ImportSymbol) {
-    let name = symbol
-      .alias
-      .map do (node) { node.name }
-      .get_or_else { import_from.name.tail }
+    let name =
+      try symbol.alias.map do (a) { a.name }.get else import_from.name.tail
 
     define_import_type(
       table: @module.globals,
@@ -2309,7 +2278,7 @@ class DefineImportedSymbolTypes {
   }
 
   def import_symbol(import_from: ModuleType, symbol: ImportSymbol) {
-    let name = symbol.alias.map do (node) { node.name }.get_or(symbol.name)
+    let name = try symbol.alias.map do (a) { a.name }.get else symbol.name
 
     import_from.constants.get(symbol.name).let do (constant) {
       define_import_type(
@@ -2346,10 +2315,8 @@ class DefineImportedSymbolTypes {
     type: Type,
     location: SourceLocation
   ) {
-    table.get(name).if_true {
-      @type_checker
-        .diagnostics
-        .import_existing_symbol(name: name, location: location)
+    if table.get(name) {
+      @type_checker.diagnostics.import_existing_symbol(name, location)
 
       return
     }
@@ -2360,8 +2327,8 @@ class DefineImportedSymbolTypes {
 
 impl Pass for DefineImportedSymbolTypes {
   def run(ast: Body) -> Boolean {
-    ast.children.each do (child) {
-      match(let node = child) {
+    for child in ast.children {
+      match let node = child {
         as Import -> { visit_import(node) }
         else -> {}
       }
@@ -2426,8 +2393,9 @@ class DefineTypeSignatures {
     type: Type,
     location: SourceLocation
   ) {
-    @module.defines?(name).if_true {
+    if @module.defines?(name) {
       type_checker.diagnostics.redefine_constant(name: name, location: location)
+
       return
     }
 
@@ -2439,8 +2407,8 @@ impl Pass for DefineTypeSignatures {
   def run(ast: Body) -> Boolean {
     let types = ast.type_scope.get
 
-    ast.children.each do (child) {
-      match(let node = child) {
+    for child in ast.children {
+      match let node = child {
         as DefineClass -> { visit_define_class(node: node, types: types) }
         as DefineTrait -> { visit_define_trait(node: node, types: types) }
         else -> {}
@@ -2480,8 +2448,8 @@ class DefineAttributeTypes {
     let type = node.resolved_type.get
     let new_types = node.body.type_scope.get
 
-    node.body.children.each do (child) {
-      match(let node = child) {
+    for child in node.body.children {
+      match let node = child {
         as DefineAttribute -> {
           visit_define_attribute(node: node, class_type: type, types: new_types)
         }
@@ -2508,8 +2476,8 @@ impl Pass for DefineAttributeTypes {
   def run(ast: Body) -> Boolean {
     let types = ast.type_scope.get
 
-    ast.children.each do (child) {
-      match(let node = child) {
+    for child in ast.children {
+      match let node = child {
         as DefineClass -> { visit_define_class(node: node, types: types) }
         else -> {}
       }
@@ -2555,14 +2523,11 @@ class TypeCheck {
       variables: variables
     )
 
-    @module.defines?(name).if(
-      true: {
-        type_checker
-          .diagnostics
-          .redefine_constant(name: name, location: node.location)
-      },
-      false: { @module.define_constant(name: name, type: target_type) }
-    )
+    if @module.defines?(name) {
+      type_checker.diagnostics.redefine_constant(name, node.location)
+    } else {
+      @module.define_constant(name, target_type)
+    }
 
     node.resolved_type = target_type
   }
@@ -2571,8 +2536,8 @@ class TypeCheck {
     let type = node.resolved_type.get
     let new_scope = node.body.type_scope.get
 
-    node.body.children.each do (child) {
-      match(let matched = child) {
+    for child in node.body.children {
+      match let matched = child {
         as DefineMethod -> {
           store_method_in_object(
             type: type,
@@ -2595,8 +2560,8 @@ class TypeCheck {
     let type = node.resolved_type.get
     let new_scope = node.body.type_scope.get
 
-    node.body.children.each do (child) {
-      match(let matched = child) {
+    for child in node.body.children {
+      match let matched = child {
         as DefineMethod -> {
           store_method_in_trait(
             type: type,
@@ -2637,7 +2602,7 @@ class TypeCheck {
     let method_types =
       node.type_scope = type_scope_for_method(method: method, types: types)
 
-    node.arguments.each do (arg) {
+    for arg in node.arguments {
       visit_define_required_argument(
         node: arg,
         block: method,
@@ -2719,8 +2684,8 @@ class TypeCheck {
     #
     # We don't handle this at the parser level, because when parsing arguments
     # we don't yet know if the method will be required or not.
-    node.arguments.each do (arg) {
-      arg.default_value?.if_true {
+    for arg in node.arguments {
+      if arg.default_value? {
         type_checker
           .diagnostics
           .required_method_with_default_argument(arg.location)
@@ -2756,7 +2721,7 @@ class TypeCheck {
     let class_name = node.class_name
 
     let class_type =
-      match(let matched = visit_constant(node: class_name, types: types)) {
+      match let matched = visit_constant(node: class_name, types: types) {
         as ClassType -> { matched }
         as ErrorType -> { return matched }
         else -> {
@@ -2776,9 +2741,9 @@ class TypeCheck {
     let new_scope = node.body.type_scope = TypeScope
       .new(module: @module, self_type: class_type)
 
-    let trait_instance = match(
+    let trait_instance = match
       let matched = visit_constant_as_type(node: trait_name, types: new_scope)
-    ) {
+    {
       as TraitInstance -> { matched }
       as ErrorType -> { return matched }
       else -> {
@@ -2792,21 +2757,20 @@ class TypeCheck {
 
     let implementation = TraitImplementation.new(trait_instance)
 
-    visit_trait_implementation_bounds(
+    if not visit_trait_implementation_bounds(
       nodes: node.type_parameter_bounds,
       class_type: class_type,
       implementation: implementation,
       types: new_scope
-    )
-      .if_false {
-        # If the bounds are not valid, the rest of the implementation could
-        # produce many errors, so we return right away.
-        return ErrorType.new
-      }
+    ) {
+      # If the bounds are not valid, the rest of the implementation could
+      # produce many errors, so we return right away.
+      return ErrorType.new
+    }
 
     let mut valid = True
 
-    trait_instance.instance_of.default_methods.symbols.each do (default) {
+    for default in trait_instance.instance_of.default_methods.symbols {
       let name = default.name
       let existing =
         class_type.instance_methods.get(name).map do (sym) { sym.type }
@@ -2815,23 +2779,21 @@ class TypeCheck {
       # this as long as the existing implementation is compatible with the one
       # provided by the trait.
       existing.let do (existing) {
-        existing
-          .type_compatible?(
-            with: default.type,
-            builtins: type_checker.builtins,
-            scope: types
-          )
-          .if_false {
-            valid = False
+        if not existing.type_compatible?(
+          with: default.type,
+          builtins: type_checker.builtins,
+          scope: types
+        ) {
+          valid = False
 
-            type_checker
-              .diagnostics
-              .default_method_not_compatible(
-                expected: default.type.type_name,
-                given: existing.type_name,
-                location: node.location
-              )
-          }
+          type_checker
+            .diagnostics
+            .default_method_not_compatible(
+              expected: default.type.type_name,
+              given: existing.type_name,
+              location: node.location
+            )
+        }
       }
 
       # Default methods don't have bounds copied. Since default methods are
@@ -2847,16 +2809,16 @@ class TypeCheck {
       #       }
       #     }
       #
-      #     impl List!(T) for Array when T: ToInteger {
+      #     impl List!(T) for Array when T: ToInt {
       #       # ...
       #     }
       #
       # Here `List.to_string` only depends on `T` implementing `ToString`,
-      # _not_ `ToInteger`. Thus, merging the bounds would actually prevent
+      # _not_ `ToInt`. Thus, merging the bounds would actually prevent
       # us from using `to_string` for any `T` that _only_ implements
       # `ToString`.
-      existing.if_false {
-        class_type.instance_methods.define(name: name, type: default.type)
+      if not existing {
+        class_type.instance_methods.define(name, default.type)
       }
     }
 
@@ -2865,8 +2827,8 @@ class TypeCheck {
     # implementing.
     class_type.add_trait_implementation(implementation)
 
-    node.body.children.each do (child) {
-      match(let matched = child) {
+    for child in node.body.children {
+      match let matched = child {
         as DefineMethod -> {
           let method = visit_define_method_in_trait_implementation(
             node: matched,
@@ -2874,14 +2836,15 @@ class TypeCheck {
             types: new_scope
           )
 
-          store_implemented_method_in_object(
+          if not store_implemented_method_in_object(
             type: class_type,
             trait_instance: trait_instance,
             method: method,
             scope: new_scope,
             location: child.location
-          )
-            .if_false { valid = False }
+          ) {
+            valid = False
+          }
         }
         else -> {
           # The parser only allows instance methods to occur here, so there are
@@ -2890,35 +2853,19 @@ class TypeCheck {
       }
     }
 
-    valid
-      .and {
-        required_traits_implemented?(
-          node: node,
-          class_type: class_type,
-          trait_instance: trait_instance,
-          scope: new_scope
-        )
-      }
-      .and {
-        required_methods_implemented?(
-          node: node,
-          class_type: class_type,
-          trait_instance: trait_instance,
-          scope: new_scope
-        )
-      }
-      .if_false {
-        class_type.remove_trait_implementation(implementation)
-      }
+    if not valid
+      or not required_traits_implemented?(node, class_type, trait_instance, new_scope)
+      or not required_methods_implemented?(node, class_type, trait_instance, new_scope)
+    {
+      class_type.remove_trait_implementation(implementation)
+    }
 
     class_type
   }
 
   def visit_reopen_object(node: ReopenObject, types: TypeScope) -> Type {
     let name = node.name
-    let type = match(
-      let matched = visit_constant(node: name, types: types)
-    ) {
+    let type = match let matched = visit_constant(node: name, types: types) {
       as ClassType -> { matched }
       as ErrorType -> { return matched }
       else -> {
@@ -2933,8 +2880,8 @@ class TypeCheck {
     let new_scope =
       node.body.type_scope = TypeScope.new(module: @module, self_type: type)
 
-    node.body.children.each do (child) {
-      match(let matched = child) {
+    for child in node.body.children {
+      match let matched = child {
         as DefineMethod -> {
           store_method_in_object(
             type: type,
@@ -2979,8 +2926,9 @@ class TypeCheck {
     types: TypeScope
   ) -> Boolean {
     nodes.iter.all? do (bound) {
-      method.lookup_type_parameter(bound.name).if_true {
+      if method.lookup_type_parameter(bound.name) {
         type_checker.diagnostics.useless_method_bound(bound.location)
+
         return False
       }
 
@@ -3002,7 +2950,7 @@ class TypeCheck {
     type_parameter_bounds: TypeParameterBounds,
     types: TypeScope
   ) -> Boolean {
-    let param = parameter.get_or_else {
+    let param = try parameter.get else {
       type_checker
         .diagnostics
         .undefined_type_parameter(name: node.name, location: node.location)
@@ -3012,18 +2960,14 @@ class TypeCheck {
 
     # When one or more required traits produce an error, a diagnostic will
     # already have been added; thus we just return without doing anything else.
-    let required = visit_type_parameter_requirements(node: node, types: types)
-      .get_or_else { return False }
+    let required =
+      try visit_type_parameter_requirements(node, types).get else return False
 
-    type_parameter_bounds
-      .define(parameter: param, requirements: required)
-      .if_false {
-        type_checker
-          .diagnostics
-          .duplicate_bound(name: node.name, location: node.location)
+    if not type_parameter_bounds.define(param, required) {
+      type_checker.diagnostics.duplicate_bound(node.name, node.location)
 
-        return False
-      }
+      return False
+    }
 
     True
   }
@@ -3036,37 +2980,29 @@ class TypeCheck {
   ) -> Boolean {
     let builtins = @type_checker.builtins
 
-    trait_instance
-      .instance_of
-      .required_methods
-      .symbols
-      .each do (symbol) {
-        let required = symbol.type
-        let implemented = class_type
-          .instance_methods
-          .get(required.name)
-          .get_or_else {
-            type_checker.diagnostics.required_method_not_implemented(
-              method: required.type_name,
-              location: node.location
-            )
+    for symbol in trait_instance.instance_of.required_methods.symbols {
+      let required = symbol.type
+      let implemented =
+        try class_type.instance_methods.get(required.name).get else {
+          type_checker.diagnostics.required_method_not_implemented(
+            method: required.type_name,
+            location: node.location
+          )
 
-            return False
-          }
+          return False
+        }
 
-        implemented
-          .type
-          .type_compatible?(with: required, builtins: builtins, scope: scope)
-          .if_false {
-            type_checker.diagnostics.required_method_not_compatible(
-              given: implemented.type.type_name,
-              expected: required.type_name,
-              location: node.method_node(required.name).get.location
-            )
+      if not implemented.type.type_compatible?(with: required, builtins, scope)
+      {
+        type_checker.diagnostics.required_method_not_compatible(
+          given: implemented.type.type_name,
+          expected: required.type_name,
+          location: node.method_node(required.name).get.location
+        )
 
-            return False
-          }
+        return False
       }
+    }
 
     True
   }
@@ -3080,20 +3016,17 @@ class TypeCheck {
     let builtins = @type_checker.builtins
 
     trait_instance.instance_of.required_traits.iter.all? do (required) {
-      class_type
-        .implements_trait?(type: required, builtins: builtins, scope: scope)
-        .if(
-          true: { True },
-          false: {
-            type_checker.diagnostics.required_trait_not_implemented(
-              required: required.type_name,
-              depending: trait_instance.type_name,
-              location: node.location
-            )
-
-            False
-          }
+      if class_type.implements_trait?(required, builtins, scope) {
+        True
+      } else {
+        type_checker.diagnostics.required_trait_not_implemented(
+          required: required.type_name,
+          depending: trait_instance.type_name,
+          location: node.location
         )
+
+        False
+      }
     }
   }
 
@@ -3116,7 +3049,7 @@ class TypeCheck {
 
     let rigid_types = RigidTypeScope.from_type_scope(types)
 
-    arguments.each do (arg) {
+    for arg in arguments {
       visit_define_argument(
         node: arg,
         block: method,
@@ -3147,9 +3080,11 @@ class TypeCheck {
   }
 
   def type_scope_for_method(method: MethodType, types: TypeScope) -> TypeScope {
-    let self_type = method
-      .static_method?
-      .if(true: { types.self_type }, false: { types.self_type.new_instance })
+    let self_type = if method.static_method? {
+      types.self_type
+    } else {
+      types.self_type.new_instance
+    }
 
     TypeScope
       .new(module: @module, self_type: self_type, block: Option.some(method))
@@ -3162,10 +3097,8 @@ class TypeCheck {
   ) {
     let name = method.name
 
-    type.methods.get(name).if_true {
-      type_checker
-        .diagnostics
-        .redefine_module_method(name: name, location: location)
+    if type.methods.get(name) {
+      type_checker.diagnostics.redefine_module_method(name, location)
 
       return
     }
@@ -3181,18 +3114,14 @@ class TypeCheck {
   ) {
     let name = method.name
 
-    type.required_methods.get(name).if_true {
-      type_checker
-        .diagnostics
-        .redefine_required_method(name: name, location: location)
+    if type.required_methods.get(name) {
+      type_checker.diagnostics.redefine_required_method(name, location)
 
       return
     }
 
-    type.default_methods.get(name).if_true {
-      type_checker
-        .diagnostics
-        .redefine_default_method(name: name, location: location)
+    if type.default_methods.get(name) {
+      type_checker.diagnostics.redefine_default_method(name, location)
 
       return
     }
@@ -3207,51 +3136,50 @@ class TypeCheck {
     location: SourceLocation
   ) -> Boolean {
     let name = method.name
-    let table = method
-      .static_method?
-      .if(true: { type.static_methods }, false: { type.instance_methods })
+    let table = if method.static_method? {
+      type.static_methods
+    } else {
+      type.instance_methods
+    }
 
     let existing = table.get(name).map do (sym) { sym.type }
 
-    match {
-      method.static_method? when type.instance_methods.defines?(name) -> {
-        type_checker
-          .diagnostics
-          .redefine_instance_method(name: name, location: location)
+    if method.static_method? and type.instance_methods.defines?(name) {
+      type_checker
+        .diagnostics
+        .redefine_instance_method(name: name, location: location)
 
-        False
-      }
-      method.instance_method? when type.static_methods.defines?(name) -> {
-        type_checker
-          .diagnostics
-          .redefine_static_method(name: name, location: location)
-
-        False
-      }
-      # Existing methods can only be redefined if the new definition is
-      # compatible with the existing one.
-      existing.some?
-      when
-        method.type_compatible?(
-          with: existing.get,
-          builtins: type_checker.builtins,
-          scope: types
-        )
-        .false?
-      -> {
-        type_checker.diagnostics.invalid_redefined_method(
-          expected: existing.get.type_name,
-          given: method.type_name,
-          location: location
-        )
-
-        False
-      }
-      else -> {
-        table.define(name: name, type: method)
-        True
-      }
+      return False
     }
+
+    if method.instance_method? and type.static_methods.defines?(name)  {
+      type_checker
+        .diagnostics
+        .redefine_static_method(name: name, location: location)
+
+      return False
+    }
+
+    # Existing methods can only be redefined if the new definition is compatible
+    # with the existing one.
+    if existing.some?
+      and not method.type_compatible?(
+        with: existing.get,
+        builtins: type_checker.builtins,
+        scope: types
+      )
+    {
+      type_checker.diagnostics.invalid_redefined_method(
+        expected: existing.get.type_name,
+        given: method.type_name,
+        location: location
+      )
+
+      return False
+    }
+
+    table.define(name: name, type: method)
+    True
   }
 
   def store_implemented_method_in_object(
@@ -3263,10 +3191,8 @@ class TypeCheck {
   ) -> Boolean {
     let name = method.name
 
-    type.static_methods.defines?(name).if_true {
-      type_checker
-        .diagnostics
-        .redefine_static_method(name: name, location: location)
+    if type.static_methods.defines?(name) {
+      type_checker.diagnostics.redefine_static_method(name, location)
 
       return False
     }
@@ -3280,10 +3206,8 @@ class TypeCheck {
     # Default methods can be redefined when implementing a trait. We don't allow
     # redefining other instance methods, as doing so could lead to the wrong
     # implementation of a method being used.
-    type.instance_methods.defines?(name).and { default.none? }.if_true {
-      type_checker
-        .diagnostics
-        .redefine_instance_method(name: name, location: location)
+    if type.instance_methods.defines?(name) and default.none? {
+      type_checker.diagnostics.redefine_instance_method(name, location)
 
       return False
     }
@@ -3293,17 +3217,15 @@ class TypeCheck {
     # Default methods can only be redefined if their new version is compatible
     # with the implementation provided by the trait.
     default.let do (default) {
-      method
-        .type_compatible?(with: default, builtins: builtins, scope: scope)
-        .if_false {
-          type_checker.diagnostics.default_method_not_compatible(
-            expected: default.type_name,
-            given: method.type_name,
-            location: location
-          )
+      if not method.type_compatible?(with: default, builtins, scope) {
+        type_checker.diagnostics.default_method_not_compatible(
+          expected: default.type_name,
+          given: method.type_name,
+          location: location
+        )
 
-          return False
-        }
+        return False
+      }
     }
 
     type.instance_methods.define(name: name, type: method)
@@ -3316,8 +3238,8 @@ impl Pass for TypeCheck {
     let types = ast.type_scope.get
     let vars = ast.variable_scope
 
-    ast.children.each do (node) {
-      match(let matched = node) {
+    for node in ast.children {
+      match let matched = node {
         as DefineClass -> { visit_define_class(node: matched, types: types) }
         as DefineTrait -> { visit_define_trait(node: matched, types: types) }
         as DefineMethod -> {
@@ -3404,29 +3326,25 @@ class TypeCheckMethods {
       visit_expressions(node: body, types: body_types, variables: body_vars)
 
     method.throw_type.let do (throws) {
-      method.throws?.if_false {
+      if not method.throws? {
         type_checker
           .diagnostics
-          .missing_method_throw(type: throws.type_name, location: node.location)
+          .missing_method_throw(throws.type_name, node.location)
       }
     }
 
     method.yield_type.let do (yields) {
-      method.yields?.if_false {
-        type_checker
-          .diagnostics
-          .missing_yield(type: yields.type_name, location: node.location)
+      if not method.yields? {
+        type_checker.diagnostics.missing_yield(yields.type_name, node.location)
       }
     }
 
     # Methods without explicit return types ignore whatever is returned, so no
     # type-checking is necessary. And if the last expression is a return, it's
     # type-checked separately.
-    node.return_type.none?.or { last_expression_is_return?(body) }.if_true {
-      return
-    }
+    if node.return_type.none? or last_expression_is_return?(body) { return }
 
-    method.yield_type.some?.and { node.return_type.some? }.if_true {
+    if method.yield_type.some? and node.return_type.some? {
       type_checker.diagnostics.cant_yield_and_return(node.location)
     }
 
@@ -3441,8 +3359,8 @@ class TypeCheckMethods {
   def visit_define_method_nodes(node: Body) {
     let types = node.type_scope.get
 
-    node.children.each do (child) {
-      match(let matched = child) {
+    for child in node.children {
+      match let matched = child {
         as DefineMethod -> { visit_define_method(node: matched, types: types) }
         else -> {
           # All other nodes are ignored in this pass. Required methods are also
@@ -3457,8 +3375,8 @@ impl Pass for TypeCheckMethods {
   def run(ast: Body) -> Boolean {
     let types = ast.type_scope.get
 
-    ast.children.each do (node) {
-      match(let matched = node) {
+    for node in ast.children {
+      match let matched = node {
         as DefineClass -> { visit_define_class(node: matched, types: types) }
         as DefineTrait -> { visit_define_trait(node: matched, types: types) }
         as DefineMethod -> { visit_define_method(node: matched, types: types) }
@@ -3507,12 +3425,12 @@ class TypeChecker {
   # The `dependencies` argument specifies all the direct and indirect
   # dependencies of the module. Dependencies are also type-checked.
   static def new(
-    diagnostics = Diagnostics.new,
-    dependencies = Array.new!(ParsedModule)
+    diagnostics: Diagnostics,
+    dependencies: Array!(ParsedModule)
   ) -> Self {
     let syntax_trees = Map.new
 
-    dependencies.each do (module) { syntax_trees[module.name] = module.ast }
+    for module in dependencies { syntax_trees[module.name] = module.ast }
 
     Self {
       @modules = Map.new,
@@ -3538,7 +3456,7 @@ class TypeChecker {
     module(module)
       .then do (mod) { mod.constants.get(constant) }
       .then do (sym) {
-        match(let matched = sym.type) {
+        match let matched = sym.type {
           as TraitType -> { Option.some(matched) }
           else -> { Option.none }
         }
@@ -3557,7 +3475,7 @@ class TypeChecker {
     module(OPTION_MODULE)
       .then do (mod) { mod.constants.get(OPTION_TYPE) }
       .then do (sym) {
-        match(let matched = sym.type) {
+        match let matched = sym.type {
           as ClassType -> { Option.some(matched) }
           else -> { Option.none }
         }
@@ -3582,22 +3500,12 @@ class TypeChecker {
 
   # Type-checks a single `ModuleType` and its corresponding AST.
   def check_module(module: ModuleType, ast: Body) {
-    Prepare
-      .new(module: module, type_checker: self)
-      .run(ast)
-      .and { TypeCheckImports.new(module: module, type_checker: self).run(ast) }
-      .and {
-        DefineImportedSymbolTypes
-          .new(module: module, type_checker: self)
-          .run(ast)
-      }
-      .and {
-        DefineTypeSignatures.new(module: module, type_checker: self).run(ast)
-      }
-      .and {
-        DefineAttributeTypes.new(module: module, type_checker: self).run(ast)
-      }
-      .and { TypeCheck.new(module: module, type_checker: self).run(ast) }
-      .and { TypeCheckMethods.new(module: module, type_checker: self).run(ast) }
+    Prepare.new(module, type_checker: self).run(ast)
+      and TypeCheckImports.new(module, type_checker: self).run(ast)
+      and DefineImportedSymbolTypes.new(module, type_checker: self).run(ast)
+      and DefineTypeSignatures.new(module, type_checker: self).run(ast)
+      and DefineAttributeTypes.new(module, type_checker: self).run(ast)
+      and TypeCheck.new(module, type_checker: self).run(ast)
+      and TypeCheckMethods.new(module, type_checker: self).run(ast)
   }
 }

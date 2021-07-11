@@ -1,129 +1,139 @@
-# The Integer type.
-import std::conversion::(ToInteger, ToString, ToFloat)
+# The Int type.
+import std::clone::(Clone, Copy)
+import std::conversion::(ToInt, ToString, ToFloat)
 import std::hash::Hash
 import std::numeric::Numeric
 import std::operators::*
 import std::successor::Successor
 
-extern def integer_to_string(integer: Integer) -> String
-extern def integer_to_float(integer: Integer) -> Float
+extern def integer_to_string(integer: ref Int) -> String
+extern def integer_to_float(integer: ref Int) -> Float
+extern def integer_clone(integer: ref Int) -> Int
 
-impl ToInteger for Integer {
-  def to_integer -> Integer {
-    self
+impl Clone for Int {
+  def clone -> Self {
+    integer_clone(self)
   }
 }
 
-impl ToFloat for Integer {
+impl Copy for Int {}
+
+impl ToInt for Int {
+  def to_int -> Int {
+    clone
+  }
+}
+
+impl ToFloat for Int {
   def to_float -> Float {
     integer_to_float(self)
   }
 }
 
-impl ToString for Integer {
+impl ToString for Int {
   def to_string -> String {
     integer_to_string(self)
   }
 }
 
-impl Add!(Self) for Integer {
-  def +(other: Self) -> Self {
+impl Add!(Int) for Int {
+  def +(other: ref Int) -> Self {
     _INKOC.integer_add(self, other)
   }
 }
 
-impl Divide for Integer {
-  def /(other: Self) -> Self {
+impl Divide for Int {
+  def /(other: ref Self) -> Self {
     _INKOC.integer_div(self, other)
   }
 }
 
-impl Multiply for Integer {
-  def *(other: Self) -> Self {
+impl Multiply for Int {
+  def *(other: ref Self) -> Self {
     _INKOC.integer_mul(self, other)
   }
 }
 
-impl Subtract!(Self) for Integer {
-  def -(other: Self) -> Self {
+impl Subtract!(Int) for Int {
+  def -(other: ref Int) -> Self {
     _INKOC.integer_sub(self, other)
   }
 }
 
-impl Modulo for Integer {
-  def %(other: Self) -> Self {
+impl Modulo for Int {
+  def %(other: ref Self) -> Self {
     _INKOC.integer_mod(self, other)
   }
 }
 
-impl Smaller for Integer {
-  def <(other: Self) -> Boolean {
+impl Smaller for Int {
+  def <(other: ref Int) -> Boolean {
     _INKOC.integer_smaller(self, other)
   }
 }
 
-impl Greater for Integer {
-  def >(other: Self) -> Boolean {
+impl Greater for Int {
+  def >(other: ref Int) -> Boolean {
     _INKOC.integer_greater(self, other)
   }
 }
 
-impl Equal for Integer {
-  def ==(other: Self) -> Boolean {
+impl Equal for Int {
+  def ==(other: ref Int) -> Boolean {
     _INKOC.integer_equals(self, other)
   }
 }
 
-impl GreaterOrEqual for Integer {
-  def >=(other: Self) -> Boolean {
+impl GreaterOrEqual for Int {
+  def >=(other: ref Int) -> Boolean {
     _INKOC.integer_greater_or_equal(self, other)
   }
 }
 
-impl SmallerOrEqual for Integer {
-  def <=(other: Self) -> Boolean {
+impl SmallerOrEqual for Int {
+  def <=(other: ref Int) -> Boolean {
     _INKOC.integer_smaller_or_equal(self, other)
   }
 }
 
-impl BitwiseAnd for Integer {
-  def &(other: Self) -> Self {
+impl BitwiseAnd for Int {
+  def &(other: ref Self) -> Self {
     _INKOC.integer_bitwise_and(self, other)
   }
 }
 
-impl BitwiseOr for Integer {
-  def |(other: Self) -> Self {
+impl BitwiseOr for Int {
+  def |(other: ref Self) -> Self {
     _INKOC.integer_bitwise_or(self, other)
   }
 }
 
-impl BitwiseXor for Integer {
-  def ^(other: Self) -> Self {
+impl BitwiseXor for Int {
+  def ^(other: ref Self) -> Self {
     _INKOC.integer_bitwise_xor(self, other)
   }
 }
 
-impl ShiftLeft for Integer {
-  def <<(other: Self) -> Self {
+impl ShiftLeft for Int {
+  def <<(other: ref Self) -> Self {
     _INKOC.integer_shift_left(self, other)
   }
 }
 
-impl ShiftRight for Integer {
-  def >>(other: Self) -> Self {
+impl ShiftRight for Int {
+  def >>(other: ref Self) -> Self {
     _INKOC.integer_shift_right(self, other)
   }
 }
 
-impl Match!(Integer) for Integer {
-  # Returns `True` if `self` and the given `Integer` are equal to each other.
-  def =~(other: Integer) -> Boolean {
+impl Match!(Int) for Int {
+  # Returns `True` if `self` and the given `Int` are equal to each other.
+  def =~(other: ref Int) -> Boolean {
     _INKOC.integer_equals(self, other)
   }
 }
 
-impl Numeric for Integer {
+impl Numeric for Int {
   def negative? -> Boolean {
     self < 0
   }
@@ -137,19 +147,15 @@ impl Numeric for Integer {
   }
 
   def absolute -> Self {
-    negative?.if_false { return self }
-
-    self - (self * 2)
+    if negative? { self - (self * 2) } else { clone }
   }
 
   def opposite -> Self {
-    positive?.if_true { return 0 - self }
-
-    self - (self * 2)
+    if positive? { 0 - self } else { self - (self * 2) }
   }
 }
 
-impl Successor for Integer {
+impl Successor for Int {
   # Returns the successor of `self`.
   #
   # # Examples
@@ -167,4 +173,4 @@ impl Successor for Integer {
   }
 }
 
-impl Hash for Integer {}
+impl Hash for Int {}

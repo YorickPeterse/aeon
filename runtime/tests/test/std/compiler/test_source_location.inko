@@ -5,10 +5,10 @@ def location -> SourceLocation {
   SourceLocation.new(file: 'test.inko', line_range: 1..2, column: 4)
 }
 
-def tests(t: Tests) {
+def tests(t: ref Tests) {
   t.group('std::compiler::source_location::SourceLocation.file') do (g) {
     g.test('Obtaining the file path') {
-      try assert_equal(location.file, 'test.inko'.to_path)
+      try assert_equal(location.file, 'test.inko'.into_path)
     }
   }
 

@@ -58,7 +58,6 @@ module Inkoc
           mod.literals.get_or_set(name)
         end
 
-        compiled_code.required_arguments = code_object.required_arguments_count
         compiled_code.locals = code_object.local_variables_count
         compiled_code.registers = code_object.registers_count
         compiled_code.captures = code_object.captures?
@@ -265,13 +264,12 @@ module Inkoc
       end
 
       def on_set_attribute(tir_ins, compiled_code, *)
-        reg = tir_ins.register.id
         rec = tir_ins.receiver.id
         name = tir_ins.name.id
         val = tir_ins.value.id
 
         compiled_code
-          .instruct(:SetAttribute, [reg, rec, name, val], tir_ins.location)
+          .instruct(:SetAttribute, [rec, name, val], tir_ins.location)
       end
 
       def on_set_block(tir_ins, compiled_code, _, mod)
@@ -331,11 +329,10 @@ module Inkoc
       end
 
       def on_set_global(tir_ins, compiled_code, *)
-        reg = tir_ins.register.id
         var = tir_ins.variable.index
         val = tir_ins.value.id
 
-        compiled_code.instruct(:SetGlobal, [reg, var, val], tir_ins.location)
+        compiled_code.instruct(:SetGlobal, [var, val], tir_ins.location)
       end
 
       def on_simple(tir_ins, compiled_code, *)

@@ -91,10 +91,6 @@ module Inkoc
         false
       end
 
-      def array_literal?
-        false
-      end
-
       def global?
         false
       end

@@ -507,6 +507,7 @@ describe Inkoc::Pass::DefineType do
         object = Inkoc::TypeSystem::Object.new
 
         type_scope.self_type.define_attribute('@number', object)
+        type_scope.define_variable_state('@number')
 
         type = expression_type('@number')
 
@@ -538,7 +539,7 @@ describe Inkoc::Pass::DefineType do
       it 'returns the type of the local variable' do
         object = Inkoc::TypeSystem::Object.new
 
-        type_scope.locals.define('foo', object)
+        type_scope.define_local('foo', object)
 
         type = expression_type('foo')
 
@@ -554,7 +555,7 @@ describe Inkoc::Pass::DefineType do
         param = type_scope.self_type.define_type_parameter('T')
 
         type_scope.block_type.method_bounds.define('T', [trait])
-        type_scope.locals.define('foo', param)
+        type_scope.define_local('foo', param)
 
         type = expression_type('foo')
 
@@ -637,7 +638,7 @@ describe Inkoc::Pass::DefineType do
         )
 
         tir_module.type.define_attribute('foo', method)
-        type_scope.locals.define('foo', variable_type)
+        type_scope.define_local('foo', variable_type)
 
         type = expression_type('foo')
 
@@ -663,7 +664,7 @@ describe Inkoc::Pass::DefineType do
         global_type = Inkoc::TypeSystem::Object.new(name: 'B')
 
         tir_module.globals.define('foo', global_type)
-        type_scope.locals.define('foo', local_type)
+        type_scope.define_local('foo', local_type)
 
         type = expression_type('foo')
 
@@ -743,7 +744,7 @@ describe Inkoc::Pass::DefineType do
         receiver.define_attribute(method.name, method)
         receiver.initialize_type_parameter(param, int_type)
 
-        type_scope.locals.define('receiver', receiver)
+        type_scope.define_local('receiver', receiver)
 
         type = expression_type('receiver.foo')
 
@@ -889,7 +890,7 @@ describe Inkoc::Pass::DefineType do
         foo_method.return_type = state.typedb.new_array_of_type(method_param)
 
         type_scope.self_type.define_attribute(foo_method.name, foo_method)
-        type_scope.locals.define('list', state.typedb.array_type.new_instance)
+        type_scope.define_local('list', state.typedb.array_type.new_instance)
 
         type = expression_type('foo(list)')
 
@@ -1068,7 +1069,7 @@ describe Inkoc::Pass::DefineType do
       it 'does not error when an inferred lambda shadows a local variable' do
         expected_block.block_type = Inkoc::TypeSystem::Block::LAMBDA
 
-        type_scope.locals.define('a', state.typedb.integer_type)
+        type_scope.define_local('a', state.typedb.integer_type)
 
         type, closure = parse_closure_argument('foo { let a = 10 }')
 
@@ -1907,9 +1908,7 @@ describe Inkoc::Pass::DefineType do
       end
 
       it 'errors if the local variable already exists' do
-        type_scope
-          .locals
-          .define('a', state.typedb.integer_type)
+        type_scope.define_local('a', state.typedb.integer_type)
 
         type = expression_type('let a = 10')
 
@@ -2037,8 +2036,7 @@ describe Inkoc::Pass::DefineType do
     context 'with a local variable' do
       it 'reassigns a mutable local variable with a compatible type' do
         type_scope
-          .locals
-          .define('number', state.typedb.integer_type, true)
+          .define_local('number', state.typedb.integer_type, true)
 
         type = expression_type('number = 10')
 
@@ -2048,8 +2046,7 @@ describe Inkoc::Pass::DefineType do
 
       it 'errors if the local variable is not mutable' do
         type_scope
-          .locals
-          .define('number', state.typedb.integer_type.new_instance, false)
+          .define_local('number', state.typedb.integer_type.new_instance, false)
 
         type = expression_type('number = 10')
 
@@ -2066,8 +2063,7 @@ describe Inkoc::Pass::DefineType do
 
       it 'errors if the new type is not compatible with the old one' do
         type_scope
-          .locals
-          .define('number', state.typedb.float_type, true)
+          .define_local('number', state.typedb.float_type, true)
 
         type = expression_type('number = 10')
 
@@ -2087,21 +2083,12 @@ describe Inkoc::Pass::DefineType do
           .attributes
           .define('@number', state.typedb.integer_type, true)
 
+        type_scope.define_variable_state('@number')
+
         type = expression_type('@number = 10')
 
         expect(type).to be_type_instance_of(state.typedb.integer_type)
         expect(state.diagnostics.errors?).to eq(false)
-      end
-
-      it 'errors if the attribute is not mutable' do
-        type_scope
-          .self_type
-          .attributes
-          .define('@number', state.typedb.integer_type.new_instance, false)
-
-        expression_type('@number = 10')
-
-        expect(state.diagnostics.errors?).to eq(true)
       end
 
       it 'errors if the attribute is not defined' do
@@ -2117,9 +2104,11 @@ describe Inkoc::Pass::DefineType do
           .attributes
           .define('@number', state.typedb.float_type, true)
 
+        type_scope.define_variable_state('@number')
+
         type = expression_type('@number = 10')
 
-        expect(type).to be_type_instance_of(state.typedb.integer_type)
+        expect(type).to be_type_instance_of(state.typedb.float_type)
 
         expect(type_scope.self_type.attributes['@number'].type)
           .to be_type_instance_of(state.typedb.float_type)
@@ -2365,8 +2354,8 @@ describe Inkoc::Pass::DefineType do
       object = Inkoc::TypeSystem::Object.new
       value = Inkoc::TypeSystem::Object.new(name: 'Value')
 
-      type_scope.locals.define('obj', object)
-      type_scope.locals.define('value', value)
+      type_scope.define_local('obj', object)
+      type_scope.define_local('value', value)
 
       type = expression_type('_INKOC.set_attribute(obj, "name", value)')
 
@@ -2382,7 +2371,7 @@ describe Inkoc::Pass::DefineType do
 
       object.define_attribute('attribute', attribute)
 
-      type_scope.locals.define('obj', object)
+      type_scope.define_local('obj', object)
     end
 
     it 'returns the type of an attribute when using a string literal' do
@@ -2393,8 +2382,7 @@ describe Inkoc::Pass::DefineType do
 
     it 'returns a Object type when not using a string literal' do
       type_scope
-        .locals
-        .define('attribute', state.typedb.string_type.new_instance)
+        .define_local('attribute', state.typedb.string_type.new_instance)
 
       type = expression_type('_INKOC.get_attribute(obj, attribute)')
 
@@ -2412,7 +2400,7 @@ describe Inkoc::Pass::DefineType do
     it 'sets the prototype if given' do
       proto = state.typedb.integer_type
 
-      type_scope.locals.define('proto', proto)
+      type_scope.define_local('proto', proto)
 
       type = expression_type('_INKOC.allocate(proto)')
 

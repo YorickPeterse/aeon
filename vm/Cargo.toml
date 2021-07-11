@@ -16,9 +16,7 @@ libffi-system = ["libffi/system"]
 num_cpus = "^1.13"
 parking_lot = "^0.10"
 time = "^0.2"
-num-integer = "^0.1"
 float-cmp = "^0.8"
-num-traits = "^0.2"
 dirs-next = "^1.0"
 libloading = "^0.6"
 libffi = "^1.0"
@@ -29,10 +27,6 @@ nix = "^0.19"
 ahash = "^0.4"
 rand = "^0.6"
 polling = "^2.0"
-
-[dependencies.num-bigint]
-version = "^0.2"
-features = ["rand"]
 
 [dependencies.socket2]
 version = "^0.3.11"

@@ -23,7 +23,7 @@ on a single line:
 ```inko
 import std::test::*
 
-def tests(t: Tests) {
+def tests(t: ref Tests) {
   t.group('This is the name of a test group') do (g) {
     # This is OK
     g.test("This is the name of the test. These names can get pretty long, so it's OK to not wrap them") {

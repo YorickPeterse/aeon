@@ -1,8 +1,9 @@
 //! A registry of external functions that can be called in Inko source code.
-use crate::object_pointer::ObjectPointer;
-use crate::process::RcProcess;
+use crate::mem::allocator::{BumpAllocator, Pointer};
+use crate::mem::generator::GeneratorPointer;
+use crate::mem::process::ServerPointer;
 use crate::runtime_error::RuntimeError;
-use crate::vm::state::RcState;
+use crate::vm::state::State;
 use ahash::AHashMap;
 use std::io::Read;
 
@@ -28,6 +29,8 @@ mod env;
 mod ffi;
 mod float;
 mod fs;
+mod future;
+mod generator;
 mod hasher;
 mod integer;
 mod modules;
@@ -41,24 +44,26 @@ mod time;
 
 /// A external function that can be called from Inko source code.
 pub type ExternalFunction = fn(
-    &RcState,
-    &RcProcess,
-    &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError>;
+    &State,
+    &mut BumpAllocator,
+    ServerPointer,
+    GeneratorPointer,
+    &[Pointer],
+) -> Result<Pointer, RuntimeError>;
 
 /// Reads a number of bytes from a buffer into a Vec.
 pub fn read_into<T: Read>(
     stream: &mut T,
     output: &mut Vec<u8>,
-    size: Option<u64>,
-) -> Result<usize, RuntimeError> {
-    let read = if size > Some(0) {
-        stream.take(size.unwrap()).read_to_end(output)?
+    size: u64,
+) -> Result<u64, RuntimeError> {
+    let read = if size > 0 {
+        stream.take(size).read_to_end(output)?
     } else {
         stream.read_to_end(output)?
     };
 
-    Ok(read)
+    Ok(read as u64)
 }
 
 /// A collection of external functions.
@@ -90,6 +95,8 @@ impl ExternalFunctions {
         integer::setup(&mut instance)?;
         string::setup(&mut instance)?;
         child_process::setup(&mut instance)?;
+        generator::setup(&mut instance)?;
+        future::setup(&mut instance)?;
 
         Ok(instance)
     }

@@ -11,19 +11,18 @@
 # instead they will swallow them silently. This is done to make writing to
 # STDOUT more convenient as in almost all (if not all) cases a developer
 # doesn't care if a write to STDOUT succeeds or not.
-
 import std::conversion::ToString
 import std::io::Write
 import std::process::(blocking)
 
-extern def stdout_write_string(input: String) !! String -> Integer
-extern def stdout_write_bytes(input: ByteArray) !! String -> Integer
+extern def stdout_write_string(input: ref String) !! String -> Int
+extern def stdout_write_bytes(input: ref ByteArray) !! String -> Int
 extern def stdout_flush !! String
 
 impl Write for ThisModule {
   # Writes a `ByteArray` of bytes to STDOUT, returning the number of bytes
   # written.
-  def write_bytes(bytes: ByteArray) -> Integer {
+  def write_bytes(bytes: ref ByteArray) -> Int {
     blocking { try stdout_write_bytes(bytes) else 0 }
   }
 
@@ -36,7 +35,7 @@ impl Write for ThisModule {
   #     import std::stdio::stdout
   #
   #     stdout.write_string('hello') # => 5
-  def write_string(data: ToString) -> Integer {
+  def write_string(data: ref ToString) -> Int {
     blocking { try stdout_write_string(data.to_string) else 0 }
   }
 
@@ -56,12 +55,8 @@ impl Write for ThisModule {
   #     import std::stdio::stdout
   #
   #     stdout.print
-  def print(data: ToString = '') -> Integer {
-    blocking {
-      let written = try stdout_write_string(data.to_string) else return 0
-
-      written + try stdout_write_string("\n") else 0
-    }
+  def print(data: ref ToString) -> Int {
+    write_string(`{data}\n`)
   }
 
   def flush {

@@ -6,7 +6,7 @@
 
 trait Length {
   # Returns the number of values in `self`.
-  def length -> Integer
+  def length -> Int
 
   # Returns `True` if `self` is empty.
   #

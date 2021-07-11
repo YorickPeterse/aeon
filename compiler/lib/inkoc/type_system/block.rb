@@ -22,7 +22,7 @@ module Inkoc
       attr_accessor :prototype, :captures, :last_argument_is_rest, :throw_type,
                     :return_type, :type_parameter_instances, :infer_return_type,
                     :infer_throw_type, :block_type, :self_type, :yield_type,
-                    :yields, :ignore_return, :arguments, :extern
+                    :yields, :arguments, :extern, :moving, :discard_return_value
 
       def self.closure(prototype, return_type: nil)
         new(
@@ -70,7 +70,7 @@ module Inkoc
         @prototype = prototype
         @arguments = SymbolTable.new
         @throw_type = throw_type
-        @return_type = return_type || Any.singleton
+        @return_type = return_type || Any.new
         @yield_type = nil
         @required_arguments = 0
         @type_parameters = TypeParameterTable.new
@@ -83,9 +83,10 @@ module Inkoc
         @infer_throw_type = infer_throw_type
         @method_bounds = TypeParameterTable.new
         @thrown_types = []
-        @self_type = Any.singleton
+        @self_type = Any.new
         @yields = false
-        @ignore_return = false
+        @moving = false
+        @discard_return_value = false
       end
 
       def block?
@@ -126,6 +127,8 @@ module Inkoc
       # other - The type to compare with.
       # state - An instance of `Inkoc::State`.
       def type_compatible?(other, state)
+        return type_compatible?(other.type, state) if other.reference?
+
         if other.any?
           true
         elsif other.trait?
@@ -145,6 +148,7 @@ module Inkoc
       # state - An instance of `Inkoc::State`.
       def compatible_with_block?(other, state)
         compatible_block_type?(other) &&
+          compatible_move_semantics?(other) &&
           compatible_rest_argument?(other) &&
           compatible_arguments?(other, state) &&
           compatible_throw_type?(other, state) &&
@@ -155,6 +159,16 @@ module Inkoc
       # other - An instance of `Inkoc::TypeSystem::Block` to compare with.
       def compatible_rest_argument?(other)
         last_argument_is_rest == other.last_argument_is_rest
+      end
+
+      def compatible_move_semantics?(other)
+        # an owned `do` can be safely passed to a `move do`, because the
+        # ownership is transferred.
+        if closure? && (!moving && other.moving)
+          return true
+        end
+
+        moving == other.moving
       end
 
       # other - An instance of `Inkoc::TypeSystem::Block` to compare with.
@@ -177,7 +191,9 @@ module Inkoc
           our_type = resolve_type_parameter(our.type)
           their_type = other.resolve_type_parameter(their.type)
 
-          return false unless our_type.type_compatible?(their_type, state)
+          unless our_type.strict_type_compatible?(their_type, state)
+            return false
+          end
         end
 
         true
@@ -190,7 +206,8 @@ module Inkoc
           if other.throw_type
             theirs = other.resolve_type_parameter(other.throw_type)
 
-            resolve_type_parameter(throw_type).type_compatible?(theirs, state)
+            resolve_type_parameter(throw_type)
+              .strict_type_compatible?(theirs, state)
           else
             false
           end
@@ -202,18 +219,22 @@ module Inkoc
       # other - An instance of `Inkoc::TypeSystem::Block` to compare with.
       # state - An instance of `Inkoc::State`.
       def compatible_return_type?(other, state)
-        return true if other.ignore_return
+        # If both blocks discard their return value, it doesn't matter what
+        # their types are.
+        return true if discard_return_value && other.discard_return_value
 
         theirs = other.resolve_type_parameter(other.return_type)
 
-        resolve_type_parameter(return_type).type_compatible?(theirs, state)
+        resolve_type_parameter(return_type)
+          .strict_type_compatible?(theirs, state)
       end
 
       def compatible_yield_type?(other, state)
         if yield_type && other.yield_type
           theirs = other.resolve_type_parameter(other.yield_type)
 
-          resolve_type_parameter(yield_type).type_compatible?(theirs, state)
+          resolve_type_parameter(yield_type)
+            .strict_type_compatible?(theirs, state)
         elsif yield_type.nil? && other.yield_type.nil?
           true
         else
@@ -222,7 +243,10 @@ module Inkoc
       end
 
       def type_name
-        type_name = name
+        type_name = ''
+
+        type_name += 'move ' if moving
+        type_name += name
 
         if type_parameters.any?
           type_name += " !(#{formatted_type_parameter_names})"
@@ -240,6 +264,10 @@ module Inkoc
 
         if yield_type
           type_name += " => #{resolve_type_parameter(yield_type).type_name}"
+        end
+
+        if method_bounds.any?
+          type_name += " when #{method_bounds.map(&:type_name).join(', ')}"
         end
 
         type_name
@@ -268,10 +296,6 @@ module Inkoc
         arguments.define(name, type, mutable)
       end
 
-      def define_optional_argument(name, type, mutable = false)
-        arguments.define(name, type, mutable)
-      end
-
       def define_rest_argument(name, type, mutable = false)
         @last_argument_is_rest = true
 
@@ -279,10 +303,7 @@ module Inkoc
       end
 
       def define_call_method
-        define_attribute(
-          Config::CALL_MESSAGE,
-          self.with_rigid_type_parameters
-        )
+        define_attribute(Config::CALL_MESSAGE, with_rigid_type_parameters)
       end
 
       def lookup_type(name)
@@ -381,6 +402,8 @@ module Inkoc
       #
       # This method assumes that self and the given type are type compatible.
       def initialize_as(type, method_type, self_type)
+        type = type.type if type.reference?
+
         arguments.zip(type.arguments) do |ours, theirs|
           ours.type.initialize_as(theirs.type, method_type, self_type)
         end
@@ -416,6 +439,11 @@ module Inkoc
             copy.type_parameter_instances = instances
           end
         end
+      end
+
+      def lookup_type_parameter(name)
+        super
+        # TODO: re-enable? method_bounds[name] || super
       end
 
       def lookup_type_parameter_instance(param)

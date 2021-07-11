@@ -1,40 +1,16 @@
 # A hash map using linear probing and Robin Hood bucket stealing.
-import std::hash::(DefaultHasher, Hash, Hasher)
+import std::hash::(Hash, Hasher)
 import std::index::(Index, SetIndex)
 import std::length::Length
-import std::loop::(loop, while)
+import std::loop::(repeat)
 import std::operators::Equal
 import std::option::Option
 import std::process::(panic)
 import std::random::(incremental_integer)
+import std::pair::(Pair as RegularPair)
 
 # The load factor of a `Map` before it should be resized.
 let LOAD_FACTOR = 0.75
-
-# The state used for creating a `DefaultHasher`.
-#
-# Different `DefaultHasher` instances created from the same `RandomState` will
-# produce the same hash values for the same input values. However, hashers
-# created from different `RandomState` objects will produce different hashes.
-class RandomState {
-  # The first randomly generated key to use for the hashing algorithm.
-  @key0: Integer
-
-  # The second randomly generated key to use for the hashing algorithm.
-  @key1: Integer
-
-  static def new -> Self {
-    Self {
-      @key0 = incremental_integer,
-      @key1 = incremental_integer
-    }
-  }
-
-  # Creates a new `DefaultHasher`.
-  def to_hasher -> DefaultHasher {
-    DefaultHasher.new(key0: @key0, key1: @key1)
-  }
-}
 
 # A key-value pair with a pre-computed hash.
 class Pair!(K: Hash + Equal, V) {
@@ -45,15 +21,15 @@ class Pair!(K: Hash + Equal, V) {
   @value: V
 
   # The hash value of the key.
-  @hash: Integer
+  @hash: Int
 
   # The distance of this pair relative to its desired index.
-  @distance: Integer
+  @distance: Int
 
   static def new!(KK: Hash + Equal, VV)(
     key: KK,
     value: VV,
-    hash: Integer
+    hash: Int
   ) -> Pair!(KK, VV) {
     Self {
       @key = key,
@@ -63,36 +39,52 @@ class Pair!(K: Hash + Equal, V) {
     }
   }
 
-  def distance -> Integer {
-    @distance
+  def distance -> Int {
+    @distance.clone
   }
 
-  def reset_distance -> Integer {
+  def rehash? -> Boolean {
+    @distance == -1
+  }
+
+  def prepare_for_rehash {
+    @distance = -1
+  }
+
+  def reset_distance {
     @distance = 0
   }
 
-  def increase_distance -> Integer {
+  def increase_distance {
     @distance += 1
   }
 
-  def reduce_distance -> Integer {
+  def reduce_distance {
     @distance -= 1
   }
 
-  def replace_with?(other: Self) -> Boolean {
+  def replace_with?(other: ref Self) -> Boolean {
     distance < other.distance
   }
 
-  def key -> K {
+  def same_key?(key: ref K) -> Boolean {
+    @key == key
+  }
+
+  def key -> ref K {
     @key
   }
 
-  def value -> V {
+  def value -> ref V {
     @value
   }
 
-  def hash -> Integer {
-    @hash
+  def hash -> Int {
+    @hash.clone
+  }
+
+  def hash=(hash: Int) {
+    @hash = hash
   }
 }
 
@@ -115,23 +107,22 @@ impl Equal for Pair {}
 # * http://codecapsule.com/2013/11/17/robin-hood-hashing-backward-shift-deletion/
 # * https://www.sebastiansylvan.com/post/robin-hood-hashing-should-be-your-default-hash-table-implementation/
 class Map!(K: Hash + Equal, V) {
-  # The state to use for creating hashers.
-  @random_state: RandomState
+  # The hasher to use.
+  @hasher: Hasher
 
   # The buckets to store pairs in. Each bucket can only contain a single
   # pair.
+  #
+  # The size of this Array is always a power of 2.
   @buckets: Array!(?Pair!(K, V))
 
   # The number of key-value pairs stored in this `Map`.
-  @length: Integer
+  @length: Int
 
-  # The number of values that can be stored before resizing.
-  @capacity: Integer
-
-  # The number of values to store before a resize is necessary.
-  # We store this value explicitly so we don't have to allocate floats every
-  # time we want to check if we need to resize.
-  @resize_threshold: Integer
+  # The number of values to store before a resize is necessary. We store this
+  # value explicitly so we don't have to allocate floats every time we want to
+  # check if we need to resize.
+  @resize_threshold: Int
 
   # Returns a new empty Map.
   #
@@ -142,11 +133,10 @@ class Map!(K: Hash + Equal, V) {
   #     Map.new
   static def new -> Self {
     Self {
-      @random_state = RandomState.new,
-      @buckets = Array.filled(1, Option.none),
+      @hasher = Hasher.default,
+      @buckets = Array.new(Option.none, Option.none),
       @length = 0,
-      @capacity = 1,
-      @resize_threshold = 1
+      @resize_threshold = 2
     }
   }
 
@@ -165,12 +155,12 @@ class Map!(K: Hash + Equal, V) {
     let mut map = Map.new
     let max_index = values.length - 1
 
-    (keys.length == values.length).if_false {
+    if keys.length != values.length {
       panic('An equal number of keys and values must be specified')
     }
 
-    keys.each_with_index do (key: K, index: Integer) {
-      (index > max_index).if_true { return map }
+    for (index, key) in keys.iter.with_index {
+      if index > max_index { return map }
 
       map[key] = values[index]
     }
@@ -179,7 +169,7 @@ class Map!(K: Hash + Equal, V) {
   }
 
   # Returns the buckets of this `Map`.
-  def buckets -> Array!(?Pair!(K, V)) {
+  def buckets -> ref Array!(?Pair!(K, V)) {
     @buckets
   }
 
@@ -201,38 +191,14 @@ class Map!(K: Hash + Equal, V) {
   #     map['name'] = 'Alice'
   #
   #     map.remove('name') # => Option.some('Alice')
-  def remove(key: K) -> ?V {
-    bucket_index(key).then do (index) {
-      @buckets[index].map do (pair) {
-        @buckets[index] = Option.none
-        @length -= 1
+  def remove(key: ref K) -> ?V {
+    bucket_index(key).map do (index) {
+      let pair = try! @buckets.swap(index, Option.none).get
 
-        backwards_shift(index + 1)
-        pair.value
-      }
-    }
-  }
+      @length -= 1
 
-  # Calls the supplied `Block` for every key value pair in this map.
-  #
-  # This method differs from `Iterator.each` in that it yields the key and
-  # value as separate arguments instead of yielding a `Pair` object.
-  #
-  # # Examples
-  #
-  # Iterating over the keys and values of a `Map`:
-  #
-  #     let mut map = Map.new
-  #
-  #     map['name'] = 'Alice'
-  #
-  #     map.each do (key, value) {
-  #       key   # => 'name'
-  #       value # => 'Alice'
-  #     }
-  def each(block: do (K, V)) {
-    @buckets.each do (pair_opt) {
-      pair_opt.let do (pair) { block.call(pair.key, pair.value) }
+      backwards_shift(index + 1)
+      pair.value
     }
   }
 
@@ -247,13 +213,40 @@ class Map!(K: Hash + Equal, V) {
   #
   #     map['name'] = 'Alice'
   #
-  #     map.iter.each do (pair) {
-  #       pair.key   # => 'name'
-  #       pair.value # => 'Alice'
+  #     for (key, value) in map.iter {
+  #       key   # => 'name'
+  #       value # => 'Alice'
   #     }
-  def iter => Pair!(K, V) {
-    @buckets.each do (pair_opt) {
-      pair_opt.let do (pair) { yield pair }
+  def iter => ref RegularPair!(K, V) {
+    for bucket in @buckets {
+      if not bucket { next }
+
+      let pair = try! bucket.get_ref
+
+      yield RegularPair.new(pair.key, pair.value)
+    }
+  }
+
+  # Returns an `Iterator` that iterates over all key-value pairs in this
+  # `Map`, yielding them by value.
+  #
+  # # Examples
+  #
+  #     let mut map = Map.new
+  #
+  #     map['name'] = 'Alice'
+  #
+  #     for (key, value) in map.into_iter {
+  #       key   # => 'name'
+  #       value # => 'Alice'
+  #     }
+  move def into_iter => RegularPair!(K, V) {
+    for bucket in @buckets.into_iter {
+      if not bucket { next }
+
+      let pair = try! bucket.get
+
+      yield RegularPair.new(pair.key, pair.value)
     }
   }
 
@@ -267,11 +260,11 @@ class Map!(K: Hash + Equal, V) {
   #
   #     map['name'] = 'Alice'
   #
-  #     map.keys.each do (key) {
+  #     for key in map.keys {
   #       key # => 'name'
   #     }
-  def keys => K {
-    each do (key, _) { yield key }
+  def keys => ref K {
+    for (key, _) in self { yield key }
   }
 
   # Returns an `Iterator` visiting all the values in this `Map`.
@@ -284,11 +277,11 @@ class Map!(K: Hash + Equal, V) {
   #
   #     map['name'] = 'Alice'
   #
-  #     map.values.each do (value) {
+  #     for value in map.values {
   #       value # => 'Alice'
   #     }
-  def values => V {
-    each do (_, value) { yield value }
+  def values => ref V {
+    for (_, value) in self { yield value }
   }
 
   # Returns `True` if `self` contains the key `key`.
@@ -303,51 +296,59 @@ class Map!(K: Hash + Equal, V) {
   #
   #     map.key?('name') # => True
   #     map.key?('city') # => False
-  def key?(key: K) -> Boolean {
+  def key?(key: ref K) -> Boolean {
     bucket_index(key).some?
   }
 
-  # Inserts the key and value in this `Map`, returning the `Map` itself.
-  #
-  # This method makes it possible to create a `Map` and store many key-value
-  # pairs, all in a single message chain.
-  #
-  # # Examples
-  #
-  # Inserting multiple key-value pairs:
-  #
-  #     let map = Map.new.set('a', 10).set('b', 20)
-  def set(key: K, value: V) -> Self {
-    (@length >= @resize_threshold).if_true { rehash }
+  # Resizes and rehashes the buckets.
+  def rehash {
+    for bucket in @buckets {
+      (try bucket.get_ref else next).prepare_for_rehash
+    }
 
-    insert_pair(Pair.new(key: key, value: value, hash: hash_key(key)))
+    # This doubles the size of the Array, filling new slots with empty buckets.
+    repeat(@buckets.length) do (_) { @buckets.push(Option.none) }
 
-    self
+    @resize_threshold = (LOAD_FACTOR * @buckets.length.to_float).to_int
+
+    for (index, bucket) in @buckets.iter.with_index {
+      let pair = try bucket.get_ref else next
+
+      # It's possible that a previous rehash already moved our pair to its
+      # desired bucket. In that case we just leave it as-is.
+      if not pair.rehash? { next }
+
+      rehash_pair(try! @buckets.swap(index, Option.none).get)
+    }
   }
 
-  # Resizes and rehashes `self`.
-  def rehash {
-    let old_buckets = @buckets
+  # Rehashes an existing pair into the list of buckets.
+  def rehash_pair(pair: Pair!(K, V)) {
+    let mut hash = pair.hash
+    let mut insert = pair
 
-    @capacity = @capacity * 2
-    @resize_threshold = (LOAD_FACTOR * @capacity.to_float).to_integer
-    @buckets = Array.filled(@capacity, Option.none)
+    insert.reset_distance
 
-    old_buckets.each_with_index do (pair_opt, index) {
-      pair_opt.let do (pair) {
-        pair.reset_distance
-        rehash_pair(pair)
+    loop {
+      let index = desired_bucket(hash)
+      let existing = try @buckets[index].get_ref else {
+        @buckets[index] = Option.some(insert)
+        return
       }
+
+      if existing.replace_with?(insert) {
+        insert = try! @buckets.swap(index, Option.some(insert)).get
+      }
+
+      hash += 1
+      insert.increase_distance
     }
   }
 
   # Hashes the supplied key using the internal hasher of this `Map`.
-  def hash_key(key: K) -> Integer {
-    let hasher = @random_state.to_hasher
-
-    key.hash(hasher)
-
-    hasher.to_hash
+  def hash_key(key: ref K) -> Int {
+    key.hash(@hasher)
+    @hasher.to_hash
   }
 
   # Inserts a new pair into `self`.
@@ -355,94 +356,71 @@ class Map!(K: Hash + Equal, V) {
   # The `Pair` to insert must be pre-hashed using the `Hasher` used internally
   # by this `Map`, otherwise it might not be retrieved later.
   def insert_pair(pair: Pair!(K, V)) {
-    let mut index = desired_bucket(pair.hash)
-    let mut current = pair
+    let mut hash = pair.hash
+    let mut insert = pair
 
     loop {
-      let existing = @buckets[index].get_or_else {
+      let index = desired_bucket(hash)
+      let existing = try @buckets[index].get_ref else {
         @length += 1
-        @buckets[index] = Option.some(current)
+        @buckets[index] = Option.some(insert)
         return
       }
 
-      (existing.key == current.key).if_true {
-        @buckets[index] = Option.some(current)
+      if existing.same_key?(insert.key) {
+        @buckets[index] = Option.some(insert)
         return
       }
 
-      existing.replace_with?(current).if_true {
-        @buckets[index] = Option.some(current)
-        current = existing
+      if existing.replace_with?(insert) {
+        insert = try! @buckets.swap(index, Option.some(insert)).get
       }
 
-      index = desired_bucket(index + 1)
-      current.increase_distance
-    }
-  }
-
-  # Rehashes an existing pair into the list of buckets.
-  def rehash_pair(pair: Pair!(K, V)) {
-    let mut index = desired_bucket(pair.hash)
-    let mut current = pair
-
-    loop {
-      let existing = @buckets[index].get_or_else {
-        @buckets[index] = Option.some(current)
-        return
-      }
-
-      existing.replace_with?(current).if_true {
-        @buckets[index] = Option.some(current)
-        current = existing
-      }
-
-      index = desired_bucket(index + 1)
-      current.increase_distance
+      hash += 1
+      insert.increase_distance
     }
   }
 
   # Returns the desired bucket index for the given hash.
-  def desired_bucket(hash: Integer) -> Integer {
-    hash % @capacity
+  def desired_bucket(hash: Int) -> Int {
+    hash % @buckets.length
   }
 
   # Returns the index of the bucket the key resides in.
-  def bucket_index(key: K) -> ?Integer {
-    let start_at = desired_bucket(hash_key(key))
-    let mut index = start_at
+  def bucket_index(key: ref K) -> ?Int {
+    let mut hash = hash_key(key)
+    let mut attempts = @buckets.length
 
-    loop {
-      @buckets[index]
-        .let do (pair) {
-          (pair.key == key).if_true { return Option.some(index) }
+    while attempts.positive? {
+      let index = desired_bucket(hash)
+      let pair = try @buckets[index].get_ref else { return Option.none }
 
-          index = desired_bucket(index + 1)
+      if pair.same_key?(key) { return Option.some(index) }
 
-          # We wrapped around, meaning the key doesn't exist.
-          (index == start_at).if_true { return Option.none }
-        }
-        .else { return Option.none }
+      hash += 1
+      attempts -= 1
     }
+
+    # All buckets are used, but none of them use the provided key.
+    Option.none
   }
 
   # Shifts all pairs to the left starting at the given bucket index.
-  def backwards_shift(start_at: Integer) {
+  def backwards_shift(start_at: Int) {
     let mut index = start_at
     let max = @buckets.length
 
-    while({ index < max }) {
-      let pair = @buckets[index]
+    while index < max {
+      let pair = try @buckets[index].get_ref else { return }
 
-      pair.some?.and { pair.get.distance.positive? }.if(
-        true: {
-          pair.get.reduce_distance
+      if pair.distance.zero? { return }
 
-          @buckets[index - 1] = pair
-          @buckets[index] = Option.none
-          index += 1
-        },
-        false: { return }
-      )
+      let old_pair = @buckets.swap(index, Option.none)
+
+      try! { old_pair.get_ref }.reduce_distance
+
+      @buckets[index - 1] = old_pair
+      index += 1
     }
   }
 
@@ -463,9 +441,28 @@ class Map!(K: Hash + Equal, V) {
   #     map['name'] = 'Alice'
   #
   #     map.get('name') # => Option.some('Alice')
-  def get(key: K) -> ?V {
-    bucket_index(key)
-      .then do (index) { @buckets[index].map do (pair) { pair.value } }
+  def get(key: ref K) -> ?ref V {
+    bucket_index(key).then do (index) {
+      @buckets[index].as_ref.map do (pair) { pair.value }
+    }
+  }
+
+  # Merges two `Map` objects together.
+  #
+  # # Examples
+  #
+  #     let map1 = Map.new
+  #     let map2 = Map.new
+  #
+  #     map1['name'] = 'Alice'
+  #     map2['city'] = 'Amsterdam'
+  #
+  #     map1.merge(map2)
+  #
+  #     map1['name'] # => 'Alice'
+  #     map2['city'] # => 'Amsterdam'
+  def merge(other: Self) {
+    for (key, value) in other.into_iter { self[key] = value }
   }
 }
 
@@ -484,20 +481,18 @@ impl Equal for Map {
   #     map2['name'] = 'Alice'
   #
   #     map1 == map2 # => True
-  def ==(other: Self) -> Boolean when V: Equal {
-    (length == other.length).if_false { return False }
+  def ==(other: ref Self) -> Boolean when V: Equal {
+    if length != other.length { return False }
 
-    each do (key, value) {
-      other.key?(key).if_false { return False }
-
-      (value == other[key]).if_false { return False }
+    for (key, value) in self {
+      if not other.key?(key) or value != other[key] { return False }
     }
 
     True
   }
 }
 
-impl Index!(K, V) for Map {
+impl Index!(K, ref V) for Map {
   # Returns the value for the given key
   #
   # # Examples
@@ -513,8 +508,8 @@ impl Index!(K, V) for Map {
   # # Panics
   #
   # This method panics if the key doesn't exist.
-  def [](key: K) -> V {
-    get(key).get_or_else { panic("The key doesn't exist") }
+  def [](key: ref K) -> ref V {
+    try get(key).get else { panic("The key doesn't exist") }
   }
 }
 
@@ -528,9 +523,12 @@ impl SetIndex!(K, V) for Map {
   #     let mut map = Map.new
   #
   #     map['name'] = 'Alice' # => 'Alice'
-  def []=(key: K, value: V) -> V {
-    set(key: key, value: value)
-    value
+  def []=(key: K, value: V) {
+    if @length >= @resize_threshold { rehash }
+
+    let hash = hash_key(key)
+
+    insert_pair(Pair.new(key: key, value: value, hash: hash))
   }
 }
 
@@ -552,8 +550,8 @@ impl Length for Map {
   #     map['name'] = 'Alice'
   #
   #     map.length # => 1
-  def length -> Integer {
-    @length
+  def length -> Int {
+    @length.clone
   }
 }
 

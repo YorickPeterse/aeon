@@ -3,7 +3,7 @@ import std::test::test::ProgressFormatter
 
 class Dummy {}
 
-def tests(t: Tests) {
+def tests(t: ref Tests) {
   t.group('std::test::Tests.concurrency') do (g) {
     g.test('Getting the number of concurrent tests to run') {
       let t = Tests.new
@@ -36,21 +36,21 @@ def tests(t: Tests) {
 
   t.group('std::test.assert_equal') do (g) {
     g.test('Using two equal values') {
-      try assert_no_throw { local try assert_equal(10, 10) }
+      try assert_no_throw { try assert_equal(10, 10) }
     }
 
     g.test('Using two different values') {
-      try assert_throw { local try assert_equal(10, 20) }
+      try assert_throw { try assert_equal(10, 20) }
     }
   }
 
   t.group('std::test.assert_not_equal') do (g) {
     g.test('Using two equal values') {
-      try assert_throw { local try assert_not_equal(10, 10) }
+      try assert_throw { try assert_not_equal(10, 10) }
     }
 
     g.test('Using two different values') {
-      try assert_no_throw { local try assert_not_equal(10, 20) }
+      try assert_no_throw { try assert_not_equal(10, 20) }
     }
   }
 
@@ -58,54 +58,54 @@ def tests(t: Tests) {
     g.test('Using two identical objects') {
       let dummy = Dummy {}
 
-      try assert_no_throw { local try assert_same_object(dummy, dummy) }
+      try assert_no_throw { try assert_same_object(dummy, dummy) }
     }
 
     g.test('Using two different objects') {
       let a = Dummy {}
       let b = Dummy {}
 
-      try assert_throw { local try assert_same_object(a, b) }
+      try assert_throw { try assert_same_object(a, b) }
     }
   }
 
   t.group('std::test.assert_greater') do (g) {
     g.test('Using two equal values') {
-      try assert_throw { local try assert_greater(10, 10) }
+      try assert_throw { try assert_greater(10, 10) }
     }
 
     g.test('Using two different values') {
-      try assert_no_throw { local try assert_greater(20, 10) }
+      try assert_no_throw { try assert_greater(20, 10) }
     }
   }
 
   t.group('std::test.assert_true') do (g) {
     g.test('Using a value that is truthy') {
-      try assert_no_throw { local try assert_true(True) }
+      try assert_no_throw { try assert_true(True) }
     }
 
     g.test('Using a value that is falsy') {
-      try assert_throw { local try assert_true(False) }
+      try assert_throw { try assert_true(False) }
     }
   }
 
   t.group('std::test.assert_false') do (g) {
     g.test('Using a value that is truthy') {
-      try assert_throw { local try assert_false(True) }
+      try assert_throw { try assert_false(True) }
     }
 
     g.test('Using a value that is falsy') {
-      try assert_no_throw { local try assert_false(False) }
+      try assert_no_throw { try assert_false(False) }
     }
   }
 
   t.group('std::test.assert_panic') do (g) {
     g.test('Using code that panics') {
-      try assert_no_throw { local try assert_panic('10 / 0') }
+      try assert_no_throw { try assert_panic('10 / 0') }
     }
 
     g.test("Using code that doesn't panic") {
-      try assert_throw { local try assert_panic('10 / 10') }
+      try assert_throw { try assert_panic('10 / 10') }
     }
   }
 }

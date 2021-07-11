@@ -1,7 +1,7 @@
 import std::ansi
 import std::test::*
 
-def tests(t: Tests) {
+def tests(t: ref Tests) {
   t.group('std::ansi.wrap') do (g) {
     g.test('Wrapping a String in an ANSI escape sequence') {
       let wrapped = ansi.wrap(string: 'hello', code: '1')

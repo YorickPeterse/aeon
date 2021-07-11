@@ -1,10 +1,11 @@
 pub mod array;
-pub mod block;
 pub mod byte_array;
 pub mod external_functions;
 pub mod float;
+pub mod future;
 pub mod general;
 pub mod generator;
+pub mod integer;
 pub mod module;
 pub mod object;
 pub mod process;

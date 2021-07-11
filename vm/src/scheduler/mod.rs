@@ -8,4 +8,3 @@ pub mod process_worker;
 pub mod queue;
 pub mod timeout_worker;
 pub mod timeouts;
-pub mod worker;

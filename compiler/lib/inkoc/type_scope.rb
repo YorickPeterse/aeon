@@ -3,7 +3,7 @@
 module Inkoc
   class TypeScope
     attr_reader :self_type, :block_type, :module, :locals, :parent,
-                :remapped_local_types
+                :remapped_local_types, :variable_states, :moved_variables
 
     def initialize(
       self_type,
@@ -11,7 +11,8 @@ module Inkoc
       mod,
       locals: nil,
       parent: nil,
-      enclosing_method: parent&.enclosing_method
+      enclosing_method: parent&.enclosing_method,
+      variable_states: {}
     )
       @self_type = self_type
       @block_type = block_type
@@ -19,10 +20,60 @@ module Inkoc
       @locals = locals
       @parent = parent
       @enclosing_method = enclosing_method
+      @variable_states = variable_states
+      @moved_variables = {}
+    end
+
+    def each_moved_and_captured_variable
+      @moved_variables.each do |name, location|
+        yield name, location if @locals[name].nil?
+      end
     end
 
     def define_receiver_type
       block_type.self_type = self_type
+    end
+
+    def define_variable_state(name)
+      @variable_states[name] = VariableState.new
+    end
+
+    def define_local(name, type, mutable = false)
+      symbol = @locals.define(name, type, mutable)
+      define_variable_state(name)
+
+      symbol
+    end
+
+    def unmove_variable(name)
+      variable_state(name).unmove
+      @moved_variables.delete(name)
+    end
+
+    def variable_state(name)
+      source = self
+
+      while source
+        if (state = source.variable_states[name])
+          return state
+        end
+
+        source = source.parent
+      end
+
+      nil
+    end
+
+    def add_moved_variable(name, location)
+      @moved_variables[name] = location
+    end
+
+    def record_moved_variables
+      before = @moved_variables.keys
+      retval = yield
+      moved = @moved_variables.keys - before
+
+      [moved, retval]
     end
 
     def enclosing_method
@@ -31,20 +82,6 @@ module Inkoc
       elsif block_type.method?
         block_type
       end
-    end
-
-    def block_boundary
-      source = self
-
-      while source
-        if source.block_type.lambda? || source.block_type.method?
-          return source.block_type
-        end
-
-        source = source.parent
-      end
-
-      nil
     end
 
     def module_type
@@ -90,6 +127,18 @@ module Inkoc
     def lookup_method(name)
       self_type.lookup_method(name)
         .or_else { module_type.lookup_method(name) }
+    end
+
+    def inherit
+      TypeScope.new(
+        self_type,
+        block_type,
+        self.module,
+        locals: locals,
+        parent: parent,
+        enclosing_method: enclosing_method,
+        variable_states: variable_states.dup
+      )
     end
   end
 end

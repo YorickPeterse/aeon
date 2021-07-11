@@ -1,6 +1,6 @@
 # Configuration options for a compiler.
 import std::env
-import std::fs::path::(ToPath, Path)
+import std::fs::path::(IntoPath, Path)
 
 # The default path to the runtime source files.
 let DEFAULT_RUNTIME_PATH = '/usr/lib/inko/runtime'
@@ -22,15 +22,15 @@ class Config {
     Self { @source_directories = Array.new(default_source_directory) }
   }
 
-  def source_directories -> Array!(Path) {
+  def source_directories -> ref Array!(Path) {
     @source_directories
   }
 
-  def add_source_directory(path: ToPath) -> Path {
-    @source_directories.push(path.to_path)
+  def add_source_directory(path: IntoPath) {
+    @source_directories.push(path.into_path)
   }
 
   def default_source_directory -> Path {
-    Path.new(env.get('INKO_RUNTIME_PATH').get_or(DEFAULT_RUNTIME_PATH))
+    Path.new(try env.get('INKO_RUNTIME_PATH').get else DEFAULT_RUNTIME_PATH)
   }
 }

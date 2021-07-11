@@ -1,7 +1,7 @@
 import std::format::(DefaultFormatter, MAX_DEPTH, PLACEHOLDER)
 import std::test::*
 
-def tests(t: Tests) {
+def tests(t: ref Tests) {
   t.group('std::format::DefaultFormatter.push') do (g) {
     g.test('Pushing a String into the underlying buffer') {
       let fmt = DefaultFormatter.new
@@ -34,7 +34,7 @@ def tests(t: Tests) {
       let mut index = 0
 
       # Generate a chain of calls to "descend", at least MAX_DEPTH levels deep.
-      while({ index < MAX_DEPTH }) {
+      while index < MAX_DEPTH {
         block = {
           fmt.descend { block.call }
           Nil

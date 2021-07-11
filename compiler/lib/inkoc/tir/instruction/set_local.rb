@@ -16,7 +16,7 @@ module Inkoc
         end
 
         def register
-          value
+          nil
         end
 
         def visitor_method

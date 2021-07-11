@@ -6,7 +6,19 @@ module Inkoc
       include Type
       include TypeWithAttributes
 
-      def attributes(name)
+      def value_kind=(*)
+        nil
+      end
+
+      def mutable=(*)
+        false
+      end
+
+      def prototype
+        nil
+      end
+
+      def attributes(*)
         SymbolTable.new
       end
 
@@ -52,14 +64,6 @@ module Inkoc
 
       def cast_to?(*)
         true
-      end
-
-      def dereference?
-        true
-      end
-
-      def dereferenced_type
-        self
       end
     end
   end

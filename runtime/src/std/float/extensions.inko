@@ -5,7 +5,7 @@ import std::float::(
   INFINITY, INFINITY_LABEL, NEGATIVE_INFINITY, NEGATIVE_INFINITY_LABEL
 )
 
-extern def string_to_float(string: String) -> Float
+extern def string_to_float(string: ref String) -> Float
 
 impl Float {
   # Parses a `Float` from a `String`.
@@ -29,9 +29,9 @@ impl Float {
   # Parsing a `Float` with an exponent:
   #
   #     try! Float.parse('1.2e1') # => 12.0
-  static def parse(string: String) !! StandardError -> Float {
-    (string == INFINITY_LABEL).if_true { return INFINITY }
-    (string == NEGATIVE_INFINITY_LABEL).if_true { return NEGATIVE_INFINITY }
+  static def parse(string: ref String) !! StandardError -> Float {
+    if string == INFINITY_LABEL { return INFINITY }
+    if string == NEGATIVE_INFINITY_LABEL { return NEGATIVE_INFINITY }
 
     try {
       string_to_float(string)

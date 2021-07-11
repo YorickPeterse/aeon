@@ -8,7 +8,6 @@ module Inkoc
       def initialize(compiler, mod)
         @module = mod
         @state = compiler.state
-        @try_nesting = 0
         @block_nesting = []
       end
 
@@ -52,8 +51,8 @@ module Inkoc
       end
       alias on_define_variable_with_explicit_type on_define_variable
 
-      def on_define_argument(node, block_type)
-        process_node(node.default, block_type) if node.default
+      def on_destructure_array(node, block_type)
+        process_node(node.value, block_type)
       end
 
       def on_keyword_argument(node, block_type)
@@ -87,15 +86,15 @@ module Inkoc
         process_node(node.value, block_type) if node.value
       end
 
-      def on_send(node, block_type)
-        error_for_missing_try(node)
+      def on_send(node, block_type, try: false)
+        error_for_missing_try(node, try: try)
 
         process_node(node.receiver, block_type) if node.receiver
         process_nodes(node.arguments, block_type)
       end
 
-      def on_identifier(node, *)
-        error_for_missing_try(node)
+      def on_identifier(node, block_type, try: false)
+        error_for_missing_try(node, try: try)
       end
 
       def on_match(node, block_type)
@@ -125,18 +124,45 @@ module Inkoc
         process_node(node.guard, block_type) if node.guard
       end
 
-      def on_throw(node, block_type)
+      def on_if(node, block_type)
+        node.conditions.each do |cond|
+          process_node(cond.condition, block_type)
+          process_node(cond.body, block_type)
+        end
+
+        process_node(node.else_body, block_type) if node.else_body
+      end
+
+      def on_and(node, block_type)
+        process_node(node.left, block_type)
+        process_node(node.right, block_type)
+      end
+
+      def on_or(node, block_type)
+        process_node(node.left, block_type)
+        process_node(node.right, block_type)
+      end
+
+      def on_not(node, block_type)
+        process_node(node.expression, block_type)
+      end
+
+      def on_loop(node, block_type)
+        process_node(node.body, block_type)
+      end
+
+      def on_group(node, block_type)
+        process_nodes(node.expressions, block_type)
+        node
+      end
+
+      def on_throw(node, block_type, try: false)
         process_node(node.value, block_type)
 
         thrown = node.value.type
-        block = node.local ? @block_nesting.last : throw_block_scope
+        block = throw_block_scope
 
-        return if in_try?
-
-        if !node.local && !block.method? && !block.lambda?
-          diagnostics.invalid_method_throw_error(node.location)
-          return
-        end
+        return if try
 
         unless block
           diagnostics.throw_at_top_level_error(thrown, node.location)
@@ -152,21 +178,28 @@ module Inkoc
       end
 
       def on_try(node, block_type)
-        @try_nesting += 1
         loc = node.location
 
-        process_node(node.expression, block_type)
-
-        @try_nesting -= 1
+        case node.expression
+        when AST::Identifier
+          on_identifier(node.expression, block_type, try: true)
+        when AST::Send
+          on_send(node.expression, block_type, try: true)
+        when AST::Try
+          on_try(node.expression, block_type, try: true)
+        else
+          process_node(node.expression, block_type)
+        end
 
         process_node(node.else_body, block_type)
 
         return if node.explicit_block_for_else_body?
 
-        track_in = node.local ? @block_nesting.last : throw_block_scope
+        track_in = throw_block_scope
 
-        if track_in == @module.body.type
+        if track_in == @module.body.type || track_in.nil?
           diagnostics.throw_at_top_level_error(node.throw_type, loc)
+          return
         else
           error_for_undefined_throw(node.throw_type, track_in, loc)
         end
@@ -191,15 +224,6 @@ module Inkoc
         process_node(node.expression, block_type)
       end
 
-      def on_dereference(node, block_type)
-        process_node(node.expression, block_type)
-      end
-
-      def on_coalesce_option(node, block_type)
-        process_node(node.expression, block_type)
-        process_node(node.default, block_type)
-      end
-
       def on_new_instance(node, block_type)
         node.attributes.each do |attr|
           process_node(attr.value, block_type)
@@ -213,12 +237,13 @@ module Inkoc
         expected = block_type.throw_type
 
         return if block_type.thrown_types.any? || !expected
+        return if expected.never?
 
         diagnostics.missing_throw_error(expected, node.location)
       end
 
-      def error_for_missing_try(node)
-        return if in_try?
+      def error_for_missing_try(node, try: false)
+        return if try
         return unless (throw_type = node.throw_type)
         return if throw_type.never?
 
@@ -236,16 +261,8 @@ module Inkoc
         diagnostics.throw_without_throw_defined_error(throw_type, location)
       end
 
-      def in_try?
-        @try_nesting.positive?
-      end
-
       def throw_block_scope
-        @block_nesting.reverse_each do |block|
-          return block if block.method? || block.lambda?
-        end
-
-        nil
+        @block_nesting.last
       end
 
       def inspect

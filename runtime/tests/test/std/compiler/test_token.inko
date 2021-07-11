@@ -22,7 +22,7 @@ def null_token -> NullToken {
   NullToken.new(location)
 }
 
-def tests(t: Tests) {
+def tests(t: ref Tests) {
   t.group('std::compiler::token::Token.same_line?') do (g) {
     g.test('Checking if two tokens reside on the same line') {
       let token1 = regular_token
@@ -56,7 +56,7 @@ def tests(t: Tests) {
 
       try assert_equal(token.location.line_range, 1..2)
       try assert_equal(token.location.column, 4)
-      try assert_equal(token.location.file, 'test.inko'.to_path)
+      try assert_equal(token.location.file, 'test.inko'.into_path)
     }
   }
 
@@ -96,7 +96,7 @@ def tests(t: Tests) {
 
       try assert_equal(token.location.line_range, 1..2)
       try assert_equal(token.location.column, 4)
-      try assert_equal(token.location.file, 'test.inko'.to_path)
+      try assert_equal(token.location.file, 'test.inko'.into_path)
     }
   }
 
@@ -136,7 +136,7 @@ def tests(t: Tests) {
 
       try assert_equal(token.location.line_range, 1..2)
       try assert_equal(token.location.column, 4)
-      try assert_equal(token.location.file, 'test.inko'.to_path)
+      try assert_equal(token.location.file, 'test.inko'.into_path)
     }
   }
 
@@ -176,7 +176,7 @@ def tests(t: Tests) {
 
       try assert_equal(token.location.line_range, 1..2)
       try assert_equal(token.location.column, 4)
-      try assert_equal(token.location.file, 'test.inko'.to_path)
+      try assert_equal(token.location.file, 'test.inko'.into_path)
     }
   }
 

@@ -2,7 +2,7 @@
 import std::conversion::ToString
 import std::length::Length
 
-extern def string_concat_array(strings: Array!(String)) -> String
+extern def string_concat_array(strings: ref Array!(String)) -> String
 
 # A buffer for efficiently concatenating `String` objects together.
 #
@@ -89,7 +89,7 @@ class StringBuffer {
   #     let buffer = StringBuffer.new
   #
   #     buffer.push('hello') # => 'hello'
-  def push(string: String) -> String {
+  def push(string: String) {
     @strings.push(string)
   }
 }
@@ -115,7 +115,7 @@ impl ToString for StringBuffer {
 }
 
 impl Length for StringBuffer {
-  def length -> Integer {
+  def length -> Int {
     @strings.length
   }
 }

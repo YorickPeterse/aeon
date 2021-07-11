@@ -107,7 +107,7 @@ test looks like this:
 ```inko
 import std::test::*
 
-def tests(t: Tests) {
+def tests(t: ref Tests) {
   t.group('Fully qualified name of the method to test') do (g) {
     g.test('A description of the test') {
 

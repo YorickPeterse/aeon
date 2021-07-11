@@ -2,7 +2,7 @@ import std::env
 import std::fs::path::(Path, SEPARATOR)
 import std::mirror::ModuleMirror
 import std::process
-import std::time::SystemTime
+import std::time::DateTime
 
 # A `Path` pointing to the runtime directory.
 let RUNTIME_DIRECTORY = ModuleMirror
@@ -25,8 +25,8 @@ let INVALID_FILE = Path.new('does_not_exist.inko')
 # A `Path` to a non-existing directory.
 let INVALID_DIRECTORY = Path.new('does_not_exist')
 
-# A `SystemTime` used to indicate an invalid point in time.
-let INVALID_TIME = SystemTime.new
+# A `DateTime` used to indicate an invalid point in time.
+let INVALID_TIME = DateTime.new
 
 def temporary_file_path -> Path {
   let tmp = env.temporary_directory

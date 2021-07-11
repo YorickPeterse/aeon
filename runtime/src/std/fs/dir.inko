@@ -1,13 +1,14 @@
 # Types and methods for manipulating directories on a filesystem.
-import std::fs::path::(Path, ToPath)
+import std::fs::path::Path
 import std::io::Error
 import std::process::(blocking)
+import std::conversion::ToString
 
-extern def directory_create(path: String) !! Integer
-extern def directory_create_recursive(path: String) !! Integer
-extern def directory_remove(path: String) !! Integer
-extern def directory_remove_recursive(path: String) !! Integer
-extern def directory_list(path: String) !! Integer -> Array!(String)
+extern def directory_create(path: ref String) !! Int
+extern def directory_create_recursive(path: ref String) !! Int
+extern def directory_remove(path: ref String) !! Int
+extern def directory_remove_recursive(path: ref String) !! Int
+extern def directory_list(path: ref String) !! Int -> Array!(String)
 
 # Creates a new empty directory at the given path.
 #
@@ -16,13 +17,7 @@ extern def directory_list(path: String) !! Integer -> Array!(String)
 # This method may throw if any of the following conditions are met:
 #
 # 1. The user lacks the necessary permissions to create the directory.
-# 2. The directory already exists (unless `recursive` is set to `True`)
-#
-# # Creating directories recursively
-#
-# Setting the `recursive` argument to `True` will result in any missing
-# directories in the given path being created automatically. Existing
-# directories will be skipped in this case.
+# 2. The directory already exists.
 #
 # # Examples
 #
@@ -31,22 +26,35 @@ extern def directory_list(path: String) !! Integer -> Array!(String)
 #     import std::fs::dir
 #
 #     try! dir.create('/tmp/test')
+def create(path: ref ToString) !! Error {
+  let str = path.to_string
+
+  try blocking {
+    try directory_create(str) else (e) throw Error.new(e)
+  }
+}
+
+# Creates a new empty directory at the given path, while also creating any
+# intermediate directories.
 #
-# Creating a directory recursively:
+# # Errors
+#
+# This method may throw if any of the following conditions are met:
+#
+# 1. The user lacks the necessary permissions to create the directory.
+#
+# # Examples
+#
+# Creating a directory:
 #
 #     import std::fs::dir
 #
-#     try! dir.create(path: '/tmp/test/hello/world', recursive: True)
-def create(path: ToPath, recursive = False) !! Error {
-  let str = path.to_path.to_string
+#     try! dir.create_all('/tmp/foo/bar/test')
+def create_all(path: ref ToString) !! Error {
+  let str = path.to_string
 
-  blocking {
-    recursive.if(
-      true: {
-        try directory_create_recursive(str) else (e) throw Error.new(e)
-      },
-      false: { try directory_create(str) else (e) throw Error.new(e) },
-    )
+  try blocking {
+    try directory_create_recursive(str) else (e) throw Error.new(e)
   }
 }
 
@@ -57,7 +65,7 @@ def create(path: ToPath, recursive = False) !! Error {
 # This method may throw if any of the following conditions are met:
 #
 # 1. The user lacks the necessary permissions to remove the directory.
-# 2. The directory is not empty (unless `recursive` is set to `True`).
+# 2. The directory is not empty.
 # 3. The directory does not exist.
 #
 # # Examples
@@ -68,23 +76,36 @@ def create(path: ToPath, recursive = False) !! Error {
 #
 #     try! dir.create('/tmp/test')
 #     try! dir.remove('/tmp/test')
+def remove(path: ref ToString) !! Error {
+  let str = path.to_string
+
+  try blocking {
+    try directory_remove(str) else (e) throw Error.new(e)
+  }
+}
+
+# Removes the directory and its contents at the given path.
 #
-# Removing a directory and its contents:
+# # Errors
+#
+# This method may throw if any of the following conditions are met:
+#
+# 1. The user lacks the necessary permissions to remove the directory.
+# 2. The directory does not exist.
+#
+# # Examples
+#
+# Removing a directory:
 #
 #     import std::fs::dir
 #
-#     try! dir.create(path: '/tmp/foo/bar', recursive: True)
-#     try! dir.remove(path: '/tmp/foo', recursive: True)
-def remove(path: ToPath, recursive = False) !! Error {
-  let str = path.to_path.to_string
+#     try! dir.create_all(path: '/tmp/foo/bar')
+#     try! dir.remove_all(path: '/tmp/foo')
+def remove_all(path: ref ToString) !! Error {
+  let str = path.to_string
 
-  blocking {
-    recursive.if(
-      true: {
-        try directory_remove_recursive(str) else (e) throw Error.new(e)
-      },
-      false: { try directory_remove(str) else (e) throw Error.new(e) },
-    )
+  try blocking {
+    try directory_remove_recursive(str) else (e) throw Error.new(e)
   }
 }
 
@@ -107,10 +128,10 @@ def remove(path: ToPath, recursive = False) !! Error {
 #     let paths = try! dir.list('.')
 #
 #     paths[0].to_string # => 'README.md'
-def list(path: ToPath) !! Error -> Array!(Path) {
-  let paths = blocking {
-    try directory_list(path.to_path.to_string) else (e) throw Error.new(e)
+def list(path: ref ToString) !! Error -> Array!(Path) {
+  let paths = try blocking {
+    try directory_list(path.to_string) else (e) throw Error.new(e)
   }
 
-  paths.iter.map do (path) { Path.new(path) }.to_array
+  paths.into_iter.map do (path) { Path.new(path) }.to_array
 }

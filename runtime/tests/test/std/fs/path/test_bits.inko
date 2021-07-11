@@ -2,8 +2,8 @@ import std::fs::path::bits::(self, SEPARATOR, SEPARATOR_BYTE, ALT_SEPARATOR_BYTE
 import std::os
 import std::test::*
 
-def tests(t: Tests) {
-  os.windows?.if_true {
+def tests(t: ref Tests) {
+  if os.windows? {
     t.group('std::fs::path::bits.starts_with_windows_drive_name?') do (g) {
       g.test('Checking if a path starts with a Windows drive name') {
         try assert_true(bits.starts_with_windows_drive_name?('C:/'))
@@ -20,7 +20,7 @@ def tests(t: Tests) {
     g.test('Checking if a byte is a valid path separator') {
       try assert_true(bits.path_separator?(SEPARATOR_BYTE))
 
-      ALT_SEPARATOR_BYTE.negative?.if_false {
+      if not ALT_SEPARATOR_BYTE.negative? {
         try assert_true(bits.path_separator?(ALT_SEPARATOR_BYTE))
       }
     }
@@ -55,7 +55,7 @@ def tests(t: Tests) {
       try assert_equal(bits.bytes_before_last_separator(path), 1)
     }
 
-    os.windows?.if_true {
+    if os.windows? {
       g.test('Obtaining the number of bytes using a Windows drive name') {
         try assert_equal(bits.bytes_before_last_separator('C:/foo'), 3)
       }

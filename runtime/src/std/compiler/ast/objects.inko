@@ -254,7 +254,7 @@ class ImplementTrait {
   # Returns the node that defines the required method, if any.
   def method_node(name: String) -> ?DefineMethod {
     @body.children.iter.find_some do (node) {
-      match(let matched = node) {
+      match let matched = node {
         as DefineMethod when matched.name == name -> { Option.some(matched) }
         else -> { Option.none }
       }

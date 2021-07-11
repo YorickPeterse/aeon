@@ -45,7 +45,7 @@ module Inkoc
     end
 
     def on_any_type(node, _)
-      wrap_option_type(node, TypeSystem::Any.singleton)
+      wrap_option_type(node, TypeSystem::Any.new)
     end
 
     def on_self_type_with_late_binding(node, _)
@@ -53,7 +53,7 @@ module Inkoc
     end
 
     def on_self_type(node, scope)
-      self_type = scope.self_type
+      self_type = scope.self_type.as_owned
 
       # When "Self" translates to a generic type, e.g. Array!(T), we want to
       # return a type in the form of `Array!(T -> T)`, and not just `Array`.
@@ -108,6 +108,13 @@ module Inkoc
       )
     end
 
+    def on_reference_type(node, scope)
+      type = define_type_instance(node.type_node, scope)
+      type = TypeSystem::Reference.new(type)
+
+      wrap_option_type(node, type)
+    end
+
     def define_type(node, scope, *extra)
       type = process_node(node, scope, *extra)
 
@@ -157,10 +164,8 @@ module Inkoc
     end
 
     def scope_for_object_body(node)
-      self_type = node.type.new_instance_with_rigid_type_parameters
-
       TypeScope
-        .new(self_type, node.block_type, @module, locals: node.body.locals)
+        .new(node.type, node.block_type, @module, locals: node.body.locals)
     end
 
     def define_required_traits(node, trait, scope)
@@ -434,7 +439,7 @@ module Inkoc
     end
 
     def on_raw_array_set(node, _)
-      TypeSystem::Any.new
+      typedb.nil_type.new_instance
     end
 
     def on_raw_array_remove(node, _)
@@ -561,10 +566,6 @@ module Inkoc
       typedb.integer_type.new_instance
     end
 
-    def on_raw_if(node, _)
-      node.arguments.fetch(1).type.new_instance
-    end
-
     def on_raw_module_load(*)
       typedb.module_type.new_instance
     end
@@ -578,7 +579,44 @@ module Inkoc
     end
 
     def on_raw_generator_value(*)
-      new_object_type
+      TypeSystem::Any.new
+    end
+
+    def on_raw_get_null(*)
+      TypeSystem::Any.new
+    end
+
+    def on_raw_to_iterator(node, scope)
+      arg = node.arguments.fetch(0)
+
+      move_if_variable(arg, scope)
+
+      type = arg.type
+      iter_type =
+        @state.module(Config::ITER_MODULE)&.lookup_type(Config::ITER_TYPE)
+
+      if iter_type.nil?
+        diagnostics.for_unavailable(node.location)
+
+        return TypeSystem::Error.new
+      end
+
+      if type.type_instance_of?(iter_type) ||
+          type.implements_trait?(iter_type, @state)
+        return type
+      end
+
+      iter_msg = Config::ITER_MESSAGE
+      iter_method = type.lookup_method(iter_msg)
+
+      if iter_method.nil?
+        return diagnostics.undefined_method_error(type, iter_msg, node.location)
+      end
+
+      node.create_iterator = true
+      node.block_type = iter_method.type
+
+      iter_method.type.resolved_return_type(type)
     end
   end
 end

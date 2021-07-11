@@ -52,7 +52,7 @@ module Inkoc
         end
       end
 
-      def resolve_type_parameters(self_type, method_type)
+      def resolve_type_parameters(self_type, method_type = nil)
         rtype = resolve_self_type(self_type)
 
         if rtype.generic_type?
@@ -69,7 +69,7 @@ module Inkoc
             # "self".
             instance =
               if direct_instance&.type_parameter?
-                method_type.lookup_type_parameter_instance(direct_instance) ||
+                method_type&.lookup_type_parameter_instance(direct_instance) ||
                   self_type.lookup_type_parameter_instance(direct_instance)
               else
                 direct_instance.resolve_type_parameters(self_type, method_type)

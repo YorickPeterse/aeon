@@ -1,37 +1,34 @@
 //! VM functions for handling external functions.
-use crate::execution_context::ExecutionContext;
-use crate::object_pointer::ObjectPointer;
-use crate::object_value;
-use crate::process::RcProcess;
+use crate::external_functions::ExternalFunction;
+use crate::mem::allocator::Pointer;
+use crate::mem::generator::GeneratorPointer;
+use crate::mem::objects::String as InkoString;
+use crate::mem::process::ServerPointer;
 use crate::runtime_error::RuntimeError;
-use crate::vm::state::RcState;
+use crate::scheduler::process_worker::ProcessWorker;
+use crate::vm::state::State;
+use std::mem::transmute;
 
 #[inline(always)]
-pub fn external_function_call(
-    state: &RcState,
-    process: &RcProcess,
-    context: &ExecutionContext,
-    func_ptr: ObjectPointer,
+pub fn call(
+    state: &State,
+    worker: &mut ProcessWorker,
+    process: ServerPointer,
+    generator: GeneratorPointer,
+    func_ptr: Pointer,
     start_reg: u16,
     amount: u16,
-) -> Result<ObjectPointer, RuntimeError> {
-    let func = func_ptr.external_function_value()?;
-    let args = context.registers.slice(start_reg, amount);
+) -> Result<Pointer, RuntimeError> {
+    let func: ExternalFunction = unsafe { transmute(func_ptr.as_ptr()) };
+    let args = generator.context.get_registers(start_reg, amount);
 
-    func(state, process, args)
+    func(state, worker.allocator(), process, generator, args)
 }
 
 #[inline(always)]
-pub fn external_function_load(
-    state: &RcState,
-    name_ptr: ObjectPointer,
-) -> Result<ObjectPointer, String> {
-    let name = name_ptr.string_value()?;
+pub fn load(state: &State, name_ptr: Pointer) -> Result<Pointer, String> {
+    let name = unsafe { InkoString::read(&name_ptr) };
     let func = state.external_functions.get(name)?;
-    let obj = state.permanent_allocator.lock().allocate_with_prototype(
-        object_value::external_function(func),
-        state.block_prototype,
-    );
 
-    Ok(obj)
+    Ok(unsafe { Pointer::new(func as *mut u8) })
 }

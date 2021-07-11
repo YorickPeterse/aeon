@@ -1,26 +1,41 @@
 //! Functions for working with the file system.
+//!
+//! Files aren't allocated onto the Inko heap. Instead, we allocate them using
+//! Rust's allocator and convert them into an Inko pointer. Dropping a file
+//! involves turning that pointer back into a File, then dropping the Rust
+//! object.
+//!
+//! This approach means the VM doesn't need to know anything about what objects
+//! to use for certain files, how to store file paths, etc; instead we can keep
+//! all that in the standard library.
 use crate::date_time::DateTime;
 use crate::external_functions::read_into;
-use crate::file::File;
-use crate::object_pointer::ObjectPointer;
-use crate::object_value;
-use crate::process::RcProcess;
+use crate::mem::allocator::{BumpAllocator, Pointer};
+use crate::mem::generator::GeneratorPointer;
+use crate::mem::objects::{
+    Array, ByteArray, Float, Int, String as InkoString, UnsignedInt,
+};
+use crate::mem::process::ServerPointer;
 use crate::runtime_error::RuntimeError;
-use crate::vm::state::RcState;
-use num_traits::Signed;
-use num_traits::ToPrimitive;
-use std::fs;
+use crate::vm::state::State;
+use std::fs::{self, File, OpenOptions};
 use std::io::{Seek, SeekFrom, Write};
 
-/// Returns the path of a file.
+/// Drops a File.
 ///
-/// This function requires one argument: the file to get the path of.
-pub fn file_path(
-    _: &RcState,
-    _: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    Ok(*arguments[0].file_value()?.path())
+/// This function requires a single argument: the file to drop
+pub fn file_drop(
+    state: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    unsafe {
+        arguments[0].drop_boxed::<File>();
+    }
+
+    Ok(state.permanent_space.nil_singleton)
 }
 
 /// Seeks a file to an offset.
@@ -30,46 +45,41 @@ pub fn file_path(
 /// 1. The file to seek for.
 /// 2. The byte offset to seek to.
 pub fn file_seek(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let file_ptr = arguments[0];
-    let offset_ptr = arguments[1];
-    let file = file_ptr.file_value_mut()?;
-    let seek = if offset_ptr.is_bigint() {
-        let big_offset = offset_ptr.bigint_value()?;
-
-        if big_offset.is_negative() {
-            SeekFrom::End(big_offset.to_i64().unwrap_or(i64::MIN))
-        } else {
-            SeekFrom::Start(big_offset.to_u64().unwrap_or(u64::MAX))
-        }
+    state: &State,
+    alloc: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let file = unsafe { arguments[0].get_mut::<File>() };
+    let offset = unsafe { Int::read(arguments[1]) };
+    let seek = if offset < 0 {
+        SeekFrom::End(offset)
     } else {
-        let offset = offset_ptr.integer_value()?;
-
-        if offset < 0 {
-            SeekFrom::End(offset)
-        } else {
-            SeekFrom::Start(offset as u64)
-        }
+        SeekFrom::Start(offset as u64)
     };
 
-    let cursor = file.get_mut().seek(seek)?;
-
-    Ok(process.allocate_u64(cursor, state.integer_prototype))
+    Ok(UnsignedInt::alloc(
+        alloc,
+        state.permanent_space.int_class(),
+        file.seek(seek)?,
+    ))
 }
 
 /// Flushes a file.
 ///
 /// This function requires a single argument: the file to flush.
 pub fn file_flush(
-    state: &RcState,
-    _: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    arguments[0].file_value_mut()?.get_mut().flush()?;
-    Ok(state.nil_object)
+    state: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let file = unsafe { arguments[0].get_mut::<File>() };
+
+    file.flush()?;
+    Ok(state.permanent_space.nil_singleton)
 }
 
 /// Writes a String to a file.
@@ -79,15 +89,20 @@ pub fn file_flush(
 /// 1. The file to write to.
 /// 2. The input to write.
 pub fn file_write_string(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let file = arguments[0].file_value_mut()?;
-    let input = arguments[1].string_value()?.as_bytes();
-    let size = file.get_mut().write(&input)?;
+    state: &State,
+    alloc: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let file = unsafe { arguments[0].get_mut::<File>() };
+    let input = unsafe { InkoString::read(&arguments[1]).as_bytes() };
 
-    Ok(process.allocate_usize(size, state.integer_prototype))
+    Ok(UnsignedInt::alloc(
+        alloc,
+        state.permanent_space.int_class(),
+        file.write(&input)? as u64,
+    ))
 }
 
 /// Writes a ByteArray to a file.
@@ -97,15 +112,20 @@ pub fn file_write_string(
 /// 1. The file to write to.
 /// 2. The input to write.
 pub fn file_write_bytes(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let file = arguments[0].file_value_mut()?;
-    let input = arguments[1].byte_array_value()?;
-    let size = file.get_mut().write(&input)?;
+    state: &State,
+    alloc: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let file = unsafe { arguments[0].get_mut::<File>() };
+    let input = unsafe { arguments[1].get::<ByteArray>() };
 
-    Ok(process.allocate_usize(size, state.integer_prototype))
+    Ok(UnsignedInt::alloc(
+        alloc,
+        state.permanent_space.int_class(),
+        file.write(input.value())? as u64,
+    ))
 }
 
 /// Copies a file from one location to another.
@@ -115,15 +135,20 @@ pub fn file_write_bytes(
 /// 1. The path to the file to copy.
 /// 2. The path to copy the file to.
 pub fn file_copy(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let src = arguments[0].string_value()?;
-    let dst = arguments[1].string_value()?;
-    let bytes_copied = fs::copy(src, dst)?;
+    state: &State,
+    alloc: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let src = unsafe { InkoString::read(&arguments[0]) };
+    let dst = unsafe { InkoString::read(&arguments[1]) };
 
-    Ok(process.allocate_u64(bytes_copied, state.integer_prototype))
+    Ok(UnsignedInt::alloc(
+        alloc,
+        state.permanent_space.int_class(),
+        fs::copy(src, dst)?,
+    ))
 }
 
 /// Returns the size of a file in bytes.
@@ -131,43 +156,55 @@ pub fn file_copy(
 /// This function requires a single argument: the path of the file to return the
 /// size for.
 pub fn file_size(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let path = arguments[0].string_value()?;
-    let meta = fs::metadata(path)?;
+    state: &State,
+    alloc: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let path = unsafe { InkoString::read(&arguments[0]) };
 
-    Ok(process.allocate_u64(meta.len(), state.integer_prototype))
+    Ok(UnsignedInt::alloc(
+        alloc,
+        state.permanent_space.int_class(),
+        fs::metadata(path)?.len(),
+    ))
 }
 
 /// Removes a file.
 ///
 /// This function requires a single argument: the path to the file to remove.
 pub fn file_remove(
-    state: &RcState,
-    _: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    fs::remove_file(arguments[0].string_value()?)?;
-    Ok(state.nil_object)
+    state: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let path = unsafe { InkoString::read(&arguments[0]) };
+
+    fs::remove_file(path)?;
+    Ok(state.permanent_space.nil_singleton)
 }
 
 /// Returns the creation time of a path.
 ///
 /// This function requires one argument: the path to obtain the time for.
 pub fn path_created_at(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let path = arguments[0].string_value()?;
-    let time = fs::metadata(&path)?.created()?;
+    state: &State,
+    alloc: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let path = unsafe { InkoString::read(&arguments[0]) };
+    let time =
+        DateTime::from_system_time(fs::metadata(path)?.created()?).timestamp();
 
-    Ok(allocate_time(
-        state,
-        process,
-        DateTime::from_system_time(time),
+    Ok(Float::alloc(
+        alloc,
+        state.permanent_space.float_class(),
+        time,
     ))
 }
 
@@ -175,17 +212,20 @@ pub fn path_created_at(
 ///
 /// This function requires one argument: the path to obtain the time for.
 pub fn path_modified_at(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let path = arguments[0].string_value()?;
-    let time = fs::metadata(&path)?.modified()?;
+    state: &State,
+    alloc: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let path = unsafe { InkoString::read(&arguments[0]) };
+    let time =
+        DateTime::from_system_time(fs::metadata(path)?.modified()?).timestamp();
 
-    Ok(allocate_time(
-        state,
-        process,
-        DateTime::from_system_time(time),
+    Ok(Float::alloc(
+        alloc,
+        state.permanent_space.float_class(),
+        time,
     ))
 }
 
@@ -193,17 +233,20 @@ pub fn path_modified_at(
 ///
 /// This function requires one argument: the path to obtain the time for.
 pub fn path_accessed_at(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let path = arguments[0].string_value()?;
-    let time = fs::metadata(&path)?.accessed()?;
+    state: &State,
+    alloc: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let path = unsafe { InkoString::read(&arguments[0]) };
+    let time =
+        DateTime::from_system_time(fs::metadata(path)?.accessed()?).timestamp();
 
-    Ok(allocate_time(
-        state,
-        process,
-        DateTime::from_system_time(time),
+    Ok(Float::alloc(
+        alloc,
+        state.permanent_space.float_class(),
+        time,
     ))
 }
 
@@ -211,16 +254,18 @@ pub fn path_accessed_at(
 ///
 /// This function requires a single argument: the path to check.
 pub fn path_is_file(
-    state: &RcState,
-    _: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let path = arguments[0].string_value()?;
+    state: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let path = unsafe { InkoString::read(&arguments[0]) };
 
     if fs::metadata(path).map(|m| m.is_file()).unwrap_or(false) {
-        Ok(state.true_object)
+        Ok(state.permanent_space.true_singleton)
     } else {
-        Ok(state.false_object)
+        Ok(state.permanent_space.false_singleton)
     }
 }
 
@@ -228,16 +273,18 @@ pub fn path_is_file(
 ///
 /// This function requires a single argument: the path to check.
 pub fn path_is_directory(
-    state: &RcState,
-    _: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let path = arguments[0].string_value()?;
+    state: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let path = unsafe { InkoString::read(&arguments[0]) };
 
     if fs::metadata(path).map(|m| m.is_dir()).unwrap_or(false) {
-        Ok(state.true_object)
+        Ok(state.permanent_space.true_singleton)
     } else {
-        Ok(state.false_object)
+        Ok(state.permanent_space.false_singleton)
     }
 }
 
@@ -245,16 +292,18 @@ pub fn path_is_directory(
 ///
 /// This function requires a single argument: the path to check.
 pub fn path_exists(
-    state: &RcState,
-    _: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let path = arguments[0].string_value()?;
+    state: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let path = unsafe { InkoString::read(&arguments[0]) };
 
     if fs::metadata(path).is_ok() {
-        Ok(state.true_object)
+        Ok(state.permanent_space.true_singleton)
     } else {
-        Ok(state.false_object)
+        Ok(state.permanent_space.false_singleton)
     }
 }
 
@@ -262,70 +311,80 @@ pub fn path_exists(
 ///
 /// This function requires one argument: the path to the file to open.
 pub fn file_open_read_only(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let file = File::read_only(arguments[0])?;
-    let proto = state.read_only_file_prototype;
+    _: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let mut opts = OpenOptions::new();
 
-    Ok(process.allocate(object_value::file(file), proto))
+    opts.read(true);
+    Ok(open_file(opts, arguments[0]))
 }
 
 /// Opens a file in write-only mode.
 ///
 /// This function requires one argument: the path to the file to open.
 pub fn file_open_write_only(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let file = File::write_only(arguments[0])?;
-    let proto = state.write_only_file_prototype;
+    _: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let mut opts = OpenOptions::new();
 
-    Ok(process.allocate(object_value::file(file), proto))
+    opts.write(true).truncate(true).create(true);
+    Ok(open_file(opts, arguments[0]))
 }
 
 /// Opens a file in append-only mode.
 ///
 /// This function requires one argument: the path to the file to open.
 pub fn file_open_append_only(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let file = File::append_only(arguments[0])?;
-    let proto = state.write_only_file_prototype;
+    _: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let mut opts = OpenOptions::new();
 
-    Ok(process.allocate(object_value::file(file), proto))
+    opts.append(true).create(true);
+    Ok(open_file(opts, arguments[0]))
 }
 
 /// Opens a file for both reading and writing.
 ///
 /// This function requires one argument: the path to the file to open.
 pub fn file_open_read_write(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let file = File::read_write(arguments[0])?;
-    let proto = state.read_write_file_prototype;
+    _: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let mut opts = OpenOptions::new();
 
-    Ok(process.allocate(object_value::file(file), proto))
+    opts.read(true).write(true).create(true);
+    Ok(open_file(opts, arguments[0]))
 }
 
 /// Opens a file for both reading and appending.
 ///
 /// This function requires one argument: the path to the file to open.
 pub fn file_open_read_append(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let file = File::read_append(arguments[0])?;
-    let proto = state.read_write_file_prototype;
+    _: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let mut opts = OpenOptions::new();
 
-    Ok(process.allocate(object_value::file(file), proto))
+    opts.read(true).append(true).create(true);
+    Ok(open_file(opts, arguments[0]))
 }
 
 /// Reads bytes from a file into a ByteArray.
@@ -336,118 +395,127 @@ pub fn file_open_read_append(
 /// 2. A ByteArray to read into.
 /// 3. The number of bytes to read.
 pub fn file_read(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let file = arguments[0].file_value_mut()?;
-    let buff = arguments[1].byte_array_value_mut()?;
-    let size = arguments[2].u64_value().ok();
-    let stream = file.get_mut();
-    let result = read_into(stream, buff, size)?;
+    state: &State,
+    alloc: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let file = unsafe { arguments[0].get_mut::<File>() };
+    let buff = unsafe { arguments[1].get_mut::<ByteArray>() };
+    let size = unsafe { UnsignedInt::read(arguments[2]) };
 
-    Ok(process.allocate_usize(result, state.integer_prototype))
-}
-
-fn allocate_time(
-    state: &RcState,
-    process: &RcProcess,
-    time: DateTime,
-) -> ObjectPointer {
-    let offset = ObjectPointer::integer(time.utc_offset());
-    let seconds = process
-        .allocate(object_value::float(time.timestamp()), state.float_prototype);
-
-    process.allocate(
-        object_value::array(vec![seconds, offset]),
-        state.array_prototype,
-    )
+    Ok(UnsignedInt::alloc(
+        alloc,
+        state.permanent_space.int_class(),
+        read_into(file, buff.value_mut(), size)?,
+    ))
 }
 
 /// Creates a new directory.
 ///
 /// This function requires one argument: the path of the directory to create.
 pub fn directory_create(
-    state: &RcState,
-    _: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let path = arguments[0].string_value()?;
+    state: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let path = unsafe { InkoString::read(&arguments[0]) };
 
     fs::create_dir(path)?;
-    Ok(state.nil_object)
+    Ok(state.permanent_space.nil_singleton)
 }
 
 /// Creates a new directory and any missing parent directories.
 ///
 /// This function requires one argument: the path of the directory to create.
 pub fn directory_create_recursive(
-    state: &RcState,
-    _: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let path = arguments[0].string_value()?;
+    state: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let path = unsafe { InkoString::read(&arguments[0]) };
 
     fs::create_dir_all(path)?;
-    Ok(state.nil_object)
+    Ok(state.permanent_space.nil_singleton)
 }
 
 /// Removes a directory.
 ///
 /// This function requires one argument: the path of the directory to remove.
 pub fn directory_remove(
-    state: &RcState,
-    _: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let path = arguments[0].string_value()?;
+    state: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let path = unsafe { InkoString::read(&arguments[0]) };
 
     fs::remove_dir(path)?;
-    Ok(state.nil_object)
+    Ok(state.permanent_space.nil_singleton)
 }
 
 /// Removes a directory and all its contents.
 ///
 /// This function requires one argument: the path of the directory to remove.
 pub fn directory_remove_recursive(
-    state: &RcState,
-    _: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let path = arguments[0].string_value()?;
+    state: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let path = unsafe { InkoString::read(&arguments[0]) };
 
     fs::remove_dir_all(path)?;
-    Ok(state.nil_object)
+    Ok(state.permanent_space.nil_singleton)
 }
 
 /// Returns the contents of a directory.
 ///
 /// This function requires one argument: the path of the directory to list.
 pub fn directory_list(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let path = arguments[0].string_value()?;
+    state: &State,
+    alloc: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let path = unsafe { InkoString::read(&arguments[0]) };
     let mut paths = Vec::new();
 
     for entry in fs::read_dir(path)? {
         let entry = entry?;
         let path = entry.path().to_string_lossy().to_string();
-        let pointer = process
-            .allocate(object_value::string(path), state.string_prototype);
+        let pointer = InkoString::alloc(
+            alloc,
+            state.permanent_space.string_class(),
+            path,
+        );
 
         paths.push(pointer);
     }
 
-    let paths_ptr =
-        process.allocate(object_value::array(paths), state.array_prototype);
+    Ok(Array::alloc(
+        alloc,
+        state.permanent_space.array_class(),
+        paths,
+    ))
+}
 
-    Ok(paths_ptr)
+fn open_file(options: OpenOptions, path_ptr: Pointer) -> Pointer {
+    let path = unsafe { InkoString::read(&path_ptr) };
+
+    Pointer::boxed(options.open(path))
 }
 
 register!(
-    file_path,
+    file_drop,
     file_seek,
     file_flush,
     file_write_string,

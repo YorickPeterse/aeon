@@ -8,12 +8,14 @@ module Inkoc
       include Inspect
 
       attr_reader :name, :location
+      attr_accessor :variable_state
 
       # name - The name of the attribute.
       # location - The SourceLocation of the attribute.
       def initialize(name, location)
         @name = name
         @location = location
+        @variable_state = nil
       end
 
       def visitor_method

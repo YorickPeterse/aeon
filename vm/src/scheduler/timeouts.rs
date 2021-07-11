@@ -1,11 +1,12 @@
 //! Processes suspended with a timeout.
 use crate::arc_without_weak::ArcWithoutWeak;
-use crate::process::RcProcess;
+use crate::mem::process::{Server, ServerPointer};
 use std::cmp;
 use std::collections::BinaryHeap;
+use std::ops::Drop;
 use std::time::{Duration, Instant};
 
-/// A process that should be resumed after a certain point in time.
+/// An process that should be resumed after a certain point in time.
 pub struct Timeout {
     /// The time after which the timeout expires.
     resume_after: Instant,
@@ -35,25 +36,21 @@ impl Timeout {
 
 /// A Timeout and a Process to store in the timeout heap.
 ///
-/// Since the Timeout is also stored in a process we can't also store a Process
-/// in a Timeout, as this would result in cyclic references. To work around
-/// this, we store the two values in this separate TimeoutEntry structure.
+/// Since the Timeout is also stored in an process we can't also store an
+/// process in a Timeout, as this would result in cyclic references. To work
+/// around this, we store the two values in this separate TimeoutEntry
+/// structure.
 struct TimeoutEntry {
     timeout: ArcWithoutWeak<Timeout>,
-    process: RcProcess,
+    process: ServerPointer,
 }
 
 impl TimeoutEntry {
-    pub fn new(process: RcProcess, timeout: ArcWithoutWeak<Timeout>) -> Self {
-        TimeoutEntry { process, timeout }
-    }
-
-    fn is_valid(&self) -> bool {
-        self.process.is_suspended_with_timeout(&self.timeout)
-    }
-
-    fn acquire_rescheduling_rights(&self) -> bool {
-        self.process.acquire_rescheduling_rights().are_acquired()
+    pub fn new(
+        process: ServerPointer,
+        timeout: ArcWithoutWeak<Timeout>,
+    ) -> Self {
+        TimeoutEntry { timeout, process }
     }
 }
 
@@ -78,7 +75,7 @@ impl Ord for TimeoutEntry {
 impl PartialEq for TimeoutEntry {
     fn eq(&self, other: &Self) -> bool {
         self.timeout.resume_after == other.timeout.resume_after
-            && self.process == other.process
+            && self.process.identifier() == other.process.identifier()
     }
 }
 
@@ -101,7 +98,7 @@ pub struct Timeouts {
     timeouts: BinaryHeap<TimeoutEntry>,
 }
 
-#[cfg_attr(feature = "cargo-clippy", allow(len_without_is_empty))]
+#[cfg_attr(feature = "cargo-clippy", allow(clippy::len_without_is_empty))]
 impl Timeouts {
     pub fn new() -> Self {
         Timeouts {
@@ -111,7 +108,7 @@ impl Timeouts {
 
     pub fn insert(
         &mut self,
-        process: RcProcess,
+        process: ServerPointer,
         timeout: ArcWithoutWeak<Timeout>,
     ) {
         self.timeouts.push(TimeoutEntry::new(process, timeout));
@@ -127,7 +124,7 @@ impl Timeouts {
             .timeouts
             .drain()
             .filter(|entry| {
-                if entry.is_valid() {
+                if entry.process.state().has_same_timeout(&entry.timeout) {
                     true
                 } else {
                     removed += 1;
@@ -143,16 +140,19 @@ impl Timeouts {
 
     pub fn processes_to_reschedule(
         &mut self,
-    ) -> (Vec<RcProcess>, Option<Duration>) {
+    ) -> (Vec<ServerPointer>, Option<Duration>) {
         let mut reschedule = Vec::new();
         let mut time_until_expiration = None;
 
         while let Some(entry) = self.timeouts.pop() {
-            if !entry.is_valid() {
+            let mut state = entry.process.state();
+
+            if !state.has_same_timeout(&entry.timeout) {
                 continue;
             }
 
             if let Some(duration) = entry.timeout.remaining_time() {
+                drop(state);
                 self.timeouts.push(entry);
 
                 time_until_expiration = Some(duration);
@@ -162,12 +162,25 @@ impl Timeouts {
                 break;
             }
 
-            if entry.acquire_rescheduling_rights() {
+            if state.try_reschedule_after_timeout().are_acquired() {
+                drop(state);
                 reschedule.push(entry.process);
             }
         }
 
         (reschedule, time_until_expiration)
+    }
+}
+
+impl Drop for Timeouts {
+    fn drop(&mut self) {
+        for entry in &self.timeouts {
+            if entry.process.state().has_same_timeout(&entry.timeout) {
+                // We may encounter outdated timeouts. In this case the process
+                // may have been rescheduled and/or already dropped.
+                Server::drop(entry.process);
+            }
+        }
     }
 }
 
@@ -217,44 +230,19 @@ mod tests {
 
     mod timeout_entry {
         use super::*;
-        use crate::vm::test::setup;
+        use crate::test::setup;
         use std::cmp;
 
         #[test]
-        fn test_valid() {
-            let (_machine, _block, process) = setup();
-            let timeout = Timeout::with_rc(Duration::from_secs(1));
-            let entry = TimeoutEntry::new(process.clone(), timeout.clone());
-
-            assert_eq!(entry.is_valid(), false);
-
-            process.suspend_with_timeout(timeout);
-
-            assert!(entry.is_valid());
-        }
-
-        #[test]
-        fn test_acquire_rescheduling_rights() {
-            let (_machine, _block, process) = setup();
-            let timeout = Timeout::with_rc(Duration::from_secs(1));
-            let entry = TimeoutEntry::new(process.clone(), timeout.clone());
-
-            process.suspend_with_timeout(timeout);
-
-            assert_eq!(entry.acquire_rescheduling_rights(), true);
-            assert_eq!(entry.acquire_rescheduling_rights(), false);
-        }
-
-        #[test]
         fn test_partial_cmp() {
-            let (_machine, _block, process) = setup();
+            let (_alloc, _state, process) = setup();
             let entry1 = TimeoutEntry::new(
-                process.clone(),
+                *process,
                 Timeout::with_rc(Duration::from_secs(1)),
             );
 
             let entry2 = TimeoutEntry::new(
-                process.clone(),
+                *process,
                 Timeout::with_rc(Duration::from_secs(5)),
             );
 
@@ -268,14 +256,14 @@ mod tests {
 
         #[test]
         fn test_cmp() {
-            let (_machine, _block, process) = setup();
+            let (_alloc, _state, process) = setup();
             let entry1 = TimeoutEntry::new(
-                process.clone(),
+                *process,
                 Timeout::with_rc(Duration::from_secs(1)),
             );
 
             let entry2 = TimeoutEntry::new(
-                process.clone(),
+                *process,
                 Timeout::with_rc(Duration::from_secs(5)),
             );
 
@@ -285,14 +273,14 @@ mod tests {
 
         #[test]
         fn test_eq() {
-            let (_machine, _block, process) = setup();
+            let (_alloc, _state, process) = setup();
             let entry1 = TimeoutEntry::new(
-                process.clone(),
+                *process,
                 Timeout::with_rc(Duration::from_secs(1)),
             );
 
             let entry2 = TimeoutEntry::new(
-                process.clone(),
+                *process,
                 Timeout::with_rc(Duration::from_secs(5)),
             );
 
@@ -303,37 +291,38 @@ mod tests {
 
     mod timeouts {
         use super::*;
-        use crate::vm::test::setup;
+        use crate::test::setup;
 
         #[test]
         fn test_insert() {
-            let (_machine, _block, process) = setup();
+            let (_alloc, _state, process) = setup();
             let mut timeouts = Timeouts::new();
             let timeout = Timeout::with_rc(Duration::from_secs(10));
 
-            timeouts.insert(process, timeout);
+            timeouts.insert(*process, timeout);
 
             assert_eq!(timeouts.timeouts.len(), 1);
         }
 
         #[test]
         fn test_len() {
-            let (_machine, _block, process) = setup();
+            let (_alloc, _state, process) = setup();
             let mut timeouts = Timeouts::new();
             let timeout = Timeout::with_rc(Duration::from_secs(10));
 
-            timeouts.insert(process, timeout);
+            timeouts.insert(*process, timeout);
 
             assert_eq!(timeouts.len(), 1);
         }
 
         #[test]
         fn test_remove_invalid_entries_with_valid_entries() {
-            let (_machine, _block, process) = setup();
+            let (_alloc, _state, proc_wrapper) = setup();
+            let process = proc_wrapper.take_and_forget();
             let mut timeouts = Timeouts::new();
             let timeout = Timeout::with_rc(Duration::from_secs(10));
 
-            process.suspend_with_timeout(timeout.clone());
+            process.state().waiting_for_future(Some(timeout.clone()));
             timeouts.insert(process, timeout);
 
             assert_eq!(timeouts.remove_invalid_entries(), 0);
@@ -342,11 +331,11 @@ mod tests {
 
         #[test]
         fn test_remove_invalid_entries_with_invalid_entries() {
-            let (_machine, _block, process) = setup();
+            let (_alloc, _state, process) = setup();
             let mut timeouts = Timeouts::new();
             let timeout = Timeout::with_rc(Duration::from_secs(10));
 
-            timeouts.insert(process, timeout);
+            timeouts.insert(*process, timeout);
 
             assert_eq!(timeouts.remove_invalid_entries(), 1);
             assert_eq!(timeouts.len(), 0);
@@ -354,11 +343,11 @@ mod tests {
 
         #[test]
         fn test_processes_to_reschedule_with_invalid_entries() {
-            let (_machine, _block, process) = setup();
+            let (_alloc, _state, process) = setup();
             let mut timeouts = Timeouts::new();
             let timeout = Timeout::with_rc(Duration::from_secs(10));
 
-            timeouts.insert(process, timeout);
+            timeouts.insert(*process, timeout);
 
             let (reschedule, expiration) = timeouts.processes_to_reschedule();
 
@@ -368,12 +357,13 @@ mod tests {
 
         #[test]
         fn test_processes_to_reschedule_with_remaining_time() {
-            let (_machine, _block, process) = setup();
+            let (_alloc, _state, proc_wrapper) = setup();
+            let process = proc_wrapper.take_and_forget();
             let mut timeouts = Timeouts::new();
             let timeout = Timeout::with_rc(Duration::from_secs(10));
 
-            process.suspend_with_timeout(timeout.clone());
-            timeouts.insert(process.clone(), timeout);
+            process.state().waiting_for_future(Some(timeout.clone()));
+            timeouts.insert(process, timeout);
 
             let (reschedule, expiration) = timeouts.processes_to_reschedule();
 
@@ -384,16 +374,16 @@ mod tests {
 
         #[test]
         fn test_processes_to_reschedule_with_entries_to_reschedule() {
-            let (_machine, _block, process) = setup();
+            let (_alloc, _state, process) = setup();
             let mut timeouts = Timeouts::new();
             let timeout = Timeout::with_rc(Duration::from_secs(0));
 
-            process.suspend_with_timeout(timeout.clone());
-            timeouts.insert(process.clone(), timeout);
+            process.state().waiting_for_future(Some(timeout.clone()));
+            timeouts.insert(*process, timeout);
 
             let (reschedule, expiration) = timeouts.processes_to_reschedule();
 
-            assert!(reschedule == vec![process]);
+            assert_eq!(reschedule.len(), 1);
             assert!(expiration.is_none());
         }
     }

@@ -232,7 +232,7 @@ as follows:
 * `std::fs::file::ReadOnlyFile`
 * `std::fs::file::ReadWriteFile`
 * `std::fs::file::WriteOnlyFile`
-* `std::map::DefaultHasher`
+* `std::hash::Hasher`
 * `std::net::Socket`
 * `std::process::Process`
 * `std::unix::Socket`

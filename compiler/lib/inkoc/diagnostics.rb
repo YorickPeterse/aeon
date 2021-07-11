@@ -49,10 +49,6 @@ module Inkoc
       )
     end
 
-    def reassign_immutable_attribute_error(name, location)
-      error("Cannot reassign immutable attribute #{name.inspect}", location)
-    end
-
     def reassign_undefined_local_error(name, location)
       error(
         "Cannot reassign undefined local variable #{name.inspect}",
@@ -435,10 +431,12 @@ module Inkoc
       TypeSystem::Error.new
     end
 
-    def invalid_match_pattern(type, location)
+    def invalid_match_pattern(type, expected, location)
+      ename = expected.type_name
+
       error(
         "The type #{type.type_name.inspect} can't be used for pattern matching," \
-          " as it does not implement std::operators::Match",
+          " as it doesn't implement std::operators::#{ename}",
         location
       )
 
@@ -515,6 +513,78 @@ module Inkoc
 
     def external_function_import(name, location)
       error("The external function #{name.inspect} can't be imported", location)
+    end
+
+    def moved_variable(name, location)
+      lname = name.inspect
+
+      error(
+        "The variable #{lname} can't be used anymore as it has been moved",
+        location
+      )
+    end
+
+    def moving_method_unavailable(receiver, location)
+      rtype = receiver.type_name.inspect
+
+      error(
+        "This method requires its receiver to be an owned value, but it's a #{rtype}",
+        location
+      )
+    end
+
+    def moved_without_reassignment(name, location)
+      error(
+        "The variable #{name.inspect} is moved and must be assigned a new value",
+        location
+      )
+    end
+
+    def destructure_array(location)
+      error(
+        'Only values of type Array, ByteArray, Pair or Triple can be destructured here',
+        location
+      )
+    end
+
+    def invalid_condition_type(type, location)
+      tname = type.type_name.inspect
+
+      error("Values of type #{tname} can't be used in a condition", location)
+    end
+
+    def too_many_destructuring_variables(type, max, location)
+      tname = type.type_name.inspect
+
+      error(
+        "Values of type #{tname} can be destructured into at most #{max} variables",
+        location
+      )
+    end
+
+    def for_unavailable(location)
+      modname = Config::ITERATOR_MODULE
+
+      error(
+        "for loops aren't available as #{modname} hasn't been processed yet",
+        location
+      )
+    end
+
+    def next_outside_loop(location)
+      error('The `next` keyword is only available inside a loop', location)
+    end
+
+    def break_outside_loop(location)
+      error('The `break` keyword is only available inside a loop', location)
+    end
+
+    def for_unavailable(location)
+      error('for loops are not available here', location)
+    end
+
+    def integer_too_large(location)
+      error('This value is too large for a 64-bits signed integer', location)
     end
   end
 end

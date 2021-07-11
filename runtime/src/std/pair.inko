@@ -9,13 +9,13 @@ import std::operators::Equal
 # A pair of two values.
 class Pair!(A, B) {
   # The first value of this `Pair`.
-  @first: A
+  @0: A
 
   # The second value of this `Pair`.
-  @second: B
+  @1: B
 
   static def new(first: A, second: B) -> Self {
-    Self { @first = first, @second = second }
+    Self { @0 = first, @1 = second }
   }
 
   # Returns the first value of this `Pair`.
@@ -26,11 +26,11 @@ class Pair!(A, B) {
   #
   #     import std::pair::Pair
   #
-  #     let pair = Pair.new(first: 10, second: 'foo')
+  #     let pair = Pair.new(10, 'foo')
   #
-  #     pair.first # => 10
-  def first -> A {
-    @first
+  #     pair.0 # => 10
+  def 0 -> A {
+    @0
   }
 
   # Returns the second value of this `Pair`.
@@ -41,40 +41,40 @@ class Pair!(A, B) {
   #
   #     import std::pair::Pair
   #
-  #     let pair = Pair.new(first: 10, second: 'foo')
+  #     let pair = Pair.new(10, 'foo')
   #
-  #     pair.second # => 'foo'
-  def second -> B {
-    @second
+  #     pair.1 # => 'foo'
+  def 1 -> B {
+    @1
   }
 }
 
 impl Equal for Pair {
   def ==(other: Self) -> Boolean when A: Equal, B: Equal {
-    (@first == other.first).and { @second == other.second }
+    @0 == other.0 and @1 == other.1
   }
 }
 
 impl Hash for Pair {
-  def hash(hasher: Hasher) when A: Hash, B: Hash {
-    @first.hash(hasher)
-    @second.hash(hasher)
+  def hash(hasher: ref Hasher) when A: Hash, B: Hash {
+    @0.hash(hasher)
+    @1.hash(hasher)
   }
 }
 
 # A pair of three values.
 class Triple!(A, B, C) {
   # The first value of this `Pair`.
-  @first: A
+  @0: A
 
   # The second value of this `Pair`.
-  @second: B
+  @1: B
 
   # The third value of this `Pair`.
-  @third: C
+  @2: C
 
   static def new(first: A, second: B, third: C) -> Self {
-    Self { @first = first, @second = second, @third = third }
+    Self { @0 = first, @1 = second, @2 = third }
   }
 
   # Returns the first value of this `Triple`.
@@ -85,11 +85,11 @@ class Triple!(A, B, C) {
   #
   #     import std::pair::Triple
   #
-  #     let triple = Triple.new(first: 10, second: 'foo', third: 20)
+  #     let triple = Triple.new(10, 'foo', 20)
   #
-  #     triple.first # => 10
-  def first -> A {
-    @first
+  #     triple.0 # => 10
+  def 0 -> A {
+    @0
   }
 
   # Returns the second value of this `Triple`.
@@ -100,11 +100,11 @@ class Triple!(A, B, C) {
   #
   #     import std::pair::Triple
   #
-  #     let triple = Triple.new(first: 10, second: 'foo', third: 20)
+  #     let triple = Triple.new(10, 'foo', 20)
   #
-  #     triple.second # => 'foo'
-  def second -> B {
-    @second
+  #     triple.1 # => 'foo'
+  def 1 -> B {
+    @1
   }
 
   # Returns the third value of this `Triple`.
@@ -115,26 +115,24 @@ class Triple!(A, B, C) {
   #
   #     import std::pair::Triple
   #
-  #     let triple = Triple.new(first: 10, second: 'foo', third: 20)
+  #     let triple = Triple.new(10, 'foo', 20)
   #
-  #     triple.third # => 20
-  def third -> C {
-    @third
+  #     triple.2 # => 20
+  def 2 -> C {
+    @2
   }
 }
 
 impl Equal for Triple {
   def ==(other: Self) -> Boolean when A: Equal, B: Equal, C: Equal {
-    (@first == other.first)
-      .and { @second == other.second }
-      .and { @third == other.third }
+    @0 == other.0 and @1 == other.1 and @2 == other.2
   }
 }
 
 impl Hash for Triple {
-  def hash(hasher: Hasher) when A: Hash, B: Hash, C: Hash {
-    @first.hash(hasher)
-    @second.hash(hasher)
-    @third.hash(hasher)
+  def hash(hasher: ref Hasher) when A: Hash, B: Hash, C: Hash {
+    @0.hash(hasher)
+    @1.hash(hasher)
+    @2.hash(hasher)
   }
 }

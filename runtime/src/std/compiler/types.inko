@@ -66,16 +66,20 @@ let CALL_MESSAGE = 'call'
 # A type used when type-checking to look up types and assign type parameters.
 trait TypeCheckScope {
   # Returns the type of self/Self.
-  def self_type -> Type
+  def self_type -> ref Type
 
   # Looks up a type parameter's type.
-  def lookup_type_parameter_type(parameter: TypeParameterType) -> ?Type
+  def lookup_type_parameter_type(parameter: ref TypeParameterType) -> ?ref Type
 
   # Assigns a type parameter to the given type.
-  def assign_type_parameter(parameter: TypeParameterType, type: Type)
+  def assign_type_parameter(parameter: ref TypeParameterType, type: Type)
 
-  def assign_unassigned_type_parameter(parameter: TypeParameterType, type: Type) {
-    lookup_type_parameter_type(parameter).if_true { return }
+  def assign_unassigned_type_parameter(
+    parameter: ref TypeParameterType,
+    type: Type
+  ) {
+    if lookup_type_parameter_type(parameter) { return }
+
     assign_type_parameter(parameter: parameter, type: type)
   }
 }
@@ -83,22 +87,22 @@ trait TypeCheckScope {
 # A (lexical) scope to use for looking up types.
 class TypeScope {
   # The module that surrounds the scope.
-  @module: ModuleType
+  @module: ref ModuleType
 
   # The type of `self`.
-  @self_type: Type
+  @self_type: ref Type
 
   # The block (a method, closure, or lambda) that surrounds this scope, if any.
-  @block: ?BlockType
+  @block: ?ref BlockType
 
   # The parent type scope.
-  @parent: ?TypeScope
+  @parent: ?ref TypeScope
 
   static def new(
-    module: ModuleType,
-    self_type: Type = module,
-    block: ?BlockType = Option.none,
-    parent: ?TypeScope = Option.none
+    module: ref ModuleType,
+    self_type: ref Type,
+    block: ?ref BlockType,
+    parent: ?ref TypeScope
   ) -> Self {
     Self {
       @module = module,
@@ -108,39 +112,47 @@ class TypeScope {
     }
   }
 
-  def module -> ModuleType {
+  def module -> ref ModuleType {
     @module
   }
 
-  def self_type -> Type {
+  def self_type -> ref Type {
     @self_type
   }
 
-  def block -> ?BlockType {
+  def block -> ref ?ref BlockType {
     @block
   }
 
-  def parent -> ?TypeScope {
+  def parent -> ref ?ref TypeScope {
     @parent
   }
 
-  def each_enclosing_block(block: do (BlockType), source = self) {
-    source.block.let(block).else { return }
-    source.parent.if_false { return }
-    each_enclosing_block(block, source.parent.get)
+  def enclosing_blocks => ref BlockType {
+    let mut source = self
+
+    loop {
+      if not source.block { return }
+
+      yield source.block.get_ref
+
+      if not source.parent { return }
+
+      source = source.parent.get_ref
+    }
   }
 
-  def block_scope_boundary -> ?BlockType {
-    each_enclosing_block do (type) {
-      type.scope_boundary?.if_true { return Option.some(type) }
+  def block_scope_boundary -> ?ref BlockType {
+    for type in enclosing_blocks {
+      if type.scope_boundary? { return Option.some(type) }
     }
 
     Option.none
   }
 
-  def yield_boundary -> ?MethodType {
-    each_enclosing_block do (type) {
-      match(let matched = type) {
+  def yield_boundary -> ?ref MethodType {
+    for type in enclosing_blocks {
+      match let matched = type {
         as MethodType -> { return Option.some(matched) }
         as LambdaType -> { return Option.none }
         else -> {}
@@ -150,8 +162,9 @@ class TypeScope {
     Option.none
   }
 
-  def lookup_type(name: String) -> ?Symbol!(Type) {
+  def lookup_type(name: String) -> ?ref Symbol!(Type) {
     @block
+      .as_ref
       .then do (block) { block.lookup_type(name) }
       .else {
         block_scope_boundary.then do (method) { method.lookup_type(name) }
@@ -160,23 +173,23 @@ class TypeScope {
       .else { @module.lookup_type(name) }
   }
 
-  def lookup_type_as_value(name: String) -> ?Symbol!(Type) {
+  def lookup_type_as_value(name: String) -> ?ref Symbol!(Type) {
     @module.lookup_type(name)
   }
 
-  def lookup_method(name: String) -> ?Symbol!(MethodType) {
+  def lookup_method(name: String) -> ?ref Symbol!(MethodType) {
     let method = @self_type.lookup_method(name)
 
-    method.if(true: { method }, false: { @module.lookup_method(name) })
+    if method { method } else { @module.lookup_method(name) }
   }
 }
 
 impl TypeCheckScope for TypeScope {
-  def self_type -> Type {
+  def self_type -> ref Type {
     @self_type
   }
 
-  def lookup_type_parameter_type(parameter: TypeParameterType) -> ?Type {
+  def lookup_type_parameter_type(parameter: ref TypeParameterType) -> ?ref Type {
     # A TypeScope is used for a lexical scope, not when sending messages. Block
     # type parameters can only be assigned when sending messages, and only live
     # for the duration of the message.
@@ -186,7 +199,7 @@ impl TypeCheckScope for TypeScope {
     @self_type.lookup_type_parameter_type(parameter)
   }
 
-  def assign_type_parameter(parameter: TypeParameterType, type: Type) {
+  def assign_type_parameter(parameter: ref TypeParameterType, type: Type) {
     @self_type.assign_type_parameter(parameter: parameter, type: type)
   }
 }
@@ -207,7 +220,7 @@ impl TypeCheckScope for TypeScope {
 # This difference is necessary to ensure the body of the method doesn't produce
 # unsound behaviour. For example, the method doesn't know what the actual type
 # of `A` is at runtime. As such, it can't substitute it with other types (e.g.
-# the `Integer`) type. This means this is invalid:
+# the `Int`) type. This means this is invalid:
 #
 #     def push!(A)(values: Array!(A)) {
 #       values.push(10)
@@ -220,26 +233,26 @@ impl TypeCheckScope for TypeScope {
 # times just to produce the right types for the right contexts.
 class RigidTypeScope {
   # The type of `self`/`Self`.
-  @self_type: Type
+  @self_type: ref Type
 
   # Type parameters and their rigid type parameters.
   @type_parameter_types: TypeParameterTypes
 
-  static def new(self_type: Type) -> Self {
+  static def new(self_type: ref Type) -> Self {
     Self {
       @self_type = self_type,
       @type_parameter_types = TypeParameterTypes.new
     }
   }
 
-  static def from_type_scope(scope: TypeScope) -> Self {
+  static def from_type_scope(scope: ref TypeScope) -> Self {
     let types = TypeParameterTypes.new
 
     scope.each_enclosing_block do (block) {
       types.assign_rigid_type_parameters(block.type_parameters)
     }
 
-    match(let type = scope.self_type) {
+    match let type = scope.self_type {
       as TraitInstance -> {
         types.assign_rigid_type_parameters(type.instance_of.type_parameters)
       }
@@ -254,15 +267,15 @@ class RigidTypeScope {
 }
 
 impl TypeCheckScope for RigidTypeScope {
-  def self_type -> Type {
+  def self_type -> ref Type {
     @self_type
   }
 
-  def lookup_type_parameter_type(parameter: TypeParameterType) -> ?Type {
+  def lookup_type_parameter_type(parameter: ref TypeParameterType) -> ?ref Type {
     @type_parameter_types.get(parameter)
   }
 
-  def assign_type_parameter(parameter: TypeParameterType, type: Type) {
+  def assign_type_parameter(parameter: ref TypeParameterType, type: Type) {
     @type_parameter_types[parameter] = type
   }
 }
@@ -324,7 +337,7 @@ trait Type {
   }
 
   # Returns the number of type parameters defined on `self`.
-  def number_of_type_parameters -> Integer {
+  def number_of_type_parameters -> Int {
     0
   }
 
@@ -350,10 +363,9 @@ trait Type {
 
   # Returns `True` if the given type parameter is defined by the current type.
   def defines_type_parameter?(parameter: TypeParameterType) -> Boolean {
-    lookup_type_parameter(parameter.name)
-      .get_or_else { return False }
-      .type
-      .same_object?(parameter)
+    let param = try lookup_type_parameter(parameter.name) else return False
+
+    param.type.same_object?(parameter)
   }
 
   # Looks up the type a type parameter is assigned to.
@@ -365,7 +377,7 @@ trait Type {
   def assign_type_parameter(parameter: TypeParameterType, type: Type) {}
 
   # Returns a new instance of the current type.
-  def new_instance(type_arguments = Array.new) -> Self {
+  def new_instance(type_arguments: Array!(Type)) -> Self {
     self
   }
 
@@ -381,7 +393,7 @@ trait Type {
     scope: TypeCheckScope
   ) -> Boolean {
     types.iter.all? do (type) {
-      type_compatible?(with: type, builtins: builtins, scope: scope)
+      type_compatible?(type, builtins, scope)
     }
   }
 
@@ -397,22 +409,15 @@ trait Type {
     #
     # To prevent this from happening, if parameter P is not assigned or assigned
     # to itself, we just compare ourselves with the required traits.
-    let compatible = type.some?.and { type.same_object?(parameter).false? }.if(
-      true: {
-        type_compatible?(with: type.get, builtins: builtins, scope: scope)
-      },
-      false: {
-        type_compatible_with_all?(
-          types: parameter.required_traits,
-          builtins: builtins,
-          scope: scope
-        )
-      }
-    )
+    let compatible = if type.some? and type.same_object?(parameter).false? {
+      type_compatible?(type.get, builtins, scope)
+    } else {
+      type_compatible_with_all?(types: parameter.required_traits, builtins, scope)
+    }
 
-    compatible
-      .and { type.none? }
-      .if_true { scope.assign_type_parameter(parameter: parameter, type: self) }
+    if compatible and type.none? {
+      scope.assign_type_parameter(parameter: parameter, type: self)
+    }
 
     compatible
   }
@@ -434,13 +439,14 @@ class TypeParameterTypes {
 
   static def copied_from(type: Type) -> Self {
     let copy = new
-    let from = match(let matched = type) {
+    let from = match let matched = type {
       as TraitInstance -> { matched.type_parameter_types }
       as ClassInstance -> { matched.type_parameter_types }
       else -> { return copy }
     }
 
-    from.each do (param, type) { copy[param] = type }
+    for (param, type) in from { copy[param] = type }
+
     copy
   }
 
@@ -452,18 +458,16 @@ class TypeParameterTypes {
     table: SymbolTable!(TypeParameterType),
     arguments: Array!(Type)
   ) {
-    table
-      .iter
-      .zip(arguments.iter)
-      .each do (pair: Pair!(Symbol!(TypeParameterType), Type)) {
-        @map[pair.first.type] = pair.second
-      }
+    for (sym, type) in table.iter.zip(arguments.iter) {
+      @map[sym.type] = type
+    }
   }
 
   def substitute(scope: TypeCheckScope) -> Self {
     let types = TypeParameterTypes.new
 
-    @map.each do (param, type) { types[param] = type.substitute(scope) }
+    for (param, type) in @map { types[param] = type.substitute(scope) }
+
     types
   }
 
@@ -472,29 +476,21 @@ class TypeParameterTypes {
     builtins: Builtins,
     scope: TypeCheckScope
   ) -> Boolean {
-    (length == with.length).if_false { return False }
+    if length != with.length { return False }
 
-    @map.each do (key, value) {
-      with
-        .get(key)
-        .let do (theirs) {
-          value
-            .type_compatible?(with: theirs, builtins: builtins, scope: scope)
-            .if_false { return False }
-        }
-        .else { return False }
+    @map.iter.all? do (pair) {
+      let theirs = try with.get(pair.key).get else return False
+
+      pair.value.type_compatible?(theirs, builtins, scope)
     }
-
-    True
   }
 
-  def each(block: do (TypeParameterType, Type)) -> Self {
-    @map.each(block)
-    self
+  def iter -> Pair!(ref TypeParameterType, ref Type) {
+    @map.iter
   }
 
   def copy_into_type(type: Type) {
-    match(let matched = type) {
+    match let matched = type {
       as ClassInstance -> {
         copy_into_type_parameter_types(
           parameters: matched.instance_of.type_parameters,
@@ -518,14 +514,14 @@ class TypeParameterTypes {
     parameters: SymbolTable!(TypeParameterType),
     arguments: TypeParameterTypes
   ) {
-    @map.each do (param, type) {
+    for (param, type) in @map {
       # We only want to copy the parameter assignment if the target type owns
       # the parameter, and if the parameter isn't already assigned a value.
-      arguments.defines?(param).if_false {
-        parameters.get(param.name).let do (sym) {
-          sym.type.same_object?(param).if_true { arguments[param] = type }
-        }
-      }
+      if arguments.defines?(param) { next }
+
+      let sym = try parameters.get(param.name).get_ref else next
+
+      if sym.type.same_object?(param) { arguments[param] = type }
     }
   }
 
@@ -538,20 +534,20 @@ class TypeParameterTypes {
   }
 
   def assign_rigid_type_parameters(parameters: SymbolTable!(TypeParameterType)) {
-    parameters.symbols.each do (symbol) {
+    for symbol in parameters.symbols {
       self[symbol.type] = RigidTypeParameterType.new(symbol.type)
     }
   }
 }
 
 impl Length for TypeParameterTypes {
-  def length -> Integer {
+  def length -> Int {
     @map.length
   }
 }
 
-impl Index!(TypeParameterType, Type) for TypeParameterTypes {
-  def [](index: TypeParameterType) -> Type {
+impl Index!(TypeParameterType, ref Type) for TypeParameterTypes {
+  def [](index: ref TypeParameterType) -> ref Type {
     @map[index]
   }
 }
@@ -620,7 +616,7 @@ class Builtins {
       @nil_type = nil_type,
       @nil_singleton = ClassInstance.new(nil_type),
       @block_type = ClassType.builtin('Block'),
-      @integer_type = ClassType.builtin('Integer'),
+      @integer_type = ClassType.builtin('Int'),
       @float_type = ClassType.builtin('Float'),
       @string_type = ClassType.builtin('String'),
       @module_type = ClassType.builtin('Module'),
@@ -766,7 +762,7 @@ impl Type for NeverType {
     builtins: Builtins,
     scope: TypeCheckScope
   ) -> Boolean {
-    match(let type = with) {
+    match let type = with {
       as TypeParameterType -> {
         scope.assign_unassigned_type_parameter(parameter: type, type: self)
         True
@@ -793,7 +789,7 @@ impl Type for InferType {
     builtins: Builtins,
     scope: TypeCheckScope
   ) -> Boolean {
-    match(with) {
+    match with {
       as InferType -> { True }
       as ErrorType -> { True }
       else -> { False }
@@ -822,16 +818,10 @@ impl Type for AnyType {
     builtins: Builtins,
     scope: TypeCheckScope
   ) -> Boolean {
-    match(let matched = with) {
-      as SelfType -> {
-        type_compatible?(with: scope.self_type, builtins: builtins, scope: scope)
-      }
+    match let matched = with {
+      as SelfType -> { type_compatible?(scope.self_type, builtins, scope) }
       as TypeParameterType -> {
-        type_compatible_with_type_parameter?(
-          parameter: matched,
-          builtins: builtins,
-          scope: scope
-        )
+        type_compatible_with_type_parameter?(matched, builtins, scope)
       }
       as AnyType -> { True }
       as InferType -> { True }
@@ -874,7 +864,7 @@ impl Type for SelfType {
     builtins: Builtins,
     scope: TypeCheckScope
   ) -> Boolean {
-    match(with) {
+    match with {
       as AnyType -> { True }
       as ErrorType -> { True }
       else -> {
@@ -884,11 +874,9 @@ impl Type for SelfType {
         # this method will keep recursing into itself. To make it clear a
         # SelfType is not to be compared with another SelfType, we treat them as
         # being incompatible with each other.
-        self_type.self_type?.if_true { return False }
+        if self_type.self_type? { return False }
 
-        self_type
-          .new_instance
-          .type_compatible?(with: with, builtins: builtins, scope: scope)
+        self_type.new_instance.type_compatible?(with, builtins, scope)
       }
     }
   }
@@ -938,10 +926,7 @@ class TypeParameterType {
   # The traits required by this type parameter.
   @required_traits: Array!(TraitInstance)
 
-  static def new(
-    name: String,
-    required_traits: Array!(TraitInstance) = Array.new
-  ) -> Self {
+  static def new(name: String, required_traits: Array!(TraitInstance)) -> Self {
     Self { @name = name, @required_traits = required_traits }
   }
 
@@ -959,14 +944,13 @@ impl Hash for TypeParameterType {}
 
 impl Type for TypeParameterType {
   def type_name -> String {
-    @required_traits.empty?.if(
-      true: { @name },
-      false: {
-        let reqs = @required_traits.iter.map do (t) { t.type_name }.join(' + ')
+    if @required_traits.empty? {
+      @name
+    } else {
+      let reqs = @required_traits.iter.map do (t) { t.type_name }.join(' + ')
 
-        `{@name}: {reqs}`
-      }
-    )
+      `{@name}: {reqs}`
+    }
   }
 
   def lookup_method(name: String) -> ?Symbol!(MethodType) {
@@ -978,19 +962,14 @@ impl Type for TypeParameterType {
     builtins: Builtins,
     scope: TypeCheckScope
   ) -> Boolean {
-    match(let expected = with) {
+    match let expected = with {
       as TraitInstance -> {
         @required_traits.iter.any? do (required) {
-          required
-            .type_compatible?(with: expected, builtins: builtins, scope: scope)
+          required.type_compatible?(expected, builtins, scope)
         }
       }
       as TypeParameterType -> {
-        type_compatible_with_type_parameter?(
-          parameter: expected,
-          builtins: builtins,
-          scope: scope
-        )
+        type_compatible_with_type_parameter?(expected, builtins, scope)
       }
       as ErrorType -> { True }
       as AnyType -> { True }
@@ -999,9 +978,10 @@ impl Type for TypeParameterType {
   }
 
   def substitute(scope: TypeCheckScope) -> Type {
-    scope.lookup_type_parameter_type(self).let do (assigned) {
-      assigned.same_object?(self).if_false { return assigned.substitute(scope) }
-    }
+    let assigned =
+      try scope.lookup_type_parameter_type(self).get_ref else return self
+
+    if not assigned.same_object?(self) { return assigned.substitute(scope) }
 
     self
   }
@@ -1021,7 +1001,7 @@ impl Type for TypeParameterType {
 #       values.push(10)
 #     }
 #
-# Inside this method, `T` is a rigid type parameter. The `Integer` type can't be
+# Inside this method, `T` is a rigid type parameter. The `Int` type can't be
 # assigned to a rigid type parameter, and thus this code doesn't compile.
 # Without rigid type parameters, the above code could result in unsound
 # behaviour. For example:
@@ -1063,11 +1043,9 @@ impl Type for RigidTypeParameterType {
     builtins: Builtins,
     scope: TypeCheckScope
   ) -> Boolean {
-    match(let exp = with) {
+    match let exp = with {
       as RigidTypeParameterType -> { @type == exp.type }
-      else -> {
-        @type.type_compatible?(with: exp, builtins: builtins, scope: scope)
-      }
+      else -> { @type.type_compatible?(exp, builtins, scope) }
     }
   }
 
@@ -1098,7 +1076,7 @@ class TypeParameterBounds {
     parameter: TypeParameterType,
     requirements: Array!(TraitInstance)
   ) -> Boolean {
-    @mapping.get(parameter).if_true { return False }
+    if @mapping.get(parameter) { return False }
 
     @mapping[parameter] = requirements
 
@@ -1107,7 +1085,7 @@ class TypeParameterBounds {
   }
 
   def merge(other: TypeParameterBounds) -> Self {
-    other.parameters.each do (param) {
+    for param in other.parameters {
       define(parameter: param, requirements: other[param])
     }
 
@@ -1119,13 +1097,11 @@ class TypeParameterBounds {
     builtins: Builtins,
     scope: TypeCheckScope
   ) -> Boolean {
-    @mapping.each do (param, requirements) {
-      let compare = type_parameter_types.get(param).get_or(param)
+    for (param, requirements) in @mapping {
+      let compare = try type_parameter_types.get(param).get else param
 
-      requirements.each do (req) {
-        compare
-          .type_compatible?(with: req, builtins: builtins, scope: scope)
-          .if_false { return False }
+      for req in requirements {
+        if not compare.type_compatible?(req, builtins, scope) { return False }
       }
     }
 
@@ -1137,14 +1113,14 @@ class TypeParameterBounds {
   }
 }
 
-impl Index!(TypeParameterType, Array!(TraitInstance)) for TypeParameterBounds {
-  def [](index: TypeParameterType) -> Array!(TraitInstance) {
+impl Index!(TypeParameterType, ref Array!(TraitInstance)) for TypeParameterBounds {
+  def [](index: ref TypeParameterType) -> ref Array!(TraitInstance) {
     @mapping[index]
   }
 }
 
 impl Length for TypeParameterBounds {
-  def length -> Integer {
+  def length -> Int {
     @parameters.length
   }
 }
@@ -1160,7 +1136,7 @@ trait BlockType: Type {
   }
 
   # Returns the number of required arguments.
-  def required_arguments -> Integer {
+  def required_arguments -> Int {
     layout.required_arguments
   }
 
@@ -1173,7 +1149,7 @@ trait BlockType: Type {
   def define_required_argument(
     name: String,
     type: Type,
-    mutable = False
+    mutable: Boolean
   ) -> Symbol!(Type) {
     layout.define_required_argument(name: name, type: type, mutable: mutable)
   }
@@ -1182,7 +1158,7 @@ trait BlockType: Type {
   def define_rest_argument(
     name: String,
     type: Type,
-    mutable = False
+    mutable: Boolean
   ) -> Symbol!(Type) {
     layout.define_rest_argument(name: name, type: type, mutable: mutable)
   }
@@ -1238,9 +1214,7 @@ trait BlockType: Type {
     builtins: Builtins,
     scope: TypeCheckScope
   ) -> Boolean {
-    builtins
-      .block_type
-      .implements_trait?(type: type, builtins: builtins, scope: scope)
+    builtins.block_type.implements_trait?(type, builtins, scope)
   }
 
   # Returns `True` if `self` is compatible with the given `BlockType`.
@@ -1249,17 +1223,11 @@ trait BlockType: Type {
     builtins: Builtins,
     scope: TypeCheckScope
   ) -> Boolean {
-    type_parameters_compatible?(with: with, builtins: builtins, scope: scope)
-      .if_false { return False }
+    if not type_parameters_compatible?(with, builtins, scope) { return False }
+    if not arguments_compatible?(with, builtins, scope) { return False }
+    if not throw_type_compatible?(with, builtins, scope) { return False }
 
-    arguments_compatible?(with: with, builtins: builtins, scope: scope)
-      .if_false { return False }
-
-    throw_type_compatible?(with: with, builtins: builtins, scope: scope)
-      .if_false { return False }
-
-    return_type
-      .type_compatible?(with: with.return_type, builtins: builtins, scope: scope)
+    return_type.type_compatible?(with.return_type, builtins, scope)
   }
 
   def type_parameters_compatible?(
@@ -1269,15 +1237,14 @@ trait BlockType: Type {
   ) -> Boolean {
     let their_params = with.type_parameters
 
-    (type_parameters.length == their_params.length).if_false { return False }
+    type_parameters.length != their_params.length { return False }
 
-    type_parameters.symbols.each_with_index do (ours, index) {
+    for (index, ours) in type_parameters.symbols.iter.with_index {
       let theirs = their_params.symbols[index]
 
-      ours
-        .type
-        .type_compatible?(with: theirs.type, builtins: builtins, scope: scope)
-        .if_false { return False }
+      if not ours.type.type_compatible?(theirs.type, builtins, scope) {
+        return False
+      }
     }
 
     True
@@ -1290,18 +1257,16 @@ trait BlockType: Type {
   ) -> Boolean {
     let their_args = with.arguments
 
-    (arguments.length == their_args.length).if_false { return False }
+    if arguments.length != their_args.length { return False }
 
-    arguments.symbols.each_with_index do (ours, index) {
+    for (index, ours) in arguments.symbols.iter.with_index {
       let theirs = their_args.symbols[index]
 
-      (ours.name == theirs.name)
-        .and {
-          ours
-            .type
-            .type_compatible?(with: theirs.type, builtins: builtins, scope: scope)
-        }
-        .if_false { return False }
+      if ours.name != theirs.name { return False }
+
+      if not ours.type.type_compatible?(theirs.type, builtins, scope) {
+        return False
+      }
     }
 
     True
@@ -1315,19 +1280,13 @@ trait BlockType: Type {
     let ours = throw_type
     let theirs = with.throw_type
 
-    match {
-      # A block that doesn't throw can safely substitute a block that does
-      # throw.
-      ours.none? -> { True }
-      # A block that throws (= ours) can't safely substitute a block that
-      # doesn't.
-      theirs.none? -> { False }
-      else -> {
-        ours
-          .get
-          .type_compatible?(with: theirs.get, builtins: builtins, scope: scope)
-      }
-    }
+    # A block that doesn't throw can safely substitute a block that does throw.
+    if ours.none? { return True }
+
+    # A block that throws (= ours) can't safely substitute a block that doesn't.
+    if theirs.none? { return False }
+
+    ours.get.type_compatible?(theirs.get, builtins, scope)
   }
 
   # Signals that this block captures one or more local variables.
@@ -1398,7 +1357,7 @@ class BlockNameBuilder {
   }
 
   def format_type_list(table: SymbolTable!(Type), mark: String) -> Self {
-    table.empty?.if_true { return self }
+    if table.empty? { return self }
 
     push(mark)
     push(table.symbols.iter.map do (s) { s.type.type_name }.join(', '))
@@ -1416,11 +1375,10 @@ class BlockNameBuilder {
   }
 
   def format_throw_type(type: ?Type) -> Self {
-    type.let do (type) {
-      push(' !! ')
-      push(type.type_name)
-    }
+    let type_ref = try type.get_ref else return self
 
+    push(' !! ')
+    push(type_ref.type_name)
     self
   }
 
@@ -1431,14 +1389,14 @@ class BlockNameBuilder {
   }
 
   def format_bounds(bounds: TypeParameterBounds) -> Self {
-    bounds.empty?.if_true { return self }
+    if bounds.empty? { return self }
 
     push(' when ')
 
-    bounds.parameters.each_with_index do (param, index) {
+    for (index, param) in bounds.parameters.iter.with_index {
       let requirements = bounds[param]
 
-      index.positive?.if_true {
+      if index.positive? {
         push(', ')
       }
 
@@ -1470,7 +1428,7 @@ class BlockLayout {
   @arguments: SymbolTable!(Type)
 
   # The number of required arguments.
-  @required_arguments: Integer
+  @required_arguments: Int
 
   # A boolean indicating the last argument is a rest argument.
   @rest_argument: Boolean
@@ -1486,11 +1444,11 @@ class BlockLayout {
 
   static def new(
     return_type: Type,
-    throw_type: ?Type = Option.none,
-    type_parameters: SymbolTable!(TypeParameterType) = SymbolTable.new,
-    required_arguments = 0,
-    rest_argument = False,
-    throws = False
+    throw_type: ?Type,
+    type_parameters: SymbolTable!(TypeParameterType),
+    required_arguments: Int,
+    rest_argument: Boolean,
+    throws: Boolean
   ) -> Self {
     Self {
       @type_parameters = type_parameters,
@@ -1511,14 +1469,14 @@ class BlockLayout {
     @arguments
   }
 
-  def required_arguments -> Integer {
+  def required_arguments -> Int {
     @required_arguments
   }
 
   def define_required_argument(
     name: String,
     type: Type,
-    mutable = False
+    mutable: Boolean,
   ) -> Symbol!(Type) {
     @required_arguments += 1
     @arguments.define(name: name, type: type, mutable: mutable)
@@ -1527,7 +1485,7 @@ class BlockLayout {
   def define_rest_argument(
     name: String,
     type: Type,
-    mutable = False
+    mutable: Boolean,
   ) -> Symbol!(Type) {
     @rest_argument = True
     @arguments.define(name: name, type: type, mutable: mutable)
@@ -1576,7 +1534,7 @@ class BlockLayout {
       throws: @throws
     )
 
-    @arguments.symbols.each do (arg) {
+    for arg in @arguments.symbols {
       let new_type = arg.type.substitute(scope)
 
       new_layout
@@ -1615,8 +1573,8 @@ class MethodType {
   static def new(
     name: String,
     layout: BlockLayout,
-    static_method = False,
-    external = False
+    static_method: Boolean,
+    external: Boolean
   ) -> Self {
     Self {
       @layout = layout,
@@ -1661,23 +1619,21 @@ class MethodType {
     let ours = yield_type
     let theirs = with.yield_type
 
-    match {
-      ours.none? when theirs.none? -> { True }
-      ours.some? when theirs.some? -> {
-        ours
-          .get
-          .type_compatible?(with: theirs.get, builtins: builtins, scope: scope)
-      }
-      # A method that yields can't safely substitute one that doesn't, and
-      # vice versa.
-      else -> { False }
+    if ours.none? and theirs.none? { return True }
+
+    if ours.some? and theirs.some? {
+      return ours.get.type_compatible?(theirs.get, builtins, scope)
     }
+
+    # A method that yields can't safely substitute one that doesn't, and vice-
+    # versa.
+    False
   }
 }
 
 impl Type for MethodType {
   def type_name -> String {
-    let prefix = static_method?.if(true: { 'static def ' }, false: { 'def ' })
+    let prefix = if static_method? { 'static def ' } else { 'def ' }
     let builder = BlockNameBuilder
       .new(prefix)
       .push(@name)
@@ -1685,13 +1641,12 @@ impl Type for MethodType {
       .format_arguments(arguments)
       .format_throw_type(throw_type)
 
-    yield_type.if(
-      true: {
-        builder.push(' => ')
-        builder.push(yield_type.get.type_name)
-      },
-      false: { builder.format_return_type(return_type) }
-    )
+    if yield_type {
+      builder.push(' => ')
+      builder.push(yield_type.get.type_name)
+    } else {
+      builder.format_return_type(return_type)
+    }
 
     builder.format_bounds(@type_parameter_bounds).to_string
   }
@@ -1701,32 +1656,20 @@ impl Type for MethodType {
     builtins: Builtins,
     scope: TypeCheckScope
   ) -> Boolean {
-    match(let expected = with) {
+    match let expected = with {
       as MethodType -> {
-        (@name == expected.name)
-          .and {
-            block_compatible?(with: expected, builtins: builtins, scope: scope)
-          }
-          .and {
-            yield_type_compatible?(
-              with: expected,
-              builtins: builtins,
-              scope: scope
-            )
-          }
+        @name == expected.name
+          and block_compatible?(expected, builtins, scope)
+          and yield_type_compatible?(expected, builtins, scope)
       }
       as ClassInstance -> {
-        instance_of?(type: expected.instance_of, builtins: builtins)
+        instance_of?(expected.instance_of, builtins)
       }
       as TraitInstance -> {
-        implements_trait?(type: expected, builtins: builtins, scope: scope)
+        implements_trait?(expected, builtins, scope)
       }
       as TypeParameterType -> {
-        type_compatible_with_type_parameter?(
-          parameter: expected,
-          builtins: builtins,
-          scope: scope
-        )
+        type_compatible_with_type_parameter?(expected, builtins, scope)
       }
       as ErrorType -> { True }
       as AnyType -> { True }
@@ -1757,7 +1700,7 @@ impl BlockType for MethodType {
     builtins: Builtins,
     scope: TypeCheckScope
   ) -> Boolean {
-    let type_parameter_types = match(let matched = type) {
+    let type_parameter_types = match let matched = type {
       as TraitInstance -> { matched.type_parameter_types }
       as ClassInstance -> { matched.type_parameter_types }
       else -> { return True }
@@ -1765,8 +1708,8 @@ impl BlockType for MethodType {
 
     type_parameter_bounds.met_by?(
       type_parameter_types: type_parameter_types,
-      builtins: builtins,
-      scope: scope
+      builtins,
+      scope
     )
   }
 
@@ -1775,14 +1718,11 @@ impl BlockType for MethodType {
     builtins: Builtins,
     scope: TypeCheckScope
   ) -> Type {
-    yield_type.let do (type) {
-      let vtype = type.substitute(scope)
-      let etype = throw_type.get_or(NeverType.new)
+    let type = try yield_type.get_ref else return return_type.substitute(scope)
+    let vtype = type.substitute(scope)
+    let etype = try throw_type.get else NeverType.new
 
-      return builtins.generator_type.new_instance(Array.new(vtype, etype))
-    }
-
-    return_type.substitute(scope)
+    builtins.generator_type.new_instance(Array.new(vtype, etype))
   }
 
   def yields? -> Boolean {
@@ -1813,7 +1753,7 @@ class ClosureType {
   # A boolean that indicates if this closure captures one or more variables.
   @captures: Boolean
 
-  static def new(layout: BlockLayout, captures = False) -> Self {
+  static def new(layout: BlockLayout, captures: Boolean) -> Self {
     Self {
       @layout = layout,
       @type_parameter_types = TypeParameterTypes.new,
@@ -1842,26 +1782,24 @@ impl Type for ClosureType {
     builtins: Builtins,
     scope: TypeCheckScope
   ) -> Boolean {
-    match(let expected = with) {
+    match let expected = with {
       as ClosureType -> {
-        block_compatible?(with: expected, builtins: builtins, scope: scope)
+        block_compatible?(expected, builtins, scope)
       }
       as LambdaType -> {
-        captures?.false?.and {
-          block_compatible?(with: expected, builtins: builtins, scope: scope)
-        }
+        not captures? and block_compatible?(expected, builtins, scope)
       }
       as ClassInstance -> {
-        instance_of?(type: expected.instance_of, builtins: builtins)
+        instance_of?(expected.instance_of, builtins)
       }
       as TraitInstance -> {
-        implements_trait?(type: expected, builtins: builtins, scope: scope)
+        implements_trait?(expected, builtins, scope)
       }
       as TypeParameterType -> {
         type_compatible_with_type_parameter?(
-          parameter: expected,
-          builtins: builtins,
-          scope: scope
+          expected,
+          builtins,
+          scope
         )
       }
       as ErrorType -> { True }
@@ -1931,28 +1869,24 @@ impl Type for LambdaType {
     builtins: Builtins,
     scope: TypeCheckScope
   ) -> Boolean {
-    match(let expected = with) {
+    match let expected = with {
       as LambdaType -> {
-        block_compatible?(with: expected, builtins: builtins, scope: scope)
+        block_compatible?(expected, builtins, scope)
       }
       # Lambdas can safely substitute a closure, but not the other way around.
       # This is because when we expect a lambda, we may not be able to handle a
       # closure that captures any variables.
       as ClosureType -> {
-        block_compatible?(with: expected, builtins: builtins, scope: scope)
+        block_compatible?(expected, builtins, scope)
       }
       as ClassInstance -> {
-        instance_of?(type: expected.instance_of, builtins: builtins)
+        instance_of?(expected.instance_of, builtins)
       }
       as TraitInstance -> {
-        implements_trait?(type: expected, builtins: builtins, scope: scope)
+        implements_trait?(expected, builtins, scope)
       }
       as TypeParameterType -> {
-        type_compatible_with_type_parameter?(
-          parameter: expected,
-          builtins: builtins,
-          scope: scope
-        )
+        type_compatible_with_type_parameter?(expected, builtins, scope)
       }
       as ErrorType -> { True }
       as AnyType -> { True }
@@ -2005,8 +1939,8 @@ class TraitType {
 
   static def new(
     name: String,
-    required_traits: Array!(TraitInstance) = Array.new,
-    default_traits: Array!(TraitInstance) = Array.new
+    required_traits: Array!(TraitInstance),
+    default_traits: Array!(TraitInstance)
   ) -> Self {
     Self {
       @name = name,
@@ -2063,11 +1997,11 @@ impl Type for TraitType {
     @type_parameters.length.positive?
   }
 
-  def number_of_type_parameters -> Integer {
+  def number_of_type_parameters -> Int {
     @type_parameters.length
   }
 
-  def new_instance(type_arguments = Array.new) -> TraitInstance {
+  def new_instance(type_arguments: Array!(Type)) -> TraitInstance {
     let instance = TraitInstance.new(self)
 
     instance
@@ -2082,21 +2016,13 @@ impl Type for TraitType {
     builtins: Builtins,
     scope: TypeCheckScope
   ) -> Boolean {
-    match(let expected = with) {
+    match let expected = with {
       as TraitType -> { self.same_object?(expected) }
       as SelfType -> {
-        type_compatible?(
-          with: scope.self_type.new_instance,
-          builtins: builtins,
-          scope: scope
-        )
+        type_compatible?(scope.self_type.new_instance, builtins, scope)
       }
       as TypeParameterType -> {
-        type_compatible_with_type_parameter?(
-          parameter: expected,
-          builtins: builtins,
-          scope: scope
-        )
+        type_compatible_with_type_parameter?(expected, builtins, scope)
       }
       as ErrorType -> { True }
       as AnyType -> { True }
@@ -2133,24 +2059,17 @@ class TraitInstance {
     builtins: Builtins,
     scope: TypeCheckScope
   ) -> Boolean {
-    @instance_of.same_object?(with.instance_of).if_true {
-      return @type_parameter_types.type_compatible?(
-        with: with.type_parameter_types,
-        builtins: builtins,
-        scope: scope
-      )
+    if @instance_of.same_object?(with.instance_of) {
+      return @type_parameter_types
+        .type_compatible?(with.type_parameter_types, builtins, scope)
     }
 
-    @instance_of.required_traits.each do (instance) {
-      instance
-        .type_compatible?(with: with, builtins: builtins, scope: scope)
-        .if_true { return True }
+    for instance in @instance_of.required_traits {
+      if instance.type_compatible?(with, builtins, scope) { return True }
     }
 
-    @instance_of.default_traits.each do (instance) {
-      instance
-        .type_compatible?(with: with, builtins: builtins, scope: scope)
-        .if_true { return True }
+    for instance in @instance_of.default_traits {
+      if instance.type_compatible?(with, builtins, scope) { return True }
     }
 
     False
@@ -2166,7 +2085,7 @@ impl Type for TraitInstance {
     )
   }
 
-  def number_of_type_parameters -> Integer {
+  def number_of_type_parameters -> Int {
     @instance_of.type_parameters.length
   }
 
@@ -2198,27 +2117,15 @@ impl Type for TraitInstance {
     builtins: Builtins,
     scope: TypeCheckScope
   ) -> Boolean {
-    match(let expected = with) {
+    match let expected = with {
       as TraitInstance -> {
-        type_compatible_with_trait?(
-          with: expected,
-          builtins: builtins,
-          scope: scope
-        )
+        type_compatible_with_trait?(expected, builtins, scope)
       }
       as TypeParameterType -> {
-        type_compatible_with_type_parameter?(
-          parameter: expected,
-          builtins: builtins,
-          scope: scope
-        )
+        type_compatible_with_type_parameter?(expected, builtins, scope)
       }
       as SelfType -> {
-        type_compatible?(
-          with: scope.self_type.new_instance,
-          builtins: builtins,
-          scope: scope
-        )
+        type_compatible?(scope.self_type.new_instance, builtins, scope)
       }
       as ErrorType -> { True }
       as AnyType -> { True }
@@ -2369,20 +2276,19 @@ class ClassType {
   }
 
   def define_attribute(name: String, type: Type) -> Symbol!(AttributeType) {
-    let internal = initialise?.if(
-      true: {
-        let scope = RigidTypeScope.new(self)
+    let internal = if initialise? {
+      let scope = RigidTypeScope.new(self)
 
-        type_parameters.symbols.each do (sym) {
-          let param = sym.type
+      for sym in type_parameters.symbols {
+        let param = sym.type
 
-          scope.assign_type_parameter(param, RigidTypeParameterType.new(param))
-        }
+        scope.assign_type_parameter(param, RigidTypeParameterType.new(param))
+      }
 
-        type.substitute(scope)
-      },
-      false: { type }
-    )
+      type.substitute(scope)
+    } else {
+      type
+    }
 
     let attr = AttributeType.new(public_type: type, internal_type: internal)
 
@@ -2395,15 +2301,14 @@ class ClassType {
     scope: TypeCheckScope
   ) -> Boolean {
     let trait_impl =
-      implemented_traits.get(type.instance_of).get_or_else { return False }
+      try implemented_traits.get(type.instance_of).get else return False
 
     # ClassType types can never be generic (e.g. Array itself is not generic,
     # but instances of Array are), so we don't need to check any bounds.
-    trait_impl.type.type_parameter_types.type_compatible?(
-      with: type.type_parameter_types,
-      builtins: builtins,
-      scope: scope
-    )
+    trait_impl
+      .type
+      .type_parameter_types
+      .type_compatible?(type.type_parameter_types, builtins, scope)
   }
 
   def builtin? -> Boolean {
@@ -2432,11 +2337,11 @@ impl Type for ClassType {
     @type_parameters.length.positive?
   }
 
-  def number_of_type_parameters -> Integer {
+  def number_of_type_parameters -> Int {
     @type_parameters.length
   }
 
-  def new_instance(type_arguments = Array.new) -> ClassInstance {
+  def new_instance(type_arguments: Array!(Type)) -> ClassInstance {
     let instance = ClassInstance.new(self)
 
     instance
@@ -2451,21 +2356,13 @@ impl Type for ClassType {
     builtins: Builtins,
     scope: TypeCheckScope
   ) -> Boolean {
-    match(let expected = with) {
+    match let expected = with {
       as ClassType -> { self.same_object?(expected) }
       as SelfType -> {
-        type_compatible?(
-          with: scope.self_type.new_instance,
-          builtins: builtins,
-          scope: scope
-        )
+        type_compatible?(scope.self_type.new_instance, builtins, scope)
       }
       as TypeParameterType -> {
-        type_compatible_with_type_parameter?(
-          parameter: expected,
-          builtins: builtins,
-          scope: scope
-        )
+        type_compatible_with_type_parameter?(expected, builtins, scope)
       }
       as ErrorType -> { True }
       as AnyType -> { True }
@@ -2484,7 +2381,7 @@ class ClassInstance {
 
   static def new(
     instance_of: ClassType,
-    type_parameter_types = TypeParameterTypes.new
+    type_parameter_types: TypeParameterTypes,
   ) -> Self {
     Self {
       @instance_of = instance_of,
@@ -2510,7 +2407,7 @@ impl Type for ClassInstance {
     )
   }
 
-  def number_of_type_parameters -> Integer {
+  def number_of_type_parameters -> Int {
     @instance_of.type_parameters.length
   }
 
@@ -2547,25 +2444,20 @@ impl Type for ClassInstance {
     builtins: Builtins,
     scope: TypeCheckScope
   ) -> Boolean {
-    let trait_impl = @instance_of
-      .implemented_traits
-      .get(type.instance_of)
-      .get_or_else { return False }
+    let trait_impl = try {
+      @instance_of.implemented_traits.get(type.instance_of).get
+    } else {
+      return False
+    }
+
+    if not trait_impl.bounds.met_by?(@type_parameter_types, builtins, scope) {
+      return False
+    }
 
     trait_impl
-      .bounds
-      .met_by?(
-        type_parameter_types: @type_parameter_types,
-        builtins: builtins,
-        scope: scope
-      )
-      .if_false { return False }
-
-    trait_impl.type.type_parameter_types.type_compatible?(
-      with: type.type_parameter_types,
-      builtins: builtins,
-      scope: scope
-    )
+      .type
+      .type_parameter_types
+      .type_compatible?(type.type_parameter_types, builtins, scope)
   }
 
   def type_compatible?(
@@ -2573,34 +2465,19 @@ impl Type for ClassInstance {
     builtins: Builtins,
     scope: TypeCheckScope
   ) -> Boolean {
-    match(let expected = with) {
+    match let expected = with {
       as ClassInstance -> {
-        @instance_of
-          .same_object?(expected.instance_of)
-          .if_false { return False }
+        if not @instance_of.same_object?(expected.instance_of) { return False }
 
-        @type_parameter_types.type_compatible?(
-          with: expected.type_parameter_types,
-          builtins: builtins,
-          scope: scope
-        )
+        @type_parameter_types
+          .type_compatible?(expected.type_parameter_types, builtins, scope)
       }
-      as TraitInstance -> {
-        implements_trait?(type: expected, builtins: builtins, scope: scope)
-      }
+      as TraitInstance -> { implements_trait?(expected, builtins, scope) }
       as TypeParameterType -> {
-        type_compatible_with_type_parameter?(
-          parameter: expected,
-          builtins: builtins,
-          scope: scope
-        )
+        type_compatible_with_type_parameter?(expected, builtins, scope)
       }
       as SelfType -> {
-        type_compatible?(
-          with: scope.self_type.new_instance,
-          builtins: builtins,
-          scope: scope
-        )
+        type_compatible?(scope.self_type.new_instance, builtins, scope)
       }
       as ErrorType -> { True }
       as AnyType -> { True }
@@ -2609,7 +2486,7 @@ impl Type for ClassInstance {
   }
 
   def substitute(scope: TypeCheckScope) -> Self {
-    number_of_type_parameters.zero?.if_true { return self }
+    if number_of_type_parameters.zero? { return self }
 
     ClassInstance.new(
       instance_of: @instance_of,
@@ -2670,7 +2547,7 @@ class ModuleType {
     # External functions can't be imported from other modules, and calling them
     # doesn't depend on runtime lookups. As such, we only need/should define
     # them as a global.
-    type.external_function?.if_false { @methods.define(name: name, type: type) }
+    if not type.external_function? { @methods.define(name: name, type: type) }
 
     @globals.define(name: name, type: type)
   }
@@ -2688,10 +2565,7 @@ impl Type for ModuleType {
   def lookup_method(name: String) -> ?Symbol!(MethodType) {
     let sym = @globals.get(name)
 
-    sym
-      .some?
-      .and { sym.get.type.method? }
-      .if_true { return sym as ?Symbol!(MethodType) }
+    if sym.some? and sym.get.type.method?  { return sym as ?Symbol!(MethodType) }
 
     Option.none
   }
@@ -2701,28 +2575,20 @@ impl Type for ModuleType {
     builtins: Builtins,
     scope: TypeCheckScope
   ) -> Boolean {
-    match(let expected = with) {
+    match let expected = with {
       as ModuleType -> { expected.same_object?(self) }
       as ClassInstance -> {
         expected.object_instance_of?(builtins.module_type)
       }
       as TraitInstance -> {
         builtins.module_type
-          .implements_trait?(type: expected, builtins: builtins, scope: scope)
+          .implements_trait?(type: expected, builtins, scope)
       }
       as TypeParameterType -> {
-        type_compatible_with_type_parameter?(
-          parameter: expected,
-          builtins: builtins,
-          scope: scope
-        )
+        type_compatible_with_type_parameter?(expected, builtins, scope)
       }
       as SelfType -> {
-        type_compatible?(
-          with: scope.self_type.new_instance,
-          builtins: builtins,
-          scope: scope
-        )
+        type_compatible?(scope.self_type.new_instance, builtins, scope)
       }
       as ErrorType -> { True }
       as AnyType -> { True }
@@ -2735,19 +2601,19 @@ impl Type for ModuleType {
 def format_type_name(
   name: String,
   type_parameters: SymbolTable!(TypeParameterType),
-  type_parameter_types = TypeParameterTypes.new
+  type_parameter_types: TypeParameterTypes,
 ) -> String {
-  type_parameters.empty?.if_true { return name }
+  if type_parameters.empty? { return name }
 
   let buffer = StringBuffer.new(name, '!(')
 
-  type_parameters.symbols.each_with_index do (param, index) {
-    index.positive?.if_true { buffer.push(', ') }
+  for (index, param) in type_parameters.symbols.iter.with_index {
+    if index.positive? { buffer.push(', ') }
 
     let type = type_parameter_types.get(param.type)
 
     buffer.push(
-      type.if(true: { type.get.type_name }, false: { param.type.type_name })
+      if type { type.get.type_name } else { param.type.type_name }
     )
   }
 

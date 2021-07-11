@@ -5,8 +5,11 @@ import std::test::*
 def tests(t: Tests) {
   t.group('std::compiler::ast::objects::ImplementTrait.method_node') do (g) {
     g.test('Obtaining the node of a method') {
-      let parser =
-        Parser.new(input: 'impl A for B { def foo {} }', file: 'test.inko')
+      let parser = Parser.new(
+        input: 'impl A for B { def foo {} }',
+        file: 'test.inko',
+        parse_comments: False
+      )
 
       let ast = try! parser.parse
       let node = ast.children[0] as ImplementTrait

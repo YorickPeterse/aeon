@@ -1,7 +1,8 @@
 # The Float type.
 #
 # Floats are implemented as IEEE 754 floats.
-import std::conversion::(ToInteger, ToString, ToFloat)
+import std::clone::(Clone, Copy)
+import std::conversion::(ToInt, ToString, ToFloat)
 import std::hash::Hash
 import std::numeric::Numeric
 import std::operators::*
@@ -9,78 +10,87 @@ import std::operators::*
 let INFINITY_LABEL = 'Infinity'
 let NEGATIVE_INFINITY_LABEL = '-Infinity'
 
-extern def float_ceil(float: Float) -> Float
-extern def float_floor(float: Float) -> Float
-extern def float_round(float: Float, decimals: Integer) -> Float
-extern def float_to_bits(float: Float) -> Integer
-extern def float_to_integer(float: Float) -> Integer
-extern def float_to_string(float: Float) -> String
-extern def float_is_nan(float: Float) -> Boolean
-extern def float_is_infinite(float: Float) -> Boolean
+extern def float_ceil(float: ref Float) -> Float
+extern def float_floor(float: ref Float) -> Float
+extern def float_round(float: ref Float, decimals: Int) -> Float
+extern def float_to_bits(float: ref Float) -> Int
+extern def float_to_integer(float: ref Float) -> Int
+extern def float_to_string(float: ref Float) -> String
+extern def float_is_nan(float: ref Float) -> Boolean
+extern def float_is_infinite(float: ref Float) -> Boolean
+extern def float_clone(float: ref Float) -> Float
 
-impl Add!(Self) for Float {
-  def +(other: Self) -> Self {
+impl Clone for Float {
+  def clone -> Self {
+    float_clone(self)
+  }
+}
+
+impl Copy for Float {}
+
+impl Add!(Float) for Float {
+  def +(other: ref Float) -> Self {
     _INKOC.float_add(self, other)
   }
 }
 
 impl Divide for Float {
-  def /(other: Self) -> Self {
+  def /(other: ref Self) -> Self {
     _INKOC.float_div(self, other)
   }
 }
 
 impl Multiply for Float {
-  def *(other: Self) -> Self {
+  def *(other: ref Self) -> Self {
     _INKOC.float_mul(self, other)
   }
 }
 
-impl Subtract!(Self) for Float {
-  def -(other: Self) -> Self {
+impl Subtract!(Float) for Float {
+  def -(other: ref Float) -> Self {
     _INKOC.float_sub(self, other)
   }
 }
 
 impl Modulo for Float {
-  def %(other: Self) -> Self {
+  def %(other: ref Self) -> Self {
     _INKOC.float_mod(self, other)
   }
 }
 
 impl Smaller for Float {
-  def <(other: Self) -> Boolean {
+  def <(other: ref Self) -> Boolean {
     _INKOC.float_smaller(self, other)
   }
 }
 
 impl Greater for Float {
-  def >(other: Self) -> Boolean {
+  def >(other: ref Self) -> Boolean {
     _INKOC.float_greater(self, other)
   }
 }
 
 impl Equal for Float {
-  def ==(other: Self) -> Boolean {
+  def ==(other: ref Self) -> Boolean {
     _INKOC.float_equals(self, other)
   }
 }
 
 impl GreaterOrEqual for Float {
-  def >=(other: Self) -> Boolean {
+  def >=(other: ref Self) -> Boolean {
     _INKOC.float_greater_or_equal(self, other)
   }
 }
 
 impl SmallerOrEqual for Float {
-  def <=(other: Self) -> Boolean {
+  def <=(other: ref Self) -> Boolean {
     _INKOC.float_smaller_or_equal(self, other)
   }
 }
 
 impl Match!(Float) for Float {
   # Returns `True` if `self` and the given `Float` are equal to each other.
-  def =~(other: Float) -> Boolean {
+  def =~(other: ref Float) -> Boolean {
     _INKOC.float_equals(self, other)
   }
 }
@@ -99,15 +109,15 @@ impl Numeric for Float {
   }
 
   def absolute -> Self {
-    negative?.if_false { return self }
-    infinite?.if_true { return INFINITY }
+    if infinite? { return INFINITY }
+    if negative? { return self - (self * 2.0) }
 
-    self - (self * 2.0)
+    clone
   }
 
   def opposite -> Self {
-    positive?.if_true { return 0.0 - self }
-    infinite?.if_true { return INFINITY }
+    if positive? { return 0.0 - self }
+    if infinite? { return INFINITY }
 
     self - (self * 2.0)
   }
@@ -164,7 +174,7 @@ impl Float {
   #     10.0 / 0.0
   #       .finite? # => False
   def finite? -> Boolean {
-    not_a_number?.or { infinite? }.if(true: { False }, false: { True })
+    if not_a_number? or infinite? { False } else { True }
   }
 
   # Returns the largest number less than or equal to `self`.
@@ -226,7 +236,7 @@ impl Float {
   #     import std::float::NAN
   #
   #     NAN.round.not_a_number? # => True
-  def round(decimals = 0) -> Float {
+  def round(decimals: Int) -> Float {
     float_round(self, decimals)
   }
 
@@ -241,9 +251,9 @@ impl Float {
     absolute % 1.0
   }
 
-  # Returns the bitwise representation of `self`, as an `Integer`.
+  # Returns the bitwise representation of `self`, as an `Int`.
   #
-  # This does not _cast_ the `Float`, instead the returned `Integer` has all
+  # This does not _cast_ the `Float`, instead the returned `Int` has all
   # the bits set that make up `self`.
   #
   # # Examples
@@ -251,24 +261,24 @@ impl Float {
   # Converting a `Float` to its bitwise representation:
   #
   #     1.0.to_bits # => 4607182418800017408
-  def to_bits -> Integer {
+  def to_bits -> Int {
     float_to_bits(self)
   }
 }
 
-impl ToInteger for Float {
-  # Converts a `Float` to an `Integer`.
+impl ToInt for Float {
+  # Converts a `Float` to an `Int`.
   #
   # The `Float` will be rounded towards zero. Converting a `NAN`, `INFINITY`,
-  # or `NEGATIVE_INFINITY` to an `Integer` will result in a panic.
-  def to_integer -> Integer {
+  # or `NEGATIVE_INFINITY` to an `Int` will result in a panic.
+  def to_int -> Int {
     float_to_integer(self)
   }
 }
 
 impl ToFloat for Float {
   def to_float -> Float {
-    self
+    clone
   }
 }
 
@@ -297,13 +307,10 @@ impl ToString for Float {
   #
   #     INFINITY.to_string # => 'INFINITY'
   def to_string -> String {
-    infinite?.if_true {
-      positive?.if_true { return INFINITY_LABEL }
+    if infinite? and positive? { return INFINITY_LABEL }
+    if infinite? { return NEGATIVE_INFINITY_LABEL }
+    if not_a_number? { return 'NaN' }
 
-      return NEGATIVE_INFINITY_LABEL
-    }
-
-    not_a_number?.if_true { return 'NaN' }
     float_to_string(self)
   }
 }

@@ -7,9 +7,9 @@ import std::integer
 import std::float
 import std::nil
 import std::block
+import std::string
 import std::process
 import std::option
-import std::string
 import std::array
 import std::iterator
 import std::byte_array

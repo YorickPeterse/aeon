@@ -12,7 +12,7 @@ let MAX_DEPTH = 31
 # A Formatter can be used to format an object for debugging purposes.
 trait Formatter: ToString {
   # Pushes the given `String` into the underlying buffer.
-  def push(string: String) -> String
+  def push(string: String)
 
   # Descends into a child object, running the supplied block if the object
   # should be formatted.
@@ -29,8 +29,8 @@ class DefaultFormatter {
   # The buffer to use for the formatting output.
   @buffer: StringBuffer
 
-  # Integer keeping track of how many nested objects we are formatting.
-  @nesting: Integer
+  # Int keeping track of how many nested objects we are formatting.
+  @nesting: Int
 
   static def new -> Self {
     Self { @buffer = StringBuffer.new, @nesting = 0 }
@@ -46,7 +46,7 @@ impl ToString for DefaultFormatter {
 
 impl Formatter for DefaultFormatter {
   # Pushes a new `String` into the underlying buffer.
-  def push(string: String) -> String {
+  def push(string: String) {
     @buffer.push(string)
   }
 
@@ -56,7 +56,7 @@ impl Formatter for DefaultFormatter {
   # If nesting _is_ too great, a placeholder value is added to the buffer, and
   # the supplied block is not executed.
   def descend(block: do) {
-    (@nesting >= MAX_DEPTH).if_true {
+    if @nesting >= MAX_DEPTH {
       push(PLACEHOLDER)
       return
     }
@@ -73,9 +73,5 @@ impl Formatter for DefaultFormatter {
 # purposes.
 trait Format {
   # Formats `self` in a human-readable format for debugging purposes.
-  #
-  # The returned value is the formatter used to format the object. To obtain the
-  # formatting output as a `String`, simply send `to_string` to the returned
-  # `Formatter`.
-  def format!(F: Formatter)(formatter: F) -> F
+  def format(formatter: ref Formatter)
 }

@@ -1,9 +1,6 @@
 //! Scheduling and execution of lightweight Inko processes.
-use crate::process::RcProcess;
+use crate::mem::process::ServerPointer;
 use crate::scheduler::process_pool::ProcessPool;
-
-/// The ID of the queue that is processed by the main thread.
-const MAIN_THREAD_QUEUE_ID: usize = 0;
 
 /// A ProcessScheduler handles the execution of processes.
 ///
@@ -23,9 +20,13 @@ pub struct ProcessScheduler {
 impl ProcessScheduler {
     /// Creates a new ProcessScheduler with the given number of primary and
     /// blocking threads.
-    pub fn new(primary: usize, blocking: usize) -> Self {
+    pub fn new(primary: u16, blocking: u16) -> Self {
         ProcessScheduler {
-            primary_pool: ProcessPool::new("primary".to_string(), primary),
+            // The primary pool gets one extra thread, as the main thread is
+            // reserved for the main process. This makes interfacing with C
+            // easier, as the main process is guaranteed to always run on the
+            // same OS thread.
+            primary_pool: ProcessPool::new("primary".to_string(), primary + 1),
             blocking_pool: ProcessPool::new("blocking".to_string(), blocking),
         }
     }
@@ -37,7 +38,7 @@ impl ProcessScheduler {
     }
 
     /// Schedules a process in one of the pools.
-    pub fn schedule(&self, process: RcProcess) {
+    pub fn schedule(&self, process: ServerPointer) {
         let pool = if process.is_blocking() {
             &self.blocking_pool
         } else {
@@ -45,23 +46,17 @@ impl ProcessScheduler {
         };
 
         if let Some(thread_id) = process.thread_id() {
-            pool.schedule_onto_queue(thread_id as usize, process);
+            pool.schedule_onto_queue(thread_id, process);
         } else {
             pool.schedule(process);
         }
-    }
-
-    /// Schedules a process onto the main thread.
-    pub fn schedule_on_main_thread(&self, process: RcProcess) {
-        self.primary_pool
-            .schedule_onto_queue(MAIN_THREAD_QUEUE_ID, process);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vm::test::setup;
+    use crate::test::setup;
 
     #[test]
     fn test_terminate() {
@@ -76,48 +71,39 @@ mod tests {
     #[test]
     fn test_schedule_on_primary() {
         let scheduler = ProcessScheduler::new(1, 1);
-        let (_machine, _block, process) = setup();
+        let (_alloc, _state, process) = setup();
+        let proc = *process;
 
-        scheduler.schedule(process.clone());
+        scheduler.schedule(proc);
 
-        assert!(scheduler.primary_pool.state.pop_global() == Some(process));
+        assert!(scheduler.primary_pool.state.pop_global() == Some(proc));
         assert!(scheduler.blocking_pool.state.pop_global().is_none());
     }
 
     #[test]
     fn test_schedule_on_blocking() {
         let scheduler = ProcessScheduler::new(1, 1);
-        let (_machine, _block, process) = setup();
+        let (_alloc, _state, mut process) = setup();
+        let proc = *process;
 
-        process.set_blocking(true);
-        scheduler.schedule(process.clone());
+        process.set_blocking();
+        scheduler.schedule(proc);
 
         assert!(scheduler.primary_pool.state.pop_global().is_none());
-        assert!(scheduler.blocking_pool.state.pop_global() == Some(process));
+        assert!(scheduler.blocking_pool.state.pop_global() == Some(proc));
     }
 
     #[test]
     fn test_schedule_pinned() {
         let scheduler = ProcessScheduler::new(2, 2);
-        let (_machine, _block, process) = setup();
+        let (_alloc, _state, mut process) = setup();
+        let proc = *process;
 
-        process.set_thread_id(1);
-        scheduler.schedule(process.clone());
+        process.pin_to_thread(1);
+        scheduler.schedule(proc);
 
         assert!(scheduler.primary_pool.state.pop_global().is_none());
         assert!(scheduler.blocking_pool.state.pop_global().is_none());
         assert!(scheduler.primary_pool.state.queues[1].has_external_jobs());
-    }
-
-    #[test]
-    fn test_schedule_on_main_thread() {
-        let scheduler = ProcessScheduler::new(2, 2);
-        let (_machine, _block, process) = setup();
-
-        scheduler.schedule_on_main_thread(process.clone());
-
-        assert!(scheduler.primary_pool.state.pop_global().is_none());
-        assert!(scheduler.blocking_pool.state.pop_global().is_none());
-        assert!(scheduler.primary_pool.state.queues[0].has_external_jobs());
     }
 }

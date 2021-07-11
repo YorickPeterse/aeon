@@ -2,58 +2,12 @@
 //!
 //! This module provides types and methods for interfacing with C code, using
 //! libffi.
-//!
-//! # Examples
-//!
-//! Dynamically loading libraries can be performed using the `Library` struct.
-//! For example, to load libc on Linux you would write the following:
-//!
-//!     use ffi::Library;
-//!
-//!     let lib = Library.new("libc.so.6").unwrap();
-//!
-//! You can obtain symbols from the library using `Library::get`:
-//!
-//!     use ffi::Library;
-//!
-//!     let lib = Library.new("libc.so.6").unwrap();
-//!     lib sym = lib.get("errno").unwrap();
-//!
-//! `Library::get` returns a `Pointer` structure, which can be read from and
-//! written to using values of a particular type. For example, if we want to
-//! read the value into an `i32` we would write the following:
-//!
-//!     use vm::state::State;
-//!     use config::Config;
-//!     use ffi::{Library;
-//!     use process::Process;
-//!
-//!     let state = State::with_rc(Config::new());
-//!     let process = Process.new(...);
-//!
-//!     let lib = Library.new("libc.so.6").unwrap();
-//!     lib sym = lib.get("errno").unwrap();
-//!     let kind = ObjectPointer::integer(6); // TYPE_I32
-//!     let val = sym.read_as(&state, &process, kind).unwrap();
-//!
-//!     val.integer_value().unwrap() // => 0
-//!
-//! We can write to the pointer as follows:
-//!
-//!     let lib = Library.new("libc.so.6").unwrap();
-//!     lib sym = lib.get("errno").unwrap();
-//!     let kind = ObjectPointer::integer(6); // TYPE_I32
-//!     let val = ObjectPointer::integer(1);
-//!
-//!     // errno would be set to 1 after this call finishes.
-//!     sym.write_as(kind, val);
-//!
-use crate::arc_without_weak::ArcWithoutWeak;
-use crate::object_pointer::ObjectPointer;
-use crate::object_value::{self, ObjectValue};
-use crate::process::RcProcess;
+use crate::mem::allocator::{BumpAllocator, Pointer as InkoPointer};
+use crate::mem::objects::{
+    ByteArray, Class, Float, Int, String as InkoString, UnsignedInt,
+};
 use crate::runtime_error::RuntimeError;
-use crate::vm::state::RcState;
+use crate::vm::state::State;
 use libffi::low::{
     call as ffi_call, ffi_abi_FFI_DEFAULT_ABI as ABI, ffi_cif, ffi_type,
     prep_cif, types, CodePtr, Error as FFIError,
@@ -147,63 +101,57 @@ macro_rules! ffi_type_error {
 }
 
 /// The numeric identifier of the C `void` type.
-const TYPE_VOID: i64 = 0;
+const TYPE_VOID: u64 = 0;
 
 /// The numeric identifier of the C `void*` type.
-const TYPE_POINTER: i64 = 1;
+const TYPE_POINTER: u64 = 1;
 
 /// The numeric identifier of the C `double` type.
-const TYPE_DOUBLE: i64 = 2;
+const TYPE_DOUBLE: u64 = 2;
 
 /// The numeric identifier of the C `float` type.
-const TYPE_FLOAT: i64 = 3;
+const TYPE_FLOAT: u64 = 3;
 
 /// The numeric identifier of the C `signed char` type.
-const TYPE_I8: i64 = 4;
+const TYPE_I8: u64 = 4;
 
 /// The numeric identifier of the C `short` type.
-const TYPE_I16: i64 = 5;
+const TYPE_I16: u64 = 5;
 
 /// The numeric identifier of the C `int` type.
-const TYPE_I32: i64 = 6;
+const TYPE_I32: u64 = 6;
 
 /// The numeric identifier of the C `long` type.
-const TYPE_I64: i64 = 7;
+const TYPE_I64: u64 = 7;
 
 /// The numeric identifier of the C `unsigned char` type.
-const TYPE_U8: i64 = 8;
+const TYPE_U8: u64 = 8;
 
 /// The numeric identifier of the C `unsigned short` type.
-const TYPE_U16: i64 = 9;
+const TYPE_U16: u64 = 9;
 
 /// The numeric identifier of the C `unsigned int` type.
-const TYPE_U32: i64 = 10;
+const TYPE_U32: u64 = 10;
 
 /// The numeric identifier of the C `unsigned long` type.
-const TYPE_U64: i64 = 11;
+const TYPE_U64: u64 = 11;
 
 /// The numeric identifier for the C `const char*` type.
-const TYPE_STRING: i64 = 12;
+const TYPE_STRING: u64 = 12;
 
 /// The numeric identifier for a C `const char*` type that should be read into a
 /// byte array..
-const TYPE_BYTE_ARRAY: i64 = 13;
+const TYPE_BYTE_ARRAY: u64 = 13;
 
 /// The numeric identifier of the C `size_t` type.
-const TYPE_SIZE_T: i64 = 14;
+const TYPE_SIZE_T: u64 = 14;
 
 /// A C library, such as libc.
 ///
 /// This is currently a thin wrapper around libloading's Library structure,
 /// allowing us to decouple the rest of the VM code from libloading.
-///
-/// The library is reference counted, allowing it to be shared between
-/// processes. We reference count the inner data so that copies in different
-/// processes can each close their own copy, instead of closing the shared inner
-/// structure.
-#[derive(Clone)]
 pub struct Library {
-    inner: Option<ArcWithoutWeak<libloading::Library>>,
+    inner: libloading::Library,
 }
 
 /// A pointer to an FFI type.
@@ -214,6 +162,7 @@ pub type RawPointer = *mut c_void;
 
 /// A wrapper around a C pointer.
 #[derive(Clone, Copy)]
+#[repr(transparent)]
 pub struct Pointer {
     inner: RawPointer,
 }
@@ -235,13 +184,10 @@ pub struct Function {
     return_type: TypePointer,
 }
 
-/// A reference counted FFI function.
-pub type RcFunction = ArcWithoutWeak<Function>;
-
 /// Returns the size of a type ID.
 ///
 /// The size of the type is returned as a tagged integer.
-pub fn type_size(id: i64) -> Result<ObjectPointer, String> {
+pub fn type_size(id: u64) -> Result<InkoPointer, String> {
     let size = unsafe {
         match id {
             TYPE_VOID => types::void.size,
@@ -261,13 +207,13 @@ pub fn type_size(id: i64) -> Result<ObjectPointer, String> {
         }
     };
 
-    Ok(ObjectPointer::integer(size as i64))
+    Ok(InkoPointer::int(size as i64))
 }
 
 /// Returns the alignment of a type ID.
 ///
 /// The alignment of the type is returned as a tagged integer.
-pub fn type_alignment(id: i64) -> Result<ObjectPointer, String> {
+pub fn type_alignment(id: u64) -> Result<InkoPointer, String> {
     let size = unsafe {
         match id {
             TYPE_VOID => types::void.alignment,
@@ -289,7 +235,7 @@ pub fn type_alignment(id: i64) -> Result<ObjectPointer, String> {
         }
     };
 
-    Ok(ObjectPointer::integer(i64::from(size)))
+    Ok(InkoPointer::int(i64::from(size)))
 }
 
 /// A value of some sort to be passed to a C function.
@@ -312,56 +258,35 @@ impl Argument {
     // Creates a new Argument wrapping the value of `ptr` according to the needs
     // of the FFI type specified in `ffi_type`.
     unsafe fn wrap(
+        state: &State,
         ffi_type: *mut ffi_type,
-        ptr: ObjectPointer,
+        ptr: InkoPointer,
     ) -> Result<Argument, String> {
         let argument = match_ffi_type!(
             ffi_type,
             pointer => {
-                // Only a limited number of object values can be passed to C, as
-                // many can not be directly expressed in something any C code
-                // would understand.
-                if ptr.is_integer() {
-                    // Integers are handled differently since they can either be
-                    // heap allocated, or use tagged pointers.
-                    Argument::I64(ptr.integer_value().unwrap())
+                let class = Class::of(&state.permanent_space, ptr);
+                let value = if class == state.permanent_space.string_class() {
+                    ptr.get::<InkoString>().value().as_c_char_pointer() as RawPointer
+                } else if class == state.permanent_space.byte_array_class(){
+                    ptr.get::<ByteArray>().value().as_ptr() as RawPointer
                 } else {
-                    let obj = ptr.get();
+                    ptr.as_ptr() as RawPointer
+                };
 
-                    match obj.value {
-                        ObjectValue::Float(val) => Argument::F64(val),
-                        ObjectValue::String(ref string)
-                        | ObjectValue::InternedString(ref string) => {
-                            Argument::Pointer(
-                                string.as_c_char_pointer() as RawPointer
-                            )
-                        }
-                        ObjectValue::ByteArray(ref bytes) => {
-                            Argument::Pointer(bytes.as_ptr() as RawPointer)
-                        }
-                        ObjectValue::Pointer(ptr) => {
-                            Argument::Pointer(ptr.as_c_pointer())
-                        }
-                        _ => {
-                            return Err(format!(
-                                "objects of type {} can not be passed as a pointer",
-                                obj.value.name()
-                            ));
-                        }
-                    }
-                }
+                Argument::Pointer(value)
             }
             void => Argument::Void
-            float => Argument::F32(ptr.float_value()? as f32)
-            double => Argument::F64(ptr.float_value()?)
-            sint8 => Argument::I8(ptr.integer_value()? as i8)
-            sint16 => Argument::I16(ptr.integer_value()? as i16)
-            sint32 => Argument::I32(ptr.integer_value()? as i32)
-            sint64 => Argument::I64(ptr.integer_value()? as i64)
-            uint8 => Argument::U8(ptr.integer_value()? as u8)
-            uint16 => Argument::U16(ptr.integer_value()? as u16)
-            uint32 => Argument::U32(ptr.integer_value()? as u32)
-            uint64 => Argument::U64(ptr.integer_to_usize()? as u64)
+            float => Argument::F32(Float::read(ptr) as f32)
+            double => Argument::F64(Float::read(ptr))
+            sint8 => Argument::I8(Int::read(ptr) as i8)
+            sint16 => Argument::I16(Int::read(ptr) as i16)
+            sint32 => Argument::I32(Int::read(ptr) as i32)
+            sint64 => Argument::I64(Int::read(ptr) as i64)
+            uint8 => Argument::U8(Int::read(ptr) as u8)
+            uint16 => Argument::U16(Int::read(ptr) as u16)
+            uint32 => Argument::U32(Int::read(ptr) as u32)
+            uint64 => Argument::U64(Int::read(ptr) as u64)
         );
 
         Ok(argument)
@@ -392,8 +317,8 @@ impl Argument {
 }
 
 /// Returns an FFI type for an integer pointer.
-unsafe fn ffi_type_for(pointer: ObjectPointer) -> Result<TypePointer, String> {
-    let int = pointer.integer_value()?;
+unsafe fn ffi_type_for(pointer: InkoPointer) -> Result<TypePointer, String> {
+    let int = UnsignedInt::read(pointer);
     let typ = match int {
         TYPE_VOID => ffi_type!(void),
         TYPE_POINTER | TYPE_STRING | TYPE_BYTE_ARRAY => ffi_type!(pointer),
@@ -428,12 +353,12 @@ impl Library {
     /// Opens a library using one or more possible names, stored as pointers to
     /// heap allocated objects.
     pub fn from_pointers(
-        search_for: &[ObjectPointer],
+        search_for: &[InkoPointer],
     ) -> Result<Library, String> {
         let mut names = Vec::with_capacity(search_for.len());
 
         for name in search_for {
-            names.push(name.string_value()?.as_slice());
+            names.push(unsafe { InkoString::read(&*name) });
         }
 
         Self::open(&names)
@@ -446,9 +371,8 @@ impl Library {
         let mut errors = Vec::new();
 
         for name in search_for {
-            match libloading::Library::new(name).map(|raw| Library {
-                inner: Some(ArcWithoutWeak::new(raw)),
-            }) {
+            match libloading::Library::new(name).map(|inner| Library { inner })
+            {
                 Ok(library) => return Ok(library),
                 Err(err) => {
                     errors.push(format!("\n{}: {}", name, err));
@@ -471,31 +395,16 @@ impl Library {
     /// This method is unsafe because the pointer could be of any type, thus it
     /// is up to the caller to make sure the result is used appropriately.
     pub unsafe fn get(&self, name: &str) -> Result<Pointer, String> {
-        let inner = if let Some(ref inner) = self.inner {
-            inner
-        } else {
-            return Err("The library has been closed".to_string());
-        };
-
-        inner
+        self.inner
             .get(name.as_bytes())
             .map(|sym: libloading::Symbol<RawPointer>| Pointer::new(*sym))
             .map_err(|err| err.to_string())
-    }
-
-    pub fn close(&mut self) {
-        drop(self.inner.take());
     }
 }
 
 impl Pointer {
     pub fn new(inner: RawPointer) -> Self {
         Pointer { inner }
-    }
-
-    /// Creates a pointer from an address.
-    pub unsafe fn from_address(address: ObjectPointer) -> Result<Self, String> {
-        Ok(Self::new(address.usize_value()? as RawPointer))
     }
 
     /// Returns the address of this pointer.
@@ -507,51 +416,50 @@ impl Pointer {
     /// integer specified in `kind`.
     pub unsafe fn read_as(
         self,
-        state: &RcState,
-        process: &RcProcess,
-        kind: ObjectPointer,
-    ) -> Result<ObjectPointer, String> {
-        let int = kind.integer_value()?;
+        state: &State,
+        alloc: &mut BumpAllocator,
+        kind: InkoPointer,
+    ) -> Result<InkoPointer, String> {
+        let int = UnsignedInt::read(kind);
         let pointer = match int {
             TYPE_POINTER => {
-                let pointer = Pointer::new(self.read());
+                let ptr: RawPointer = self.read();
 
-                process.allocate(
-                    object_value::pointer(pointer),
-                    state.ffi_pointer_prototype,
-                )
+                InkoPointer::new(ptr as *mut u8)
             }
             TYPE_STRING => {
                 let string = self.read_cstr().to_string_lossy().into_owned();
 
-                process.allocate(
-                    object_value::string(string),
-                    state.string_prototype,
+                InkoString::alloc(
+                    alloc,
+                    state.permanent_space.string_class(),
+                    string,
                 )
             }
             TYPE_BYTE_ARRAY => {
                 let bytes = self.read_cstr().to_bytes().to_vec();
 
-                process.allocate(
-                    object_value::byte_array(bytes),
-                    state.byte_array_prototype,
+                ByteArray::alloc(
+                    alloc,
+                    state.permanent_space.byte_array_class(),
+                    bytes,
                 )
             }
-            TYPE_DOUBLE => self.read_float::<c_double>(state, process),
-            TYPE_FLOAT => self.read_float::<c_float>(state, process),
-            TYPE_I8 => self.read_signed_integer::<c_char>(state, process),
-            TYPE_I16 => self.read_signed_integer::<c_short>(state, process),
-            TYPE_I32 => self.read_signed_integer::<c_int>(state, process),
-            TYPE_I64 => self.read_signed_integer::<c_long>(state, process),
-            TYPE_U8 => self.read_unsigned_integer::<c_uchar>(state, process),
-            TYPE_U16 => self.read_unsigned_integer::<c_ushort>(state, process),
-            TYPE_U32 => self.read_unsigned_integer::<c_uint>(state, process),
-            TYPE_U64 => self.read_unsigned_integer::<c_ulong>(state, process),
+            TYPE_DOUBLE => self.read_float::<c_double>(state, alloc),
+            TYPE_FLOAT => self.read_float::<c_float>(state, alloc),
+            TYPE_I8 => self.read_signed_integer::<c_char>(state, alloc),
+            TYPE_I16 => self.read_signed_integer::<c_short>(state, alloc),
+            TYPE_I32 => self.read_signed_integer::<c_int>(state, alloc),
+            TYPE_I64 => self.read_signed_integer::<c_long>(state, alloc),
+            TYPE_U8 => self.read_unsigned_integer::<c_uchar>(state, alloc),
+            TYPE_U16 => self.read_unsigned_integer::<c_ushort>(state, alloc),
+            TYPE_U32 => self.read_unsigned_integer::<c_uint>(state, alloc),
+            TYPE_U64 => self.read_unsigned_integer::<c_ulong>(state, alloc),
             TYPE_SIZE_T => match mem::size_of::<usize>() {
-                64 => self.read_unsigned_integer::<c_ulong>(state, process),
-                32 => self.read_unsigned_integer::<c_uint>(state, process),
-                16 => self.read_unsigned_integer::<c_ushort>(state, process),
-                8 => self.read_unsigned_integer::<c_uchar>(state, process),
+                64 => self.read_unsigned_integer::<c_ulong>(state, alloc),
+                32 => self.read_unsigned_integer::<c_uint>(state, alloc),
+                16 => self.read_unsigned_integer::<c_ushort>(state, alloc),
+                8 => self.read_unsigned_integer::<c_uchar>(state, alloc),
                 _ => unreachable!(),
             },
             _ => ffi_type_error!(int),
@@ -563,14 +471,14 @@ impl Pointer {
     /// Writes a value to the underlying pointer.
     pub unsafe fn write_as(
         self,
-        kind: ObjectPointer,
-        value: ObjectPointer,
+        kind: InkoPointer,
+        value: InkoPointer,
     ) -> Result<(), String> {
-        let int = kind.integer_value()?;
+        let int = UnsignedInt::read(kind);
 
         match int {
             TYPE_STRING => {
-                let string = value.string_value()?;
+                let string = value.get::<InkoString>().value();
 
                 ptr::copy(
                     string.as_c_char_pointer(),
@@ -579,7 +487,7 @@ impl Pointer {
                 );
             }
             TYPE_BYTE_ARRAY => {
-                let byte_array = value.byte_array_value()?;
+                let byte_array = value.get::<ByteArray>().value();
 
                 ptr::copy(
                     byte_array.as_ptr(),
@@ -587,18 +495,18 @@ impl Pointer {
                     byte_array.len(),
                 );
             }
-            TYPE_POINTER => self.write(value.pointer_value()?.as_c_pointer()),
-            TYPE_DOUBLE => self.write(value.float_value()?),
-            TYPE_FLOAT => self.write(value.f32_value()?),
-            TYPE_I8 => self.write(value.i8_value()?),
-            TYPE_I16 => self.write(value.i16_value()?),
-            TYPE_I32 => self.write(value.i32_value()?),
-            TYPE_I64 => self.write(value.integer_value()?),
-            TYPE_U8 => self.write(value.u8_value()?),
-            TYPE_U16 => self.write(value.u16_value()?),
-            TYPE_U32 => self.write(value.u32_value()?),
-            TYPE_U64 => self.write(value.u64_value()?),
-            TYPE_SIZE_T => self.write(value.usize_value()?),
+            TYPE_POINTER => self.write(value.as_ptr() as RawPointer),
+            TYPE_DOUBLE => self.write(Float::read(value)),
+            TYPE_FLOAT => self.write(Float::read(value) as f32),
+            TYPE_I8 => self.write(Int::read(value) as i8),
+            TYPE_I16 => self.write(Int::read(value) as i16),
+            TYPE_I32 => self.write(Int::read(value) as i32),
+            TYPE_I64 => self.write(Int::read(value) as i64),
+            TYPE_U8 => self.write(Int::read(value) as u8),
+            TYPE_U16 => self.write(Int::read(value) as u16),
+            TYPE_U32 => self.write(Int::read(value) as u32),
+            TYPE_U64 => self.write(Int::read(value) as u64),
+            TYPE_SIZE_T => self.write(Int::read(value) as usize),
             _ => ffi_type_error!(int),
         };
 
@@ -615,9 +523,9 @@ impl Pointer {
         Pointer::new(inner)
     }
 
-    /// Returns the underlying C pointer.
-    fn as_c_pointer(self) -> RawPointer {
-        self.inner
+    /// Returns the underlying pointer.
+    pub fn as_ptr(self) -> *mut u8 {
+        self.inner as _
     }
 
     unsafe fn read<R>(self) -> R {
@@ -630,28 +538,37 @@ impl Pointer {
 
     unsafe fn read_signed_integer<T: Into<i64>>(
         self,
-        state: &RcState,
-        process: &RcProcess,
-    ) -> ObjectPointer {
-        process.allocate_i64(self.read::<T>().into(), state.integer_prototype)
+        state: &State,
+        alloc: &mut BumpAllocator,
+    ) -> InkoPointer {
+        Int::alloc(
+            alloc,
+            state.permanent_space.int_class(),
+            self.read::<T>().into(),
+        )
     }
 
     unsafe fn read_unsigned_integer<T: Into<u64>>(
         self,
-        state: &RcState,
-        process: &RcProcess,
-    ) -> ObjectPointer {
-        process.allocate_u64(self.read::<T>().into(), state.integer_prototype)
+        state: &State,
+        alloc: &mut BumpAllocator,
+    ) -> InkoPointer {
+        Int::alloc(
+            alloc,
+            state.permanent_space.int_class(),
+            self.read::<u64>() as i64,
+        )
     }
 
     unsafe fn read_float<T: Into<f64>>(
         self,
-        state: &RcState,
-        process: &RcProcess,
-    ) -> ObjectPointer {
-        process.allocate(
-            object_value::float(self.read::<T>().into()),
-            state.float_prototype,
+        state: &State,
+        alloc: &mut BumpAllocator,
+    ) -> InkoPointer {
+        Float::alloc(
+            alloc,
+            state.permanent_space.float_class(),
+            self.read::<T>().into(),
         )
     }
 
@@ -665,9 +582,9 @@ impl Function {
     pub unsafe fn attach(
         library: &Library,
         name: &str,
-        arguments: &[ObjectPointer],
-        return_type: ObjectPointer,
-    ) -> Result<RcFunction, RuntimeError> {
+        arguments: &[InkoPointer],
+        return_type: InkoPointer,
+    ) -> Result<Function, RuntimeError> {
         let func_ptr = library.get(name).map_err(RuntimeError::ErrorMessage)?;
         let ffi_rtype = ffi_type_for(return_type)?;
         let mut ffi_arg_types = Vec::with_capacity(arguments.len());
@@ -684,7 +601,7 @@ impl Function {
         pointer: Pointer,
         arguments: Vec<TypePointer>,
         return_type: TypePointer,
-    ) -> Result<RcFunction, String> {
+    ) -> Result<Function, String> {
         let mut func = Function {
             pointer,
             cif: Default::default(),
@@ -700,26 +617,25 @@ impl Function {
             func.arguments.as_mut_ptr(),
         );
 
-        result
-            .map(|_| ArcWithoutWeak::new(func))
-            .map_err(|err| match err {
-                FFIError::Typedef => {
-                    "The type representation is invalid or unsupported"
-                        .to_string()
-                }
-                FFIError::Abi => {
-                    "The ABI is invalid or unsupported".to_string()
-                }
-            })
+        match result {
+            Ok(_) => Ok(func),
+            Err(FFIError::Typedef) => {
+                Err("The type representation is invalid or unsupported"
+                    .to_string())
+            }
+            Err(FFIError::Abi) => {
+                Err("The ABI is invalid or unsupported".to_string())
+            }
+        }
     }
 
     /// Calls the function with the given arguments.
     pub unsafe fn call(
         &self,
-        state: &RcState,
-        process: &RcProcess,
-        arg_ptrs: &[ObjectPointer],
-    ) -> Result<ObjectPointer, String> {
+        state: &State,
+        alloc: &mut BumpAllocator,
+        arg_ptrs: &[InkoPointer],
+    ) -> Result<InkoPointer, String> {
         if arg_ptrs.len() != self.arguments.len() {
             return Err(format!(
                 "Invalid number of arguments, expected {} but got {}",
@@ -731,7 +647,7 @@ impl Function {
         let mut arguments = Vec::with_capacity(arg_ptrs.len());
 
         for (index, arg) in arg_ptrs.iter().enumerate() {
-            arguments.push(Argument::wrap(self.arguments[index], *arg)?);
+            arguments.push(Argument::wrap(state, self.arguments[index], *arg)?);
         }
 
         // libffi expects an array of _pointers_ to the arguments to pass,
@@ -756,34 +672,39 @@ impl Function {
         let pointer = match_ffi_type!(
             self.return_type,
             pointer => {
-                let result: RawPointer = ffi_call(cif_ptr, fun_ptr, args_ptr);
-
-                process.allocate(
-                    object_value::pointer(Pointer::new(result)),
-                    state.ffi_pointer_prototype
-                )
+                InkoPointer::new(ffi_call(cif_ptr, fun_ptr, args_ptr))
             }
             void => {
                 ffi_call::<c_void>(cif_ptr, fun_ptr, args_ptr);
 
-                state.nil_object
+                state.permanent_space.nil_singleton
             }
             double | float => {
                 let result: c_double = ffi_call(cif_ptr, fun_ptr, args_ptr);
 
-                process.allocate(
-                    object_value::float(result as f64), state.float_prototype
+                Float::alloc(
+                    alloc,
+                    state.permanent_space.float_class(),
+                    result as f64
                 )
             }
             sint8 | sint16 | sint32 | sint64 => {
                 let result: c_long = ffi_call(cif_ptr, fun_ptr, args_ptr);
 
-                process.allocate_i64(result as i64, state.integer_prototype)
+                Int::alloc(
+                    alloc,
+                    state.permanent_space.int_class(),
+                    result as i64
+                )
             }
             uint8 | uint16 | uint32 | uint64 => {
                 let result: c_ulong = ffi_call(cif_ptr, fun_ptr, args_ptr);
 
-                process.allocate_u64(result as u64, state.integer_prototype)
+                Int::alloc(
+                    alloc,
+                    state.permanent_space.int_class(),
+                    result as i64
+                )
             }
         );
 
@@ -797,7 +718,9 @@ impl Function {
 ))]
 mod tests {
     use super::*;
-    use crate::vm::test::setup;
+    use crate::mem::allocator::Pointer as InkoPointer;
+    use crate::mem::objects::String as InkoString;
+    use crate::test::setup;
 
     extern "C" {
         fn calloc(amount: usize, size: usize) -> RawPointer;
@@ -845,19 +768,29 @@ mod tests {
 
     #[test]
     fn test_function_from_pointers() {
-        let (machine, _, _process) = setup();
+        let (mut alloc, state, _process) = setup();
+        let name = InkoString::alloc(
+            &mut alloc,
+            state.permanent_space.string_class(),
+            LIBM.to_string(),
+        );
 
-        let names = vec![machine.state.intern_string(LIBM.to_string())];
+        let names = vec![name];
         let lib = Library::from_pointers(&names);
 
         assert!(lib.is_ok());
+
+        unsafe {
+            InkoString::drop(name);
+        }
     }
 
     #[test]
     fn test_function_call() {
         let lib = Library::open(&[LIBM]).unwrap();
-        let (machine, _, process) = setup();
-        let arg = process.allocate_without_prototype(object_value::float(3.15));
+        let (mut alloc, state, _process) = setup();
+        let arg =
+            Float::alloc(&mut alloc, state.permanent_space.float_class(), 3.15);
 
         unsafe {
             let sym = lib.get("floor").unwrap();
@@ -868,37 +801,40 @@ mod tests {
             )
             .unwrap();
 
-            let res = fun.call(&machine.state, &process, &[arg]);
+            let res = fun.call(&state, &mut alloc, &[arg]);
 
             assert!(res.is_ok());
-            assert_eq!(res.unwrap().float_value().unwrap(), 3.0);
+            assert_eq!(Float::read(res.unwrap()), 3.0);
         }
     }
 
     #[test]
     fn test_pointer_read_and_write() {
-        let (machine, _, process) = setup();
+        let (mut alloc, state, _process) = setup();
 
         unsafe {
             let ptr = Pointer::new(calloc(1, 3));
-
-            let kind = ObjectPointer::integer(TYPE_STRING);
-            let val = process.allocate_without_prototype(object_value::string(
+            let kind = InkoPointer::unsigned_int(TYPE_STRING);
+            let val = InkoString::alloc(
+                &mut alloc,
+                state.permanent_space.string_class(),
                 "ab".to_string(),
-            ));
+            );
 
             ptr.write_as(kind, val).unwrap();
 
-            let result = ptr.read_as(&machine.state, &process, kind);
+            let result = ptr.read_as(&state, &mut alloc, kind);
 
-            free(ptr.as_c_pointer());
+            free(ptr.inner);
 
             assert!(result.is_ok());
 
-            assert_eq!(
-                result.unwrap().string_value().unwrap().as_slice(),
-                "ab"
-            );
+            let new_string = result.unwrap();
+
+            assert_eq!(InkoString::read(&new_string), "ab");
+
+            InkoString::drop(val);
+            InkoString::drop(new_string);
         }
     }
 }
@@ -912,20 +848,5 @@ mod tests_for_all_platforms {
         let lib = Library::open(&["inko-test-1", "inko-test-2"]);
 
         assert!(lib.is_err());
-    }
-
-    #[test]
-    fn test_pointer_from_address_valid() {
-        let ptr = unsafe { Pointer::from_address(ObjectPointer::integer(0)) };
-
-        assert!(ptr.is_ok());
-        assert_eq!(ptr.unwrap().address(), 0);
-    }
-
-    #[test]
-    fn test_pointer_from_address_invalid() {
-        let ptr = unsafe { Pointer::from_address(ObjectPointer::integer(-1)) };
-
-        assert!(ptr.is_err());
     }
 }

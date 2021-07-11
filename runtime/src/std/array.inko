@@ -13,15 +13,16 @@
 # indexes, in which case the value will be accessed starting at the back of the
 # Array. This means that -1 will access the last value, -2 the value before
 # that, etc.
+import std::clone::Clone
 import std::conversion::ToArray
 import std::hash::(Hash, Hasher)
 import std::index::(Index, SetIndex)
 import std::length::Length
-import std::loop::(repeat, while)
+import std::loop::(repeat)
 import std::operators::Equal
 import std::option::Option
 
-extern def array_clear(array: Array!(Any))
+extern def array_clear(array: ref Array!(Any))
 
 impl Array {
   # Returns a new Array containing the given values.
@@ -53,14 +54,14 @@ impl Array {
   # # Panics
   #
   # This method panics if the amount is a negative number.
-  static def filled!(V)(amount: Integer, value: V) -> Array!(V) {
-    amount.negative?.if_true {
+  static def filled!(V: Clone)(amount: Int, value: ref V) -> Array!(V) {
+    if amount.negative? {
       _INKOC.panic('The fill amount must be equal to or greater than zero')
     }
 
     let array = new
 
-    repeat(amount) do (_) { array.push(value) }
+    repeat(amount) do (_) { array.push(value.clone) }
     array
   }
 
@@ -76,7 +77,7 @@ impl Array {
     array_clear(self)
   }
 
-  # Pushes a value to the back of the Array, returning the pushed value.
+  # Pushes a value to the back of the Array.
   #
   # # Examples
   #
@@ -84,9 +85,9 @@ impl Array {
   #
   #     let array = Array.new
   #
-  #     array.push(10) # => 10
+  #     array.push(10) # => Nil
   #     array[0]       # => 10
-  def push(value: T) -> T {
+  def push(value: T) {
     self[length] = value
   }
 
@@ -109,8 +110,7 @@ impl Array {
   #
   #     array.pop # => Option.none
   def pop -> ?T {
-    (length > 0)
-      .if(true: { Option.some(remove_at(length - 1)) }, false: { Option.none })
+    if empty? { Option.none } else { Option.some(remove_at(length - 1)) }
   }
 
   # Removes the value at the given index, returning the removed value.
@@ -128,69 +128,8 @@ impl Array {
   # # Panics
   #
   # This method panics when the index is out of bounds.
-  def remove_at(index: Integer) -> T {
+  def remove_at(index: Int) -> T {
     _INKOC.array_remove(self, index) as T
-  }
-
-  # Yields all the values in this `Array` to the supplied `Block`.
-  #
-  # While `std::iterator::Iterator` provides an `each` method using this would
-  # require the allocation of an `Iterator`. Since iterating over an `Array` is
-  # so common we provide a specialised implementation for those cases.
-  #
-  # # Examples
-  #
-  # Iterating over all the values in an `Array`:
-  #
-  #     import std::stdio::stdout
-  #
-  #     Array.new(10, 20, 30).each do (number) {
-  #       stdout.print(number)
-  #     }
-  def each(block: do (T)) {
-    let mut index = 0
-    let max = length
-
-    while({ index < max }) {
-      block.call(self[index])
-      index += 1
-    }
-  }
-
-  # Yields all the values and their indexes in this `Array` to the supplied
-  # `Block`.
-  #
-  # # Examples
-  #
-  # Iterating over the values of an `Array` and their indexes:
-  #
-  #     import std::stdio::stdout
-  #
-  #     Array.new(10, 20, 30).each_with_index do (number, index) {
-  #       stdout.print(index) # => 0, 1, 2
-  #     }
-  def each_with_index(block: do (T, Integer)) {
-    let mut index = 0
-
-    each do (value: T) {
-      block.call(value, index)
-      index += 1
-    }
-  }
-
-  # Appends the values of the given `Array` to `self`.
-  #
-  # # Examples
-  #
-  # Appending one `Array` to another:
-  #
-  #     let numbers = Array.new(10, 20, 30)
-  #
-  #     numbers.append(Array.new(40, 50))
-  #
-  #     numbers.length # => 5
-  def append(other: Self) {
-    other.each do (value: T) { push(value) }
   }
 
   # Returns `True` if `self` contains the given value.
@@ -200,9 +139,14 @@ impl Array {
   # Checking if an `Array` contains a value:
   #
   #     Array.new(10, 20, 30).contains?(10) # => True
-  def contains?(value: T) -> Boolean when T: Equal {
-    each do (val) {
-      (val == value).if_true { return True }
+  def contains?(value: ref T) -> Boolean when T: Equal {
+    let mut index = 0
+    let max = length
+
+    while index < max {
+      if self[index] == value { return True }
+
+      index += 1
     }
 
     False
@@ -224,8 +168,21 @@ impl Array {
   #     let numbers = Array.new(10, 20)
   #
   #     numbers.get(5) # => Option.none
-  def get(index: Integer) -> ?T {
-    try Option.some(_INKOC.array_at(self, index) as T) else Option.none
+  def get(index: Int) -> ?ref T {
+    try Option.some(ref(_INKOC.array_at(self, index) as T)) else Option.none
+  }
+
+  # Inserts the value at the given index, returning the old value.
+  #
+  # # Panics
+  #
+  # This method panics when the index is out of bounds.
+  def swap(index: Int, value: T) -> T {
+    let old_value =
+      try _INKOC.array_at(self, index) else (err) _INKOC.panic(err as String)
+
+    _INKOC.array_set(self, index, value)
+    old_value as T
   }
 }
 
@@ -241,12 +198,12 @@ impl Length for Array {
   # Getting the length of an Array with values:
   #
   #     Array.new(10).length # => 1
-  def length -> Integer {
+  def length -> Int {
     _INKOC.array_length(self)
   }
 }
 
-impl Index!(Integer, T) for Array {
+impl Index!(Int, ref T) for Array {
   # Returns the value at the given index.
   #
   # # Examples
@@ -267,16 +224,16 @@ impl Index!(Integer, T) for Array {
   # # Panics
   #
   # This method panics when the index is out of bounds.
-  def [](index: Integer) -> T {
-    try {
-      _INKOC.array_at(self, index) as T
+  def [](index: Int) -> ref T {
+    ref try {
+      _INKOC.array_at(self, index)
     } else (err) {
       _INKOC.panic(err as String)
-    }
+    } as T
   }
 }
 
-impl SetIndex!(Integer, T) for Array {
+impl SetIndex!(Int, T) for Array {
   # Stores a value at the given index, then returns it.
   #
   # # Examples
@@ -298,21 +255,36 @@ impl SetIndex!(Integer, T) for Array {
   # # Panics
   #
   # This method panics if the index is out of bounds.
-  def []=(index: Integer, value: T) -> T {
-    _INKOC.array_set(self, index, value) as T
+  def []=(index: Int, value: T) {
+    _INKOC.array_set(self, index, value)
+  }
+}
+
+impl Clone for Array {
+  def clone -> Self when T: Clone {
+    let copy = Array.new
+    let mut index = 0
+    let max = length
+
+    while index < max {
+      copy.push(self[index].clone)
+      index += 1
+    }
+
+    copy
   }
 }
 
 impl ToArray!(T) for Array {
-  # Always returns `self`.
+  # Returns a copy of the array and all of its values.
   #
   # # Examples
   #
   # "Converting" an array to an array:
   #
   #     Array.new(10).to_array # => Array.new(10)
-  def to_array -> Array!(T) {
-    self
+  def to_array -> Array!(T) when T: Clone {
+    clone
   }
 }
 
@@ -332,13 +304,19 @@ impl Equal for Array {
   # Comparing two arrays with the same length but with different values:
   #
   #     Array.new(10, 20) == Array.new(20, 10) # => False
-  def ==(other: Self) -> Boolean when T: Equal {
-    (length == other.length).if_false { return False }
+  def ==(other: ref Self) -> Boolean when T: Equal {
+    if length != other.length { return False }
 
-    each_with_index do (ours: T, index: Integer) {
+    let mut index = 0
+    let max = length
+
+    while index < max {
+      let ours = self[index]
       let theirs = other[index]
 
-      (ours == theirs).if_false { return False }
+      if ours != theirs { return False }
+
+      index += 1
     }
 
     True
@@ -346,9 +324,13 @@ impl Equal for Array {
 }
 
 impl Hash for Array {
-  def hash(hasher: Hasher) when T: Hash {
-    each do (value) {
-      value.hash(hasher)
+  def hash(hasher: ref Hasher) when T: Hash {
+    let mut index = 0
+    let max = length
+
+    while index < max {
+      self[index].hash(hasher)
+      index += 1
     }
   }
 }

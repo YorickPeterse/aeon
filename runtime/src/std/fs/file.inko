@@ -26,24 +26,32 @@ _INKOC.set_object_name(ReadOnlyFile, 'ReadOnlyFile')
 _INKOC.set_object_name(WriteOnlyFile, 'WriteOnlyFile')
 _INKOC.set_object_name(ReadWriteFile, 'ReadWriteFile')
 
-extern def file_open_read_only(path: String) !! Integer -> ReadOnlyFile
-extern def file_open_write_only(path: String) !! Integer -> WriteOnlyFile
-extern def file_open_append_only(path: String) !! Integer -> WriteOnlyFile
-extern def file_open_read_write(path: String) !! Integer -> ReadWriteFile
-extern def file_open_read_append(path: String) !! Integer -> ReadWriteFile
-extern def file_copy(from: String, to: String) !! Integer -> Integer
-extern def file_remove(path: String) !! Integer
-extern def file_path(file: File) -> String
-extern def file_flush(file: File) !! Integer -> Nil
-extern def file_seek(file: File, offset: Integer) !! Integer -> Integer
-extern def file_size(path: String) !! Integer -> Integer
-extern def file_write_string(file: File, input: String) !! Integer -> Integer
-extern def file_write_bytes(file: File, input: ByteArray) !! Integer -> Integer
+extern def file_open_read_only(path: ref String) !! Int -> ReadOnlyFile
+extern def file_open_write_only(path: ref String) !! Int -> WriteOnlyFile
+extern def file_open_append_only(path: ref String) !! Int -> WriteOnlyFile
+extern def file_open_read_write(path: ref String) !! Int -> ReadWriteFile
+extern def file_open_read_append(path: ref String) !! Int -> ReadWriteFile
+extern def file_copy(from: ref String, to: ref String) !! Int -> Int
+extern def file_remove(path: ref String) !! Int
+extern def file_path(file: ref File) -> String
+extern def file_flush(file: ref File) !! Int -> Nil
+extern def file_seek(file: ref File, offset: ref Int) !! Int -> Int
+extern def file_size(path: ref String) !! Int -> Int
+extern def file_write_string(
+  file: ref File,
+  input: ref String
+) !! Int -> Int
+
+extern def file_write_bytes(
+  file: ref File,
+  input: ref ByteArray
+) !! Int -> Int
+
 extern def file_read(
-  file: File,
-  bytes: ByteArray,
-  size: Integer
-) !! Integer -> Integer
+  file: ref File,
+  bytes: ref ByteArray,
+  size: ref Int
+) !! Int -> Int
 
 # A file stored on the file system.
 trait File {
@@ -67,8 +75,8 @@ impl ReadOnlyFile {
   #     import std::fs::file::ReadOnlyFile
   #
   #     let handle = try! ReadOnlyFile.new('/dev/null')
-  static def new(path: ToString) !! Error -> Self {
-    blocking {
+  static def new(path: ref ToString) !! Error -> Self {
+    try blocking {
       try file_open_read_only(path.to_string) else (err) throw Error.new(err)
     }
   }
@@ -77,24 +85,24 @@ impl ReadOnlyFile {
 impl Object for ReadOnlyFile {}
 
 impl Read for ReadOnlyFile {
-  def read_bytes(bytes: ByteArray, size = 0) !! Error -> Integer {
-    blocking {
-      try file_read(self, bytes, size) else (err) throw Error.new(err)
+  def read(into: ref ByteArray, size: Int) !! Error -> Int {
+    try blocking {
+      try file_read(self, into, size) else (err) throw Error.new(err)
     }
   }
 }
 
 impl Seek for ReadOnlyFile {
-  def seek(position: Integer) !! Error -> Integer {
-    blocking {
+  def seek(position: Int) !! Error -> Int {
+    try blocking {
       try file_seek(self, position) else (err) throw Error.new(err)
     }
   }
 }
 
 impl Size for ReadOnlyFile {
-  def size !! Error -> Integer {
-    blocking {
+  def size !! Error -> Int {
+    try blocking {
       try file_size(file_path(self)) else (err) throw Error.new(err)
     }
   }
@@ -107,7 +115,7 @@ impl File for ReadOnlyFile {
 }
 
 impl Close for ReadOnlyFile {
-  def close {
+  move def close {
     _INKOC.close(self)
   }
 }
@@ -120,8 +128,8 @@ impl WriteOnlyFile {
   #     import std::fs::file::WriteOnlyFile
   #
   #     let file = try! WriteOnlyFile.new('/dev/null')
-  static def new(path: ToString) !! Error -> Self {
-    blocking {
+  static def new(path: ref ToString) !! Error -> Self {
+    try blocking {
       try file_open_write_only(path.to_string) else (e) throw Error.new(e)
     }
   }
@@ -133,8 +141,8 @@ impl WriteOnlyFile {
   #     import std::fs::file::WriteOnlyFile
   #
   #     let file = try! WriteOnlyFile.append('/dev/null')
-  static def append(path: ToString) !! Error -> Self {
-    blocking {
+  static def append(path: ref ToString) !! Error -> Self {
+    try blocking {
       try file_open_append_only(path.to_string) else (e) throw Error.new(e)
     }
   }
@@ -143,34 +151,34 @@ impl WriteOnlyFile {
 impl Object for WriteOnlyFile {}
 
 impl Write for WriteOnlyFile {
-  def write_bytes(bytes: ByteArray) !! Error -> Integer {
-    blocking { try file_write_bytes(self, bytes) else (e) throw Error.new(e) }
+  def write_bytes(bytes: ref ByteArray) !! Error -> Int {
+    try blocking { try file_write_bytes(self, bytes) else (e) throw Error.new(e) }
   }
 
-  def write_string(data: ToString) !! Error -> Integer {
-    blocking {
+  def write_string(data: ref ToString) !! Error -> Int {
+    try blocking {
       try file_write_string(self, data.to_string) else (e) throw Error.new(e)
     }
   }
 
   def flush !! Error {
-    blocking {
+    try blocking {
       try file_flush(self) else (err) throw Error.new(err)
     }
   }
 }
 
 impl Seek for WriteOnlyFile {
-  def seek(position: Integer) !! Error -> Integer {
-    blocking {
+  def seek(position: Int) !! Error -> Int {
+    try blocking {
       try file_seek(self, position) else (err) throw Error.new(err)
     }
   }
 }
 
 impl Size for WriteOnlyFile {
-  def size !! Error -> Integer {
-    blocking {
+  def size !! Error -> Int {
+    try blocking {
       try file_size(file_path(self)) else (err) throw Error.new(err)
     }
   }
@@ -183,7 +191,7 @@ impl File for WriteOnlyFile {
 }
 
 impl Close for WriteOnlyFile {
-  def close {
+  move def close {
     _INKOC.close(self)
   }
 }
@@ -202,8 +210,8 @@ impl ReadWriteFile {
   #     import std::fs::file::ReadWriteFile
   #
   #     let handle = try! ReadWriteFile.new('/dev/null')
-  static def new(path: ToString) !! Error -> Self {
-    blocking {
+  static def new(path: ref ToString) !! Error -> Self {
+    try blocking {
       try file_open_read_write(path.to_string) else (e) throw Error.new(e)
     }
   }
@@ -215,8 +223,8 @@ impl ReadWriteFile {
   #     import std::fs::file::ReadWriteFile
   #
   #     let handle = try! ReadWriteFile.append('/dev/null')
-  static def append(path: ToString) !! Error -> Self {
-    blocking {
+  static def append(path: ref ToString) !! Error -> Self {
+    try blocking {
       try file_open_read_append(path.to_string) else (e) throw Error.new(e)
     }
   }
@@ -225,42 +233,42 @@ impl ReadWriteFile {
 impl Object for ReadWriteFile {}
 
 impl Read for ReadWriteFile {
-  def read_bytes(bytes: ByteArray, size = 0) !! Error -> Integer {
-    blocking {
-      try file_read(self, bytes, size) else (err) throw Error.new(err)
+  def read(into: ref ByteArray, size: Int) !! Error -> Int {
+    try blocking {
+      try file_read(self, into, size) else (err) throw Error.new(err)
     }
   }
 }
 
 impl Write for ReadWriteFile {
-  def write_bytes(bytes: ByteArray) !! Error -> Integer {
-    blocking { try file_write_bytes(self, bytes) else (e) throw Error.new(e) }
+  def write_bytes(bytes: ref ByteArray) !! Error -> Int {
+    try blocking { try file_write_bytes(self, bytes) else (e) throw Error.new(e) }
   }
 
-  def write_string(data: ToString) !! Error -> Integer {
-    blocking {
+  def write_string(data: ref ToString) !! Error -> Int {
+    try blocking {
       try file_write_string(self, data.to_string) else (e) throw Error.new(e)
     }
   }
 
   def flush !! Error {
-    blocking {
+    try blocking {
       try file_flush(self) else (err) throw Error.new(err)
     }
   }
 }
 
 impl Seek for ReadWriteFile {
-  def seek(position: Integer) !! Error -> Integer {
-    blocking {
+  def seek(position: Int) !! Error -> Int {
+    try blocking {
       try file_seek(self, position) else (err) throw Error.new(err)
     }
   }
 }
 
 impl Size for ReadWriteFile {
-  def size !! Error -> Integer {
-    blocking {
+  def size !! Error -> Int {
+    try blocking {
       try file_size(file_path(self)) else (err) throw Error.new(err)
     }
   }
@@ -273,7 +281,7 @@ impl File for ReadWriteFile {
 }
 
 impl Close for ReadWriteFile {
-  def close {
+  move def close {
     _INKOC.close(self)
   }
 }
@@ -296,8 +304,8 @@ impl Remove for ReadWriteFile {
 #
 #     try! handle.write('hello')
 #     try! file.remove('/tmp/test.txt')
-def remove(path: ToString) !! Error {
-  blocking {
+def remove(path: ref ToString) !! Error {
+  try blocking {
     try file_remove(path.to_string) else (err) throw Error.new(err)
   }
 }
@@ -315,12 +323,8 @@ def remove(path: ToString) !! Error {
 #
 #     try! handle.write('hello')
 #     try! file.copy(from: '/tmp/test.txt', to: '/tmp/test2.txt')
-def copy(from: ToString, to: ToString) !! Error -> Integer {
-  blocking {
-    try {
-      file_copy(from.to_string, to.to_string)
-    } else (err) {
-      throw Error.new(err)
-    }
+def copy(from: ref ToString, to: ref ToString) !! Error -> Int {
+  try blocking {
+    try file_copy(from.to_string, to.to_string) else (err) throw Error.new(err)
   }
 }

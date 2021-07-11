@@ -10,7 +10,7 @@ module Inkoc
       def self.reserved
         # Register 0 is reserved and used for padding missing optional
         # arguments.
-        new(0, TypeSystem::Any.singleton)
+        new(0, TypeSystem::Any.new)
       end
 
       def initialize(id, type)

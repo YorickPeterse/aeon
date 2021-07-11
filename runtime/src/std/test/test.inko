@@ -19,31 +19,28 @@ let TIME_IN_SECONDS_THRESHOLD = 1.0
 let DEFAULT_CONCURRENCY = 32
 
 # Formats the given object as a `String`.
-def inspect(value: Any) -> String {
+def inspect(value: ref Any) -> String {
   mirror.reflect(value).inspect
 }
 
 # Returns the call frame of an assertion failure.
-def failure_location(skip = 3) -> StackFrame {
-  debug.stacktrace(skip)[-1]
+def failure_location -> StackFrame {
+  try! debug.stacktrace(skip: 3, limit: 0).pop.get
 }
 
 # A type for formatting the results of tests.
 trait Formatter {
   # Displays the result of a passed test.
-  def passed(test: Test)
+  def passed(test: ref TestResult)
 
   # Displays the result of a failed test.
-  def failed(test: FailedTest)
+  def failed(test: ref TestResult)
 
   # Displays all of the failed tests after the test suite has finished.
-  def failures(tests: Array!(FailedTest))
+  def failures(tests: ref Array!(TestResult))
 
-  # Displays a summary of all the tests that have been executed.
-  #
-  # The `tests` argument will be passed an `Array` of all `Test` objects
-  # (including failed tests) that were executed.
-  def finished(tests: Array!(Test), duration: Duration)
+  # Displays a summary of the tests executed, after all tests finished.
+  def finished(duration: Duration)
 }
 
 # A formatter that displays tests similar to a progress bar.
@@ -55,27 +52,33 @@ trait Formatter {
 # Passed tests are displayed as a ".", while failed tests are displayed as "F".
 # All output is written to STDOUT.
 class ProgressFormatter {
+  # The total number of tests run.
+  @tests: Int
+
   # The number of failed tests.
-  @failed: Integer
+  @failed: Int
 
   # When set to `True`, certain parts of the output will be wrapped in ANSI
   # escape sequences.
   @colors: Boolean
 
-  static def new(colors = True) -> Self {
-    Self { @failed = 0, @colors = colors }
+  static def new(colors: Boolean) -> Self {
+    Self { @tests = 0, @failed = 0, @colors = colors }
   }
 
   # Returns the location of a test failure.
-  def format_location(location: StackFrame) -> String {
+  def format_location(location: ref StackFrame) -> String {
     `{location.path}:{location.line}`
   }
 
   # Returns the unit of time to use for displaying the test suite execution
   # time.
-  def duration_unit(duration: Duration) -> String {
-    (duration.to_seconds > TIME_IN_SECONDS_THRESHOLD)
-      .if(true: { 'seconds' }, false: { 'milliseconds' })
+  def duration_unit(duration: ref Duration) -> String {
+    if duration.to_seconds > TIME_IN_SECONDS_THRESHOLD {
+      'seconds'
+    } else {
+      'milliseconds'
+    }
   }
 
   # Returns the duration of the test suite as a Float.
@@ -83,76 +86,82 @@ class ProgressFormatter {
   # If the test suite took more than 1 second to execute, then the returned
   # value is in seconds. If the suite took less than 1 second, then the value is
   # in milliseconds instead.
-  def duration_time(duration: Duration) -> Float {
+  def duration_time(duration: ref Duration) -> Float {
     let time = duration.to_seconds
 
-    (time > TIME_IN_SECONDS_THRESHOLD)
-      .if(true: { time }, false: { duration.to_milliseconds })
+    if time > TIME_IN_SECONDS_THRESHOLD {
+      time
+    } else {
+      duration.to_milliseconds
+    }
   }
 
   # Returns a `String` containing some statistics about the test suite.
-  def test_suite_statistics(tests: Array!(Test)) -> String {
-    let stats = `{tests.length} tests, {@failed} failures`
+  def test_suite_statistics -> String {
+    let stats = `{@tests} tests, {@failed} failures`
 
-    @failed.positive?.if(true: { red(stats) }, false: { green(stats) })
+    if @failed.positive? { red(stats) } else { green(stats) }
   }
 
-  def green(string: ToString) -> String {
+  def green(string: String) -> String {
     color(string, GREEN)
   }
 
-  def red(string: ToString) -> String {
+  def red(string: String) -> String {
     color(string, RED)
   }
 
-  def cyan(string: ToString) -> String {
+  def cyan(string: String) -> String {
     color(string, CYAN)
   }
 
-  def bold(string: ToString) -> String {
+  def bold(string: String) -> String {
     color(string, BOLD)
   }
 
-  def color(string: ToString, code: String) -> String {
-    @colors.if(true: { ansi.wrap(string, code) }, false: { string.to_string })
+  def color(string: String, code: String) -> String {
+    if @colors { ansi.wrap(string, code) } else { string.to_string }
   }
 }
 
 impl Formatter for ProgressFormatter {
-  def passed(test: Test) {
+  def passed(test: ref TestResult) {
+    @tests += 1
+
     stdout.write_string(green('.'))
   }
 
-  def failed(test: FailedTest) {
+  def failed(test: ref TestResult) {
     @failed += 1
+    @tests += 1
 
     stdout.write_string(red('F'))
   }
 
   # Displays a list of all the failed tests.
-  def failures(tests: Array!(FailedTest)) {
+  def failures(tests: ref Array!(TestResult)) {
     stdout.write_string("\n\nFailures:")
 
-    tests.each_with_index do (failed, index) {
-      let failure = failed.failure
+    for (index, failed) in tests.iter.with_index {
+      let failure = try! failed.failure.get_ref
       let output = `
 
   Group:            {failed.test.group_description}
-  Test:             {bold(failed.test.description)}
+  Test:             {bold(failed.test.description.clone)}
   Test location:    {cyan(format_location(failed.test.defined_at))}
   Failure location: {cyan(format_location(failure.failed_at))}
-  Failure:          {red(failure.description)}`
+  Failure:          {red(failure.description.clone)}`
 
       stdout.write_string(output)
     }
   }
 
   # Displays a summary of the test suite, once the suite has finished running.
-  def finished(tests: Array!(Test), duration: Duration) {
+  def finished(duration: Duration) {
     let output = `
 
 Finished running in {duration_time(duration)} {duration_unit(duration)}
-{test_suite_statistics(tests)}`
+{test_suite_statistics}`
 
     stdout.print(output)
   }
@@ -172,94 +181,65 @@ class Failure {
 
   # Returns the message describing the failure.
   def description -> String {
-    @description
+    @description.clone
   }
 
   # Returns the location of the assertion failure.
-  def failed_at -> StackFrame {
+  def failed_at -> ref StackFrame {
     @failed_at
   }
 }
 
 # The result of a single unit test.
 class TestResult {
-  # The unique ID of the test.
-  @id: Integer
+  # The test that was run.
+  @test: Test
 
   # The test failure, if any.
   #
   # If the failure is a None, it means the test passed.
   @failure: ?Failure
 
-  static def new(id: Integer, failure: ?Failure = Option.none) -> Self {
-    Self { @id = id, @failure = failure }
-  }
-
-  # Returns the unique ID of the test this result belongs to.
-  def id -> Integer {
-    @id
-  }
-
-  # Returns the test failure, if any.
-  def failure -> ?Failure {
-    @failure
-  }
-}
-
-# A test that failed.
-class FailedTest {
-  # The test that failed.
-  @test: Test
-
-  # The failure reason.
-  @failure: Failure
-
-  static def new(test: Test, failure: Failure) -> Self {
+  static def new(test: Test, failure: ?Failure) -> Self {
     Self { @test = test, @failure = failure }
   }
 
-  # Returns the test that failed.
-  def test -> Test {
+  # Returns the test that was run.
+  def test -> ref Test {
     @test
   }
 
-  # Returns the test failure.
-  def failure -> Failure {
+  # Returns the test failure, if any.
+  def failure -> ref ?Failure {
     @failure
   }
 }
 
 # A request to run a unit test.
 class TestRequest {
-  # The unique ID of the unit test.
-  @id: Integer
-
-  # The code to run.
-  @code: fn !! Failure
+  # The test to run.
+  @test: Test
 
   # The process to send the results back to.
   @reply_to: Process
 
-  static def new(id: Integer, code: fn !! Failure, reply_to: Process) -> Self {
-    Self { @id = id, @code = code, @reply_to = reply_to }
+  static def new(test: Test, reply_to: Process) -> Self {
+    Self { @test = test, @reply_to = reply_to }
   }
 
   # Runs the test request, and sends the results back to a process.
-  def run {
-    try @code.call else (error) {
-      @reply_to.send(TestResult.new(@id, failure: Option.some(error)))
+  move def run {
+    try @test.code.call else (error) {
+      @reply_to.send(TestResult.new(@test, failure: Option.some(error)))
       return
     }
 
-    @reply_to.send(TestResult.new(@id, failure: Option.none))
+    @reply_to.send(TestResult.new(@test, failure: Option.none))
   }
 }
 
 # A single unit test to run in a process.
 class Test {
-  # The unique ID of the test.
-  @id: Integer
-
   # The description of the test.
   @description: String
 
@@ -270,13 +250,11 @@ class Test {
   @code: fn !! Failure
 
   static def new(
-    id: Integer,
     description: String,
     group_description: String,
     code: fn !! Failure
   ) -> Self {
     Self {
-      @id = id,
       @description = description,
       @group_description = group_description,
       @code = code
@@ -285,12 +263,17 @@ class Test {
 
   # Returns the description of the test.
   def description -> String {
-    @description
+    @description.clone
   }
 
   # Returns the group description of the test.
   def group_description -> String {
-    @group_description
+    @group_description.clone
+  }
+
+  # Returns the code to run.
+  def code -> ref fn !! Failure {
+    @code
   }
 
   # Returns the location of the test definition.
@@ -301,15 +284,15 @@ class Test {
   }
 
   # Schedules the test for execution in a separate process.
-  def schedule {
+  move def schedule {
     let runner = process.spawn {
-      match(let request = process.receive) {
+      match let request = process.receive {
         as TestRequest -> { request.run }
         else -> {}
       }
     }
 
-    runner.send(TestRequest.new(@id, @code, reply_to: process.current))
+    runner.send(TestRequest.new(self, reply_to: process.current))
   }
 }
 
@@ -319,18 +302,17 @@ class Group {
   @description: String
 
   # The collection of tests to add new tests to.
-  @tests: Array!(Test)
+  @tests: ref Array!(Test)
 
-  static def new(description: String, tests: Array!(Test)) -> Self {
+  static def new(description: String, tests: ref Array!(Test)) -> Self {
     Self { @description = description, @tests = tests }
   }
 
   # Add a new test to this group.
   def test(description: String, code: fn !! Failure) {
     let test = Test.new(
-      id: @tests.length,
       description: description,
-      group_description: @description,
+      group_description: @description.clone,
       code: code
     )
 

@@ -13,7 +13,7 @@ def temporary_environment_variable!(R)(block: do (String) -> R) -> R {
   block.call(name)
 }
 
-def tests(t: Tests) {
+def tests(t: ref Tests) {
   t.group('std::env.[]') do (g) {
     g.test('Obtaining the value of an existing environment variable') {
       temporary_environment_variable do (name) {
@@ -97,9 +97,9 @@ def tests(t: Tests) {
 
   t.group('std::env.home_directory') do (g) {
     g.test('Obtaining the home directory of the current user') {
-      env.home_directory.let do (home_dir) {
-        try assert_greater(home_dir.to_string.length, 0)
-      }
+      let home = try env.home_directory.get else return
+
+      try assert_greater(home.to_string.length, 0)
     }
   }
 
@@ -114,32 +114,25 @@ def tests(t: Tests) {
 
   t.group('std::env.working_directory') do (g) {
     g.test('Obtaining the current working directory') {
-      let path = try env.working_directory.to_string else ''
+      let path = try env.working_directory else ''.to_path
 
-      try assert_greater(path.length, 0)
+      try assert_greater(path.to_string.length, 0)
     }
   }
 
   t.group('std::env.working_directory=') do (g) {
     g.test('Changing the current working directory') {
-      let path = try env.working_directory.to_string else '.'
-      let new_path = try {
-        (env.working_directory = path).to_string
-      } else {
-        ''
-      }
+      let path = try env.working_directory else '.'.to_path
+      let new_path = try env.working_directory = path else ''.to_path
 
       try assert_equal(new_path, path)
     }
 
     g.test('Changing the working directory to an invalid directory') {
-      let path = try {
-        (env.working_directory = 'does-not-exist').to_string
-      } else {
-        'not-set'
-      }
+      let path =
+        try env.working_directory = 'does-not-exist' else 'not-set'.to_path
 
-      try assert_equal(path, 'not-set')
+      try assert_equal(path, 'not-set'.to_path)
     }
   }
 
@@ -149,7 +142,7 @@ def tests(t: Tests) {
         import std::env
         import std::stdio::stdout
 
-        env.arguments.each do (arg) { stdout.print(arg) }
+        for arg in env.arguments { stdout.print(arg) }
         '
 
       let exe = try! env.executable

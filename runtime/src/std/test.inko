@@ -10,7 +10,7 @@
 #
 #     import std::test::*
 #
-#     def tests(t: Tests) {
+#     def tests(t: ref Tests) {
 #       t.group('The description of a test group') do (g) {
 #         g.test('The description of a test') {
 #           try assert_equal(10, 10)
@@ -22,8 +22,8 @@
 # automatically when running the `inko test` command. Creating a test file
 # without a `tests` method results in a compiler error when running `inko test`.
 #
-# The `t` argument is of type `Tests`, which is used for configuring the rest
-# runner and registering test groups and tests.
+# The `t` argument is of type `ref Tests`, which is used for configuring the
+# test runner and registering test groups and tests.
 #
 # Assertion methods are imported from `std::test`, and require the use of `try`.
 #
@@ -72,18 +72,18 @@
 #
 #     import std::test::Tests
 #
-#     def setup(t: Tests) {
+#     def setup(t: ref Tests) {
 #       t.concurrency = 16
 #     }
+import std::debug
 import std::env
-import std::loop::(while)
 import std::mirror::(ObjectMirror)
 import std::operators::(Equal, Greater)
 import std::os::Command
 import std::process
 import std::test::test::(
-  DEFAULT_CONCURRENCY, FailedTest, Failure, Formatter, Group, ProgressFormatter,
-  Test, TestResult, failure_location, inspect
+  DEFAULT_CONCURRENCY, Failure, Formatter, Group, ProgressFormatter, Test,
+  TestResult, failure_location, inspect
 )
 import std::time::Instant
 import std::vm
@@ -91,7 +91,7 @@ import std::vm
 # A type used for registering and running unit tests.
 class Tests {
   # The number of tests to run concurrently.
-  @concurrency: Integer
+  @concurrency: Int
 
   # The formatter to use for displaying test results.
   @formatter: Formatter
@@ -105,40 +105,40 @@ class Tests {
   static def new -> Self {
     Self {
       @concurrency = DEFAULT_CONCURRENCY,
-      @formatter = ProgressFormatter.new,
+      @formatter = ProgressFormatter.new(colors: True),
       @tests = Array.new,
       @exit_on_failure = True
     }
   }
 
   # Returns the number of tests to run concurrently.
-  def concurrency -> Integer {
-    @concurrency
+  def concurrency -> Int {
+    @concurrency.clone
   }
 
   # Sets the number of tests to run concurrently.
-  def concurrency=(value: Integer) -> Integer {
+  def concurrency=(value: Int) {
     @concurrency = value
   }
 
   # Returns the `Formatter` to use for displaying test results.
-  def formatter -> Formatter {
+  def formatter -> ref Formatter {
     @formatter
   }
 
   # Sets the `Formatter` to use for displaying test results.
-  def formatter=(value: Formatter) -> Formatter {
+  def formatter=(value: Formatter) {
     @formatter = value
   }
 
   # Sets whether the program should exit when there are test failures.
-  def exit_on_failure=(value: Boolean) -> Boolean {
+  def exit_on_failure=(value: Boolean) {
     @exit_on_failure = value
   }
 
   # Returns whether the program should exit when there are test failures.
   def exit_on_failure? -> Boolean {
-    @exit_on_failure
+    @exit_on_failure.clone
   }
 
   # Adds a new group of unit tests.
@@ -147,25 +147,23 @@ class Tests {
   }
 
   # Runs all the tests.
-  def run {
-    let start_time = Instant.new
+  move def run {
+    let start_time = Instant.now
     let failures = Array.new
 
-    @tests.iter.chunks(@concurrency).each do (tests) {
+    for tests in @tests.into_iter.chunks(concurrency) {
       let mut pending = tests.length
 
-      tests.each do (test) { test.schedule }
+      for test in tests.into_iter { test.schedule }
 
-      while({ pending > 0 }) {
-        match(let result = process.receive) {
+      while pending > 0 {
+        match let result = process.receive {
           as TestResult when result.failure.none? -> {
-            @formatter.passed(@tests[result.id])
+            @formatter.passed(result)
           }
           as TestResult when result.failure.some? -> {
-            let test = FailedTest.new(@tests[result.id], result.failure.get)
-
-            @formatter.failed(test)
-            failures.push(test)
+            @formatter.failed(result)
+            failures.push(result)
           }
           else -> {}
         }
@@ -176,15 +174,17 @@ class Tests {
 
     let failed = failures.length.positive?
 
-    failed.if_true { @formatter.failures(failures) }
-    @formatter.finished(tests: @tests, duration: start_time.elapsed)
-    failed.and { @exit_on_failure }.if_true { vm.exit(1) }
+    if failed { @formatter.failures(failures) }
+
+    @formatter.finished(start_time.elapsed)
+
+    if failed and @exit_on_failure { vm.exit(1) }
   }
 }
 
 # Asserts that the given arguments are equal to each other.
-def assert_equal!(T: Equal)(given: T, expected: T) !! Failure {
-  (given == expected).if_true { return }
+def assert_equal!(T: Equal)(given: ref T, expected: ref T) !! Failure {
+  if given == expected { return }
 
   let error = `Expected {inspect(given)} to equal {inspect(expected)}`
 
@@ -192,8 +192,8 @@ def assert_equal!(T: Equal)(given: T, expected: T) !! Failure {
 }
 
 # Asserts that the given arguments are not equal to each other.
-def assert_not_equal!(T: Equal)(given: T, expected: T) !! Failure {
-  (given == expected).if_false { return }
+def assert_not_equal!(T: Equal)(given: ref T, expected: ref T) !! Failure {
+  if given != expected { return }
 
   let error = `Expected {inspect(given)} not to equal {inspect(expected)}`
 
@@ -201,8 +201,8 @@ def assert_not_equal!(T: Equal)(given: T, expected: T) !! Failure {
 }
 
 # Asserts that the given arguments are the exact same objects.
-def assert_same_object!(T: Object)(given: T, expected: T) !! Failure {
-  given.same_object?(expected).if_true { return }
+def assert_same_object!(T: Object)(given: ref T, expected: ref T) !! Failure {
+  if given.same_object?(expected) { return }
 
   let error = `Expected {inspect(given)} to be the exact same \
     object as {inspect(expected)}`
@@ -211,8 +211,8 @@ def assert_same_object!(T: Object)(given: T, expected: T) !! Failure {
 }
 
 # Asserts that the first argument is greater than the second argument.
-def assert_greater!(T: Greater)(given: T, minimum: T) !! Failure {
-  (given > minimum).if_true { return }
+def assert_greater!(T: Greater)(given: ref T, minimum: ref T) !! Failure {
+  if given > minimum { return }
 
   let error = `Expected {inspect(given)} to be greater than {inspect(minimum)}`
 
@@ -220,15 +220,15 @@ def assert_greater!(T: Greater)(given: T, minimum: T) !! Failure {
 }
 
 # Asserts that the given value is something that evaluates to be truthy.
-def assert_true(value: Object) !! Failure {
-  value.if_true { return }
+def assert_true(value: ref Object) !! Failure {
+  if value { return }
 
   throw Failure.new(`Expected {inspect(value)} to be truthy`, failure_location)
 }
 
 # Asserts that the given value is something that evaluates to be falsy.
-def assert_false(value: Object) !! Failure {
-  value.if_false { return }
+def assert_false(value: ref Object) !! Failure {
+  if not value { return }
 
   throw Failure.new(`Expected {inspect(value)} to be falsy`, failure_location)
 }
@@ -253,31 +253,33 @@ def assert_panic(program: String) !! Failure {
 
   let err = try! child.stderr.read_string
 
-  err.starts_with?('Stack trace').if_true { return }
+  if err.starts_with?('Stack trace') { return }
 
   throw Failure.new(`The program didn't panic: {err}`, failure_location)
 }
 
 # Asserts that the given closure throws a value.
-def assert_throw!(E)(block: do !! E) !! Failure {
+def assert_throw!(E)(block: move do !! E) !! Failure {
   try block.call else return
 
   throw Failure.new("This block is expected to throw", failure_location)
 }
 
 # Asserts that the given closure doesn't throw a value.
-def assert_no_throw!(E)(block: do !! E) !! Failure {
+def assert_no_throw!(E)(block: move do !! E) !! Failure {
   try block.call else {
-    throw Failure
-      .new("This block isn't expected to throw", failure_location(skip: 4))
+    throw Failure.new(
+      "This block isn't expected to throw",
+      try! debug.stacktrace(skip: 3, limit: 0).pop.get
+    )
   }
 }
 
 # Asserts that an object is an instance of another object.
-def assert_instance_of(given: Any, expected: Any) !! Failure {
+def assert_instance_of(given: ref Any, expected: ref Any) !! Failure {
   let giv_mirror = ObjectMirror.new(given)
 
-  giv_mirror.instance_of?(expected).if_true { return }
+  if giv_mirror.instance_of?(expected) { return }
 
   let exp_mirror = ObjectMirror.new(expected)
 

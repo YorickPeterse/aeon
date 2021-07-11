@@ -22,7 +22,7 @@ def with_path(block: do (Path)) {
 
 def with_paths(block: do (Path, Path)) {
   let path1 = fixtures.temporary_file_path
-  let path2 = (path1.to_string + '2').to_path
+  let path2 = (path1.to_string + '2').into_path
 
   process.defer {
     try file.remove(path1) else Nil
@@ -36,7 +36,7 @@ def abstract_socket_address -> String {
   "\0inko-tests-" + process.current.identifier.to_string
 }
 
-def tests(t: Tests) {
+def tests(t: ref Tests) {
   t.group('std::net::unix::SocketAddress.to_path') do (g) {
     g.test('Converting a path based SocketAddress to a Path') {
       let addr = SocketAddress.new('foo.sock')
@@ -102,23 +102,23 @@ def tests(t: Tests) {
     }
   }
 
-  os.unix?.if_true {
+  if os.unix? {
     t.group('std::net::unix::Socket.new') do (g) {
       g.test('Creating datagram Unix socket') {
-        try assert_no_throw { local try Socket.new(DGRAM) }
+        try assert_no_throw { try Socket.new(DGRAM) }
       }
 
       g.test('Creating a stream Unix socket') {
-        try assert_no_throw { local try Socket.new(STREAM) }
+        try assert_no_throw { try Socket.new(STREAM) }
       }
 
-      os.mac?.if_false {
+      if not os.mac? {
         g.test('Creating a sequential packet Unix socket') {
-          try assert_no_throw { local try Socket.new(SEQPACKET) }
+          try assert_no_throw { try Socket.new(SEQPACKET) }
         }
 
         g.test('Creating a raw Unix socket') {
-          try assert_no_throw { local try Socket.new(RAW) }
+          try assert_no_throw { try Socket.new(RAW) }
         }
       }
 
@@ -136,7 +136,7 @@ def tests(t: Tests) {
         let socket = try! Socket.new(STREAM)
 
         with_path do (path) {
-          try assert_no_throw { local try socket.bind(path) }
+          try assert_no_throw { try socket.bind(path) }
         }
       }
 
@@ -145,17 +145,17 @@ def tests(t: Tests) {
         let socket2 = try! Socket.new(STREAM)
 
         with_path do (path) {
-          try! socket1.bind(path)
+          try! socket1.bind(path.clone)
 
-          try assert_throw { local try socket2.bind(path) }
+          try assert_throw { try socket2.bind(path) }
         }
       }
 
-      os.linux?.if_true {
+      if os.linux? {
         g.test('Binding a Unix socket to an abstract address') {
           let socket = try! Socket.new(STREAM)
 
-          try assert_no_throw { local try socket.bind(abstract_socket_address) }
+          try assert_no_throw { try socket.bind(abstract_socket_address) }
         }
       }
     }
@@ -165,7 +165,7 @@ def tests(t: Tests) {
         let socket = try! Socket.new(STREAM)
 
         with_path do (path) {
-          try assert_throw { local try socket.connect(path) }
+          try assert_throw { try socket.connect(path) }
         }
       }
 
@@ -174,14 +174,14 @@ def tests(t: Tests) {
           let listener = try! Socket.new(STREAM)
           let stream = try! Socket.new(STREAM)
 
-          try! listener.bind(path)
+          try! listener.bind(path.clone)
           try! listener.listen
 
-          try assert_no_throw { local try stream.connect(path) }
+          try assert_no_throw { try stream.connect(path) }
         }
       }
 
-      os.linux?.if_true {
+      if os.linux? {
         g.test('Connecting to an abstract address') {
           let listener = try! Socket.new(STREAM)
           let stream = try! Socket.new(STREAM)
@@ -190,24 +190,14 @@ def tests(t: Tests) {
           try! listener.listen
 
           try assert_no_throw {
-            local try stream.connect(abstract_socket_address)
+            try stream.connect(abstract_socket_address)
           }
         }
       }
     }
 
     t.group('std::net::unix::Socket.listen') do (g) {
-      g.test('Marking a Socket as listening with a custom backlog') {
-        with_path do (path) {
-          let socket = try! Socket.new(STREAM)
-
-          try! socket.bind(path)
-
-          try assert_equal(try! socket.listen(4), 4)
-        }
-      }
-
-      g.test('Marking a Socket as listening with the default backlog') {
+      g.test('Marking a Socket as listening') {
         with_path do (path) {
           let socket = try! Socket.new(STREAM)
 
@@ -224,7 +214,7 @@ def tests(t: Tests) {
           let listener = try! Socket.new(STREAM)
           let stream = try! Socket.new(STREAM)
 
-          try! listener.bind(path)
+          try! listener.bind(path.clone)
           try! listener.listen
           try! stream.connect(path)
 
@@ -240,7 +230,7 @@ def tests(t: Tests) {
         with_path do (path) {
           let socket = try! Socket.new(DGRAM)
 
-          try! socket.bind(path)
+          try! socket.bind(path.clone)
           try! socket.send_string_to('ping', path)
 
           try assert_equal(try! socket.read_string(size: 4), 'ping')
@@ -254,7 +244,7 @@ def tests(t: Tests) {
           let socket = try! Socket.new(DGRAM)
           let bytes = 'ping'.to_byte_array
 
-          try! socket.bind(path)
+          try! socket.bind(path.clone)
           try! socket.send_bytes_to(bytes, path)
 
           try assert_equal(try! socket.read_string(size: 4), 'ping')
@@ -268,7 +258,7 @@ def tests(t: Tests) {
           let listener = try! Socket.new(DGRAM)
           let client = try! Socket.new(DGRAM)
 
-          try! listener.bind(path1)
+          try! listener.bind(path1.clone)
           try! client.bind(path2)
           try! client.send_string_to('ping', path1)
 
@@ -293,7 +283,7 @@ def tests(t: Tests) {
         with_path do (path) {
           let socket = try! Socket.new(DGRAM)
 
-          try! socket.bind(path)
+          try! socket.bind(path.clone)
 
           let local_address = try! socket.local_address
 
@@ -306,7 +296,7 @@ def tests(t: Tests) {
       g.test('Obtaining the peer address of a disconnected socket') {
         let socket = try! Socket.new(DGRAM)
 
-        try assert_throw { local try socket.peer_address }
+        try assert_throw { try socket.peer_address }
       }
 
       g.test('Obtaining the peer address of a connected socket') {
@@ -314,7 +304,7 @@ def tests(t: Tests) {
           let listener = try! Socket.new(STREAM)
           let client = try! Socket.new(STREAM)
 
-          try! listener.bind(path)
+          try! listener.bind(path.clone)
           try! listener.listen
           try! client.connect(path)
 
@@ -329,7 +319,7 @@ def tests(t: Tests) {
           let socket = try! Socket.new(DGRAM)
           let bytes = ByteArray.new
 
-          try! socket.bind(path)
+          try! socket.bind(path.clone)
           try! socket.send_string_to('ping', path)
 
           let read = try! socket.read_bytes(bytes: bytes, size: 4)
@@ -346,7 +336,7 @@ def tests(t: Tests) {
           let listener = try! Socket.new(STREAM)
           let stream = try! Socket.new(STREAM)
 
-          try! listener.bind(path)
+          try! listener.bind(path.clone)
           try! listener.listen
           try! stream.connect(path)
 
@@ -402,7 +392,7 @@ def tests(t: Tests) {
           let listener = try! Socket.new(STREAM)
           let stream = try! Socket.new(STREAM)
 
-          try! listener.bind(path)
+          try! listener.bind(path.clone)
           try! listener.listen
           try! stream.connect(path)
           try! stream.shutdown_read
@@ -420,12 +410,12 @@ def tests(t: Tests) {
           let listener = try! Socket.new(STREAM)
           let stream = try! Socket.new(STREAM)
 
-          try! listener.bind(path)
+          try! listener.bind(path.clone)
           try! listener.listen
           try! stream.connect(path)
           try! stream.shutdown_write
 
-          try assert_throw { local try stream.write_string('ping') }
+          try assert_throw { try stream.write_string('ping') }
         }
       }
     }
@@ -436,12 +426,12 @@ def tests(t: Tests) {
           let listener = try! Socket.new(STREAM)
           let stream = try! Socket.new(STREAM)
 
-          try! listener.bind(path)
+          try! listener.bind(path.clone)
           try! listener.listen
           try! stream.connect(path)
           try! stream.shutdown
 
-          try assert_throw { local try stream.write_string('ping') }
+          try assert_throw { try stream.write_string('ping') }
         }
       }
 
@@ -450,7 +440,7 @@ def tests(t: Tests) {
           let listener = try! Socket.new(STREAM)
           let stream = try! Socket.new(STREAM)
 
-          try! listener.bind(path)
+          try! listener.bind(path.clone)
           try! listener.listen
           try! stream.connect(path)
           try! stream.shutdown
@@ -465,15 +455,15 @@ def tests(t: Tests) {
     t.group('std::net::unix::UnixDatagram') do (g) {
       g.test('Creating a UnixDatagram') {
         with_path do (path) {
-          try assert_no_throw { local try UnixDatagram.new(path) }
+          try assert_no_throw { try UnixDatagram.new(path) }
         }
       }
 
       g.test('Creating a UnixDatagram using an address that is already in use') {
         with_path do (path) {
-          try! UnixDatagram.new(path)
+          try! UnixDatagram.new(path.clone)
 
-          try assert_throw { local try UnixDatagram.new(path) }
+          try assert_throw { try UnixDatagram.new(path) }
         }
       }
     }
@@ -482,21 +472,21 @@ def tests(t: Tests) {
       g.test('Connecting a UnixDatagram') {
         with_paths do (path1, path2) {
           let socket1 = try! UnixDatagram.new(path1)
-          let socket2 = try! UnixDatagram.new(path2)
+          let socket2 = try! UnixDatagram.new(path2.clone)
 
           process.defer {
             socket1.close
             socket2.close
           }
 
-          try assert_no_throw { local try socket1.connect(path2) }
+          try assert_no_throw { try socket1.connect(path2) }
         }
       }
 
       g.test('Reading and writing from a connected UdpSocket') {
         with_paths do (path1, path2) {
           let socket1 = try! UnixDatagram.new(path1)
-          let socket2 = try! UnixDatagram.new(path2)
+          let socket2 = try! UnixDatagram.new(path2.clone)
 
           try! socket1.connect(path2)
           try! socket1.write_string('ping')
@@ -509,7 +499,7 @@ def tests(t: Tests) {
     t.group('std::net::unix::UnixDatagram.send_to') do (g) {
       g.test('Sending a message to a specific address') {
         with_path do (path) {
-          let socket = try! UnixDatagram.new(path)
+          let socket = try! UnixDatagram.new(path.clone)
 
           try! socket.send_string_to('ping', path)
 
@@ -521,7 +511,7 @@ def tests(t: Tests) {
     t.group('std::net::unix::UnixDatagram.receive_from') do (g) {
       g.test('Receiving a message and a SocketAddress') {
         with_paths do (path1, path2) {
-          let listener = try! UnixDatagram.new(path1)
+          let listener = try! UnixDatagram.new(path1.clone)
           let client = try! UnixDatagram.new(path2)
 
           try! client.send_string_to('ping', path1)
@@ -538,7 +528,7 @@ def tests(t: Tests) {
     t.group('std::net::unix::UnixDatagram.local_address') do (g) {
       g.test('Obtaining the local address of a UnixDatagram') {
         with_path do (path) {
-          let socket = try! UnixDatagram.new(path)
+          let socket = try! UnixDatagram.new(path.clone)
           let local_address = try! socket.local_address
 
           try assert_equal(local_address.to_string, path.to_string)
@@ -549,7 +539,7 @@ def tests(t: Tests) {
     t.group('std::net::unix::UnixDatagram.read_bytes') do (g) {
       g.test('Reading bytes from a UnixDatagram') {
         with_path do (path) {
-          let socket = try! UnixDatagram.new(path)
+          let socket = try! UnixDatagram.new(path.clone)
           let bytes = ByteArray.new
 
           try! socket.send_string_to('ping', path)
@@ -565,7 +555,7 @@ def tests(t: Tests) {
     t.group('std::net::unix::UnixDatagram.write_bytes') do (g) {
       g.test('Writing bytes to a connected UnixDatagram') {
         with_paths do (path1, path2) {
-          let server = try! UnixDatagram.new(path1)
+          let server = try! UnixDatagram.new(path1.clone)
           let client = try! UnixDatagram.new(path2)
 
           try! client.connect(path1)
@@ -583,7 +573,7 @@ def tests(t: Tests) {
           let socket = try! UnixDatagram.new(path)
 
           try assert_throw {
-            local try socket.write_bytes('ping'.to_byte_array)
+            try socket.write_bytes('ping'.to_byte_array)
           }
         }
       }
@@ -614,10 +604,10 @@ def tests(t: Tests) {
         with_path do (path) {
           let listener = try! Socket.new(STREAM)
 
-          try! listener.bind(path)
+          try! listener.bind(path.clone)
           try! listener.listen
 
-          try assert_no_throw { local try UnixStream.new(path) }
+          try assert_no_throw { try UnixStream.new(path) }
         }
       }
     }
@@ -627,7 +617,7 @@ def tests(t: Tests) {
         with_path do (path) {
           let listener = try! Socket.new(STREAM)
 
-          try! listener.bind(path)
+          try! listener.bind(path.clone)
           try! listener.listen
 
           let stream = try! UnixStream.new(path)
@@ -643,10 +633,10 @@ def tests(t: Tests) {
         with_path do (path) {
           let listener = try! Socket.new(STREAM)
 
-          try! listener.bind(path)
+          try! listener.bind(path.clone)
           try! listener.listen
 
-          let stream = try! UnixStream.new(path)
+          let stream = try! UnixStream.new(path.clone)
           let peer_addr = try! stream.peer_address
 
           try assert_equal(peer_addr.to_string, path.to_string)
@@ -659,7 +649,7 @@ def tests(t: Tests) {
         with_path do (path) {
           let listener = try! Socket.new(STREAM)
 
-          try! listener.bind(path)
+          try! listener.bind(path.clone)
           try! listener.listen
 
           let stream = try! UnixStream.new(path)
@@ -679,7 +669,7 @@ def tests(t: Tests) {
         with_path do (path) {
           let listener = try! Socket.new(STREAM)
 
-          try! listener.bind(path)
+          try! listener.bind(path.clone)
           try! listener.listen
 
           let stream = try! UnixStream.new(path)
@@ -697,7 +687,7 @@ def tests(t: Tests) {
         with_path do (path) {
           let listener = try! Socket.new(STREAM)
 
-          try! listener.bind(path)
+          try! listener.bind(path.clone)
           try! listener.listen
 
           let stream = try! UnixStream.new(path)
@@ -715,7 +705,7 @@ def tests(t: Tests) {
         with_path do (path) {
           let listener = try! Socket.new(STREAM)
 
-          try! listener.bind(path)
+          try! listener.bind(path.clone)
           try! listener.listen
 
           let stream = try! UnixStream.new(path)
@@ -730,7 +720,7 @@ def tests(t: Tests) {
         with_path do (path) {
           let listener = try! Socket.new(STREAM)
 
-          try! listener.bind(path)
+          try! listener.bind(path.clone)
           try! listener.listen
 
           let stream = try! UnixStream.new(path)
@@ -745,7 +735,7 @@ def tests(t: Tests) {
         with_path do (path) {
           let listener = try! Socket.new(STREAM)
 
-          try! listener.bind(path)
+          try! listener.bind(path.clone)
           try! listener.listen
 
           let stream = try! UnixStream.new(path)
@@ -764,14 +754,14 @@ def tests(t: Tests) {
         with_path do (path) {
           let listener = try! Socket.new(STREAM)
 
-          try! listener.bind(path)
+          try! listener.bind(path.clone)
           try! listener.listen
 
           let stream = try! UnixStream.new(path)
 
           try! stream.shutdown_write
 
-          try assert_throw { local try stream.write_string('ping') }
+          try assert_throw { try stream.write_string('ping') }
         }
       }
     }
@@ -781,14 +771,14 @@ def tests(t: Tests) {
         with_path do (path) {
           let listener = try! Socket.new(STREAM)
 
-          try! listener.bind(path)
+          try! listener.bind(path.clone)
           try! listener.listen
 
           let stream = try! UnixStream.new(path)
 
           try! stream.shutdown
 
-          try assert_throw { local try stream.write_string('ping') }
+          try assert_throw { try stream.write_string('ping') }
         }
       }
 
@@ -796,7 +786,7 @@ def tests(t: Tests) {
         with_path do (path) {
           let listener = try! Socket.new(STREAM)
 
-          try! listener.bind(path)
+          try! listener.bind(path.clone)
           try! listener.listen
 
           let stream = try! UnixStream.new(path)
@@ -813,9 +803,7 @@ def tests(t: Tests) {
     t.group('std::net::unix::UnixListener.new') do (g) {
       g.test('Creating a UnixListener') {
         with_path do (path) {
-          try assert_no_throw {
-            local try UnixListener.new(path)
-          }
+          try assert_no_throw { try UnixListener.new(path) }
         }
       }
     }
@@ -823,11 +811,14 @@ def tests(t: Tests) {
     t.group('std::net::unix::UnixListener.accept') do (g) {
       g.test('Accepting an incoming connection') {
         with_path do (path) {
-          let listener = try! UnixListener.new(path)
+          let listener = try! UnixListener.new(path.clone)
           let stream = try! UnixStream.new(path)
           let connection = try! listener.accept
 
-          try assert_equal(try! connection.local_address, try! stream.peer_address)
+          try assert_equal(
+            try! connection.local_address,
+            try! stream.peer_address
+          )
         }
       }
     }
@@ -835,7 +826,7 @@ def tests(t: Tests) {
     t.group('std::net::unix::UnixListener.local_address') do (g) {
       g.test('Obtaining the local address') {
         with_path do (path) {
-          let listener = try! UnixListener.new(path)
+          let listener = try! UnixListener.new(path.clone)
           let addr = try! listener.local_address
 
           try assert_equal(addr.to_string, path.to_string)

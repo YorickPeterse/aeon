@@ -1,10 +1,11 @@
 //! Functions for Inko processes.
 use crate::execution_context::ExecutionContext;
-use crate::object_pointer::ObjectPointer;
-use crate::object_value;
-use crate::process::RcProcess;
+use crate::mem::allocator::{BumpAllocator, Pointer};
+use crate::mem::generator::GeneratorPointer;
+use crate::mem::objects::{Array, Int, String as InkoString};
+use crate::mem::process::{Client, ClientPointer, ServerPointer};
 use crate::runtime_error::RuntimeError;
-use crate::vm::state::RcState;
+use crate::vm::state::State;
 
 /// Returns a stacktrace for the current process.
 ///
@@ -13,12 +14,14 @@ use crate::vm::state::RcState;
 /// 1. The number of stack frames to include.
 /// 2. The number of stack frames to skip, starting at the current frame.
 pub fn process_stacktrace(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let limit = arguments[0].usize_value()?;
-    let skip = arguments[1].usize_value()?;
+    state: &State,
+    alloc: &mut BumpAllocator,
+    _: ServerPointer,
+    generator: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let limit = unsafe { Int::read(arguments[0]) as usize };
+    let skip = unsafe { Int::read(arguments[1]) as usize };
 
     let mut trace = if limit > 0 {
         Vec::with_capacity(limit)
@@ -27,7 +30,7 @@ pub fn process_stacktrace(
     };
 
     let mut contexts: Vec<&ExecutionContext> = {
-        let iter = process.contexts().into_iter().skip(skip);
+        let iter = generator.contexts().into_iter().skip(skip);
 
         if limit > 0 {
             iter.take(limit).collect()
@@ -38,19 +41,58 @@ pub fn process_stacktrace(
 
     contexts.reverse();
 
-    for context in contexts {
-        let file = context.code.file;
-        let name = context.code.name;
-        let line = ObjectPointer::integer(i64::from(context.line()));
-        let tuple = process.allocate(
-            object_value::array(vec![file, name, line]),
-            state.array_prototype,
-        );
+    let str_class = state.permanent_space.string_class();
+    let ary_class = state.permanent_space.array_class();
 
-        trace.push(tuple);
+    for context in contexts {
+        let file =
+            InkoString::alloc(alloc, str_class, context.method.file.clone());
+        let name =
+            InkoString::alloc(alloc, str_class, context.method.name.clone());
+        let line = Pointer::int(i64::from(context.line()));
+        let triple = Array::alloc(alloc, ary_class, vec![file, name, line]);
+
+        trace.push(triple);
     }
 
-    Ok(process.allocate(object_value::array(trace), state.array_prototype))
+    Ok(Array::alloc(alloc, ary_class, trace))
 }
 
-register!(process_stacktrace);
+/// Clones a Client.
+///
+/// This function requires one argument: the client to clone.
+pub fn process_client_clone(
+    state: &State,
+    alloc: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let client = unsafe { arguments[0].get::<Client>() };
+    let server = client.server();
+    let new_client =
+        Client::alloc(alloc, state.permanent_space.client_class(), server);
+
+    Ok(new_client.as_pointer())
+}
+
+/// Drops a process client.
+///
+/// This function requires one argument: the client to drop.
+pub fn process_client_drop(
+    state: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    unsafe { Client::drop(ClientPointer::new(arguments[0])) };
+
+    Ok(state.permanent_space.nil_singleton)
+}
+
+register!(
+    process_stacktrace,
+    process_client_clone,
+    process_client_drop
+);

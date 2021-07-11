@@ -1,288 +1,143 @@
 //! VM functions for working with Inko processes.
-use crate::block::Block;
 use crate::duration;
-use crate::object_pointer::ObjectPointer;
-use crate::object_value;
-use crate::process::{Process, RcProcess, RescheduleRights};
-use crate::runtime_error::RuntimeError;
+use crate::indexes::MethodIndex;
+use crate::mem::allocator::Pointer;
+use crate::mem::generator::GeneratorPointer;
+use crate::mem::objects::{ClassPointer, Float};
+use crate::mem::process::{
+    Client, ClientPointer, Finished, RescheduleRights, Server, ServerPointer,
+};
 use crate::scheduler::process_worker::ProcessWorker;
-use crate::vm::state::RcState;
+use crate::scheduler::timeouts::Timeout;
+use crate::vm::state::State;
 
 #[inline(always)]
-pub fn process_allocate(state: &RcState, block: &Block) -> RcProcess {
-    Process::from_block(block, state.global_allocator.clone(), &state.config)
-}
-
-#[inline(always)]
-pub fn process_current(state: &RcState, process: &RcProcess) -> ObjectPointer {
-    process.allocate(
-        object_value::process(process.clone()),
-        state.process_prototype,
-    )
-}
-
-#[inline(always)]
-pub fn process_spawn(
-    state: &RcState,
-    current_process: &RcProcess,
-    block_ptr: ObjectPointer,
-) -> Result<ObjectPointer, String> {
-    let block = block_ptr.block_value()?;
-    let new_proc = process_allocate(&state, &block);
-
-    // We schedule the process right away so we don't have to wait for the
-    // allocation below (which may require requesting a new block) to finish.
-    state.scheduler.schedule(new_proc.clone());
-
-    let new_proc_ptr = current_process
-        .allocate(object_value::process(new_proc), state.process_prototype);
-
-    Ok(new_proc_ptr)
-}
-
-#[inline(always)]
-pub fn process_send_message(
-    state: &RcState,
-    sender: &RcProcess,
-    receiver_ptr: ObjectPointer,
-    msg: ObjectPointer,
-) -> Result<ObjectPointer, RuntimeError> {
-    let receiver = receiver_ptr.process_value()?;
-
-    if receiver == sender {
-        receiver.send_message_from_self(msg);
-    } else {
-        receiver.send_message_from_external_process(msg)?;
-        attempt_to_reschedule_process(state, &receiver);
-    }
-
-    Ok(msg)
-}
-
-#[inline(always)]
-pub fn process_receive_message(
-    state: &RcState,
-    process: &RcProcess,
-) -> Result<Option<ObjectPointer>, ObjectPointer> {
-    if let Some(msg) = process.receive_message() {
-        process.no_longer_waiting_for_message();
-
-        Ok(Some(msg))
-    } else if process.is_waiting_for_message() {
-        // A timeout expired, but no message was received.
-        process.no_longer_waiting_for_message();
-
-        Err(state.intern_string("The timeout expired".to_string()))
-    } else {
-        Ok(None)
-    }
-}
-
-#[inline(always)]
-pub fn wait_for_message(
-    state: &RcState,
-    process: &RcProcess,
-    timeout_ptr: ObjectPointer,
-) -> Result<(), String> {
-    let wait_for = duration::from_f64(timeout_ptr.float_value()?)?;
-
-    process.waiting_for_message();
-
-    if let Some(duration) = wait_for {
-        state.timeout_worker.suspend(process.clone(), duration);
-    } else {
-        process.suspend_without_timeout();
-    }
-
-    if process.has_messages() {
-        // We may have received messages before marking the process as
-        // suspended. If this happens we have to reschedule ourselves, otherwise
-        // our process may be suspended until it is sent another message.
-        attempt_to_reschedule_process(state, process);
-    }
-
-    Ok(())
-}
-
-#[inline(always)]
-pub fn process_suspend_current(
-    state: &RcState,
-    process: &RcProcess,
-    timeout_ptr: ObjectPointer,
-) -> Result<(), String> {
-    let wait_for = duration::from_f64(timeout_ptr.float_value()?)?;
-
-    if let Some(duration) = wait_for {
-        state.timeout_worker.suspend(process.clone(), duration);
-    } else {
-        state.scheduler.schedule(process.clone());
-    }
-
-    Ok(())
-}
-
-#[inline(always)]
-pub fn process_set_blocking(
-    state: &RcState,
-    process: &RcProcess,
-    blocking_ptr: ObjectPointer,
-) -> ObjectPointer {
-    let is_blocking = blocking_ptr == state.true_object;
-
-    if process.is_pinned() || is_blocking == process.is_blocking() {
-        // If a process is pinned we can't move it to another pool. We can't
-        // panic in this case, since it would prevent code from using certain IO
-        // operations that may try to move the process to another pool.
-        //
-        // Instead, we simply ignore the request and continue running on the
-        // current thread.
-        state.false_object
-    } else {
-        process.set_blocking(is_blocking);
-        state.true_object
-    }
-}
-
-#[inline(always)]
-pub fn process_add_defer_to_caller(
-    process: &RcProcess,
-    block: ObjectPointer,
-) -> Result<ObjectPointer, String> {
-    if block.block_value().is_err() {
-        return Err("only Blocks can be deferred".to_string());
-    }
-
-    let context = process.context_mut();
-
-    // We can not use `if let Some(...) = ...` here as the
-    // mutable borrow of "context" prevents the 2nd mutable
-    // borrow inside the "else".
-    if context.parent().is_some() {
-        context.parent_mut().unwrap().add_defer(block);
-    } else {
-        context.add_defer(block);
-    }
-
-    Ok(block)
-}
-
-#[inline(always)]
-pub fn process_set_pinned(
-    state: &RcState,
-    process: &RcProcess,
+pub fn allocate(
+    state: &State,
     worker: &mut ProcessWorker,
-    pinned: ObjectPointer,
-) -> ObjectPointer {
-    if pinned == state.true_object {
-        let result = if process.thread_id().is_some() {
-            state.false_object
+    generator: GeneratorPointer,
+    server_class_ptr: Pointer,
+    start_reg: u16,
+    num_args: u16,
+) -> Pointer {
+    let client_class = state.permanent_space.client_class();
+    let server_class = unsafe { ClassPointer::new(server_class_ptr) };
+    let alloc = worker.allocator();
+    let mut server = Server::alloc(alloc, server_class);
+
+    server.set_values(generator.context.get_registers(start_reg, num_args));
+    Client::alloc(alloc, client_class, server).as_pointer()
+}
+
+#[inline(always)]
+pub fn send_message(
+    state: &State,
+    generator: GeneratorPointer,
+    client_ptr: Pointer,
+    method: u16,
+    start_reg: u16,
+    num_args: u16,
+) {
+    let client = unsafe { ClientPointer::new(client_ptr) };
+    let mut server = client.server();
+    let args = generator.context.get_registers(start_reg, num_args);
+
+    match server.send_message(unsafe { MethodIndex::new(method) }, args) {
+        RescheduleRights::AcquiredWithTimeout => {
+            state.timeout_worker.increase_expired_timeouts();
+            state.scheduler.schedule(server);
+        }
+        RescheduleRights::Acquired => {
+            state.scheduler.schedule(server);
+        }
+        _ => {}
+    }
+}
+
+#[inline(always)]
+pub fn yield_control(state: &State, process: ServerPointer) {
+    state.scheduler.schedule(process);
+}
+
+#[inline(always)]
+pub fn suspend(state: &State, mut process: ServerPointer, time_ptr: Pointer) {
+    let time = unsafe { Float::read(time_ptr) };
+    let timeout = Timeout::with_rc(duration::from_f64(time));
+
+    process.suspend(timeout.clone());
+    state.timeout_worker.suspend(process, timeout);
+}
+
+#[inline(always)]
+pub fn set_blocking(
+    state: &State,
+    mut server: ServerPointer,
+    blocking: Pointer,
+) -> Pointer {
+    let is_blocking = blocking == state.permanent_space.true_singleton;
+
+    if server.thread_id().is_some() || is_blocking == server.is_blocking() {
+        // If a process is pinned, we can't move it to another pool.
+        return state.permanent_space.false_singleton;
+    }
+
+    if is_blocking {
+        server.set_blocking();
+    } else {
+        server.no_longer_blocking();
+    }
+
+    state.permanent_space.true_singleton
+}
+
+#[inline(always)]
+pub fn set_pinned(
+    state: &State,
+    worker: &mut ProcessWorker,
+    mut server: ServerPointer,
+    pinned: Pointer,
+) -> Pointer {
+    if pinned == state.permanent_space.true_singleton {
+        let result = if server.thread_id().is_some() {
+            state.permanent_space.false_singleton
         } else {
-            process.set_thread_id(worker.id as u8);
-            state.true_object
+            server.pin_to_thread(worker.id as u16);
+            state.permanent_space.true_singleton
         };
 
         worker.enter_exclusive_mode();
-        result
-    } else {
-        process.unset_thread_id();
-        worker.leave_exclusive_mode();
-        state.false_object
+
+        return result;
     }
+
+    server.unpin_from_thread();
+    worker.leave_exclusive_mode();
+    state.permanent_space.false_singleton
 }
 
 #[inline(always)]
-pub fn process_identifier(
-    state: &RcState,
-    current_process: &RcProcess,
-    process_ptr: ObjectPointer,
-) -> Result<ObjectPointer, String> {
-    let proc = process_ptr.process_value()?;
-    let proto = state.string_prototype;
-    let identifier = current_process.allocate_usize(proc.identifier(), proto);
-
-    Ok(identifier)
-}
-
-#[inline(always)]
-pub fn process_unwind_until_defining_scope(process: &RcProcess) {
-    let top_binding = process.context().top_binding_pointer();
-
-    loop {
-        let context = process.context();
-
-        if context.binding_pointer() == top_binding || process.pop_context() {
-            return;
-        }
-    }
-}
-
-/// Attempts to reschedule the given process after it was sent a message.
-fn attempt_to_reschedule_process(state: &RcState, process: &RcProcess) {
-    // The logic below is necessary as a process' state may change between
-    // sending it a message and attempting to reschedule it. Imagine we have two
-    // processes: A, and B. A sends B a message, and B waits for a message twice
-    // in a row. Now imagine the order of operations to be as follows:
-    //
-    //     Process A    | Process B
-    //     -------------+--------------
-    //     send(X)      | receive₁() -> X
-    //                  | receive₂()
-    //     reschedule() |
-    //
-    // The second receive() happens before we check the receiver's state to
-    // determine if we can reschedule it. As a result we observe the process to
-    // be suspended, and would attempt to reschedule it. Without checking if
-    // this is actually still necessary, we would wake up the receiving process
-    // too early, resulting the second receive() producing a nil object:
-    //
-    //     Process A    | Process B
-    //     -------------+--------------
-    //     send(X)      | receive₁() -> X
-    //                  | receive₂() -> suspends
-    //     reschedule() |
-    //                  | receive₂() -> nil
-    //
-    // The logic below ensures that we only wake up a process when actually
-    // necessary, and suspend it again if it didn't receive any messages (taking
-    // into account messages it may have received while doing so).
-    let reschedule = match process.acquire_rescheduling_rights() {
-        RescheduleRights::Failed => false,
-        RescheduleRights::Acquired => {
-            if process.has_messages() {
-                true
-            } else {
-                process.suspend_without_timeout();
-
-                if process.has_messages() {
-                    process.acquire_rescheduling_rights().are_acquired()
-                } else {
-                    false
-                }
+pub fn finish_generator(
+    state: &State,
+    worker: &mut ProcessWorker,
+    process: ServerPointer,
+) {
+    match process.finish_generator() {
+        Finished::Reschedule => state.scheduler.schedule(process),
+        Finished::Terminate => {
+            if process.thread_id().is_some() {
+                worker.leave_exclusive_mode();
             }
-        }
-        RescheduleRights::AcquiredWithTimeout(timeout) => {
-            if process.has_messages() {
-                state.timeout_worker.increase_expired_timeouts();
-                true
-            } else {
-                process.suspend_with_timeout(timeout);
 
-                if process.has_messages() {
-                    if process.acquire_rescheduling_rights().are_acquired() {
-                        state.timeout_worker.increase_expired_timeouts();
-
-                        true
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                }
+            if process.is_main() {
+                state.terminate(0);
             }
-        }
-    };
 
-    if reschedule {
-        state.scheduler.schedule(process.clone());
+            Server::drop(process);
+        }
+        Finished::WaitForMessage => {
+            // When waiting for a message, clients will reschedule or terminate
+            // the process when needed. This means at this point we can't use
+            // the process anymore, as it may have already been rescheduled.
+        }
     }
 }

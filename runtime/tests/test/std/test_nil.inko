@@ -1,37 +1,18 @@
 import std::test::*
 
-def tests(t: Tests) {
+def tests(t: ref Tests) {
   t.group('std::nil::NilType.truthy?') do (g) {
     g.test('Checking if a Nil is truthy') {
       try assert_false(Nil.truthy?)
     }
   }
 
-  t.group('std::nil::NilType.if_true') do (g) {
-    g.test('The supplied block is never called') {
-      let mut num = 0
+  t.group('std::nil::NilType.clone') do (g) {
+    g.test('Cloning a Nil') {
+      let a = Nil
+      let b = a.clone
 
-      Nil.if_true { num = 42 }
-
-      try assert_equal(num, 0)
-    }
-  }
-
-  t.group('std::nil::NilType.if_false') do (g) {
-    g.test('The supplied block is always called') {
-      let mut num = 0
-
-      Nil.if_false { num = 42 }
-
-      try assert_equal(num, 42)
-    }
-  }
-
-  t.group('std::nil::NilType.if') do (g) {
-    g.test('The block passed to the "false" argument is called') {
-      let actual = Nil.if(true: { 1729 }, false: { 42 })
-
-      try assert_equal(actual, 42)
+      try assert_equal(a, b)
     }
   }
 }

@@ -2,7 +2,7 @@ import std::debug::(self, StackFrame)
 import std::mirror::ModuleMirror
 import std::test::*
 
-def tests(t: Tests) {
+def tests(t: ref Tests) {
   t.group('std::debug::StackFrame.path') do (g) {
     g.test('Obtaining the file path of a StackFrame') {
       let frame = StackFrame.new(path: 'foo.inko', name: 'foo', line: 1)
@@ -29,7 +29,7 @@ def tests(t: Tests) {
 
   t.group('std::debug.stacktrace') do (g) {
     g.test('Obtaining a stacktrace to the caller') {
-      let trace = debug.stacktrace
+      let trace = debug.stacktrace(skip: 1, limit: 0)
       let mirror = ModuleMirror.new(ThisModule)
       let last = trace[-1]
 
@@ -40,28 +40,17 @@ def tests(t: Tests) {
     }
 
     g.test('Limiting the number of call frames in a stacktrace') {
-      let trace = debug.stacktrace(limit: 1)
+      let trace = debug.stacktrace(skip: 1, limit: 1)
 
       try assert_equal(trace.length, 1)
     }
 
     g.test('Skipping a number of call frames in a stacktrace') {
-      let trace = debug.stacktrace(skip: 2)
+      let trace = debug.stacktrace(skip: 2, limit: 0)
       let mirror = ModuleMirror.new(ThisModule)
 
       try assert_true(trace.length > 0)
       try assert_not_equal(trace[-1].path, mirror.source_path)
-    }
-  }
-
-  t.group('std::debug.last_call_frame_in') do (g) {
-    g.test('Obtaining the last call frame of a file') {
-      let mirror = ModuleMirror.new(ThisModule)
-      let frame = debug.last_call_frame_in(mirror.source_path)
-
-      try assert_equal(frame.name, '<block>')
-      try assert_equal(frame.path, mirror.source_path)
-      try assert_equal(frame.line, 60)
     }
   }
 }

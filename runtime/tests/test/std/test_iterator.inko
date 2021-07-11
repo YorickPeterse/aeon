@@ -8,60 +8,42 @@ class EmptyIterator {
   }
 }
 
-impl Iterator!(Integer, Never) for EmptyIterator {
-  def next -> ?Integer {
+impl Iterator!(Int, Never) for EmptyIterator {
+  def next -> ?Int {
     Option.none
   }
 }
 
 class SimpleIterator {
-  @values: Array!(Integer)
-  @index: Integer
+  @values: Array!(Int)
+  @index: Int
 
   static def new -> Self {
     Self { @values = Array.new(10, 20, 30), @index = 0 }
   }
 }
 
-impl Iterator!(Integer, Never) for SimpleIterator {
-  def next -> ?Integer {
-    @values.get(@index).let do (_) { @index += 1 }
+impl Iterator!(Int, Never) for SimpleIterator {
+  def next -> ?Int {
+    let value = @values.get(@index.clone).map do (val) { val.clone }
+
+    if value { @index += 1 }
+
+    value
   }
 }
 
-def gen => Integer {
+def gen => Int {
   yield 10
   yield 20
 }
 
-def gen_with_error !! String => Integer {
+def gen_with_error !! String => Int {
   yield 10
   throw 'foo'
 }
 
-def tests(t: Tests) {
-  t.group('std::iterator::Iterator.each') do (g) {
-    g.test('Iterating over the values in an Iterator') {
-      let iter = SimpleIterator.new
-      let values = Array.new
-
-      iter.each do (value) { values.push(value) }
-
-      try assert_equal(values, Array.new(10, 20, 30))
-    }
-
-    g.test('Iterating over the values in an empty Iterator') {
-      let iter = EmptyIterator.new
-      let values = Array.new
-
-      iter.each do (value) {
-        values.push(value)
-      }
-
-      try assert_equal(values, Array.new)
-    }
-  }
-
+def tests(t: ref Tests) {
   t.group('std::iterator::Iterator.find') do (g) {
     g.test('Finding the first occurrence of a value in an Iterator') {
       let iter = SimpleIterator.new
@@ -108,9 +90,7 @@ def tests(t: Tests) {
       let iter = SimpleIterator.new.map do (val) { val * 2 }
       let values = Array.new
 
-      iter.each do (value) {
-        values.push(value)
-      }
+      for value in iter { values.push(value) }
 
       try assert_equal(values, Array.new(20, 40, 60))
     }
@@ -144,16 +124,16 @@ def tests(t: Tests) {
       let iter = EmptyIterator.new
       let pair = iter.partition do (value) { value >= 20 }
 
-      try assert_true(pair.first.empty?)
-      try assert_true(pair.second.empty?)
+      try assert_true(pair.0.empty?)
+      try assert_true(pair.1.empty?)
     }
 
     g.test('Partitioning an Iterator with value') {
       let iter = SimpleIterator.new
       let pair = iter.partition do (value) { value >= 20 }
 
-      try assert_equal(pair.first, Array.new(20, 30))
-      try assert_equal(pair.second, Array.new(10))
+      try assert_equal(pair.0, Array.new(20, 30))
+      try assert_equal(pair.1, Array.new(10))
     }
   }
 
@@ -206,7 +186,9 @@ def tests(t: Tests) {
 
   t.group('std::iterator::Iterator.join') do (g) {
     g.test('Joining values in an empty Iterator') {
-      try assert_equal(Array.new.iter.join(','), '')
+      let array: Array!(String) = Array.new
+
+      try assert_equal(array.iter.join(','), '')
     }
 
     g.test('Joining a single value') {
@@ -259,6 +241,18 @@ def tests(t: Tests) {
     }
   }
 
+  t.group('std::iterator::Iterator.with_index') do (g) {
+    g.test('Iterating over values with an index') {
+      let nums = Array.new(10, 20, 30)
+      let iter = nums.iter.with_index
+
+      try assert_equal(iter.next, Option.some(Pair.new(0, 10)))
+      try assert_equal(iter.next, Option.some(Pair.new(1, 20)))
+      try assert_equal(iter.next, Option.some(Pair.new(2, 30)))
+      try assert_true(iter.next.none?)
+    }
+  }
+
   t.group('std::iterator::Generator.resume') do (g) {
     g.test("Resuming a generator that doesn't throw") {
       let iter = gen
@@ -271,8 +265,8 @@ def tests(t: Tests) {
     g.test('Resuming a generator that throws') {
       let iter = gen_with_error
 
-      try assert_true(try iter.resume.some? else False)
-      try assert_false(try iter.resume.some? else False)
+      try assert_true(try iter.resume else { Option.none }.some?)
+      try assert_false(try iter.resume else { Option.none }.some?)
     }
   }
 

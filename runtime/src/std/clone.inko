@@ -1,0 +1,10 @@
+# Copying of objects.
+
+# A trait for creating copies of objects.
+trait Clone {
+  # Returns a copy of `self`.
+  def clone -> Self
+}
+
+# A type that is cloned when it's moved.
+trait Copy: Clone {}

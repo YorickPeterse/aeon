@@ -33,7 +33,7 @@ module Inkoc
         type
       end
 
-      def closure?
+      def block?
         true
       end
 

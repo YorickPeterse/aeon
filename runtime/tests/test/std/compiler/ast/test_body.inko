@@ -11,8 +11,11 @@ def location -> SourceLocation {
 def tests(t: Tests) {
   t.group('std::compiler::ast::body::Body.imports') do (g) {
     g.test('Extracting imports from a module body') {
-      let parser =
-        Parser.new(input: "import std::foo\nimport std::bar", file: 'test.inko')
+      let parser = Parser.new(
+        input: "import std::foo\nimport std::bar",
+        file: 'test.inko',
+        parse_comments: False
+      )
 
       let body = try! parser.parse
       let imports = body.imports

@@ -3,7 +3,6 @@ import std::compiler::module_name::ModuleName
 import std::compiler::source_location::SourceLocation
 import std::conversion::ToString
 import std::fs::path::Path
-import std::iterator::Iterator
 import std::length::Length
 
 # The level identifier to use for errors.
@@ -35,17 +34,17 @@ class Diagnostic {
   }
 
   # Returns the level of this diagnostic.
-  def level -> String {
+  def level -> ref String {
     @level
   }
 
   # Returns the message of this diagnostic.
-  def message -> String {
+  def message -> ref String {
     @message
   }
 
   # Returns the location this diagnostic was triggered on.
-  def location -> SourceLocation {
+  def location -> ref SourceLocation {
     @location
   }
 }
@@ -64,7 +63,7 @@ class Diagnostics {
 
   # Returns `True` if there are one or more error diagnostics.
   def errors? -> Boolean {
-    @errors
+    @errors.clone
   }
 
   # Returns `True` if any diagnostics have been recorded.
@@ -73,25 +72,26 @@ class Diagnostics {
   }
 
   # Appends the `Diagnostics` to `self`.
-  def append(other: Diagnostics) -> Self {
-    other.iter.each do (diag) {
-      (diag.level == ERROR).if_true {
-        @errors = True
-      }
+  def append(other: Diagnostics) {
+    for diag in other.into_iter {
+      if diag.level == ERROR { @errors = True }
 
       @values.push(diag)
     }
-
-    self
   }
 
-  # Returns an `Iterator` over all the values in this collection.
-  def iter -> Iterator!(Diagnostic, Never) {
-    @values.iter
+  # Yields references to all diagnostics.
+  def iter => ref Diagnostic {
+    for diag in @values { yield diag }
+  }
+
+  # Yields all diagnostics as owned values.
+  move def into_iter => Diagnostic {
+    for diag in @values.into_iter { yield diag }
   }
 
   # Records a new error diagnostic.
-  def error(message: ToString, location: SourceLocation) -> Diagnostic {
+  def error(message: ToString, location: SourceLocation) {
     let diag = Diagnostic
       .new(level: ERROR, message: message.to_string, location: location)
 
@@ -101,7 +101,7 @@ class Diagnostics {
   }
 
   # Records a new warning diagnostic.
-  def warning(message: ToString, location: SourceLocation) -> Diagnostic {
+  def warning(message: ToString, location: SourceLocation) {
     let diag = Diagnostic.new(
       level: WARNING,
       message: message.to_string,
@@ -205,8 +205,8 @@ class Diagnostics {
   }
 
   def invalid_number_of_type_arguments(
-    expected: Integer,
-    given: Integer,
+    expected: Int,
+    given: Int,
     location: SourceLocation
   ) {
     let message = `Incorrect number of type arguments: \
@@ -405,7 +405,7 @@ class Diagnostics {
 
   def unavailable_type_match(location: SourceLocation) {
     error(
-      message: 'This pattern can only be used when using match() with an argument',
+      message: 'This pattern can only be used when matching an expression',
       location: location
     )
   }
@@ -484,23 +484,9 @@ class Diagnostics {
     )
   }
 
-  def invalid_local_throw(location: SourceLocation) {
-    error(
-      message: 'The `local throw` keyword can only be used in methods, closures, or lambdas',
-      location: location
-    )
-  }
-
   def invalid_try(location: SourceLocation) {
     error(
       message: 'The `try` keyword without the `else` keyword can only be used in methods and lambdas',
-      location: location
-    )
-  }
-
-  def invalid_local_try(location: SourceLocation) {
-    error(
-      message: 'The `local try` keyword without the `else` keyword can only be used in methods, closures, or lambdas',
       location: location
     )
   }
@@ -531,8 +517,8 @@ class Diagnostics {
   }
 
   def invalid_number_of_arguments(
-    given: Integer,
-    expected: Integer,
+    given: Int,
+    expected: Int,
     location: SourceLocation
   ) {
     let message = `Incorrect number of arguments: expected "{expected}", \
@@ -603,7 +589,7 @@ class Diagnostics {
 }
 
 impl Length for Diagnostics {
-  def length -> Integer {
+  def length -> Int {
     @values.length
   }
 }

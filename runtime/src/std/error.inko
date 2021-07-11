@@ -24,7 +24,7 @@ class StandardError {
 
 impl ToString for StandardError {
   def to_string -> String {
-    @message
+    @message.clone
   }
 }
 

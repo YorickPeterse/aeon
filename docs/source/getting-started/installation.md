@@ -8,6 +8,10 @@ written in [Ruby](https://www.ruby-lang.org/).
     We are working towards a self-hosting compiler. Once complete, Ruby is no
     longer required.
 
+!!! note
+    When installing Inko from source (either manually or using ivm), Rust 1.52
+    or newer is required.
+
 Inko officially supports Linux, macOS, and Windows. BSDs and other Unix-like
 operating systems should also work, but are not officially supported at this
 time.
@@ -270,14 +274,11 @@ only need the following dependencies:
 
 ### Building
 
-When building from source, you can produce a debug build, a release build, or a
-profile build.
+When building from source, you can produce a debug build, or a release build.
 
 Debug builds are slow but compile fast and contain debugging symbols. Release
 builds are fast, but take a little longer to compile (typically around one
-minute). Profile builds are release builds that contain debugging symbols.
-Profile builds can take several minutes to compile, so we recommend only using
-these when necessary.
+minute).
 
 The commands and their outputs per build type are as follows:
 
@@ -285,7 +286,6 @@ The commands and their outputs per build type are as follows:
 |:-----------|:------------------------|:----------------------|:--------
 | debug      | `make vm/debug DEV=1`   | `target/debug/inko`   | <= 30 seconds
 | release    | `make vm/release DEV=1` | `target/release/inko` | <= 1 minute
-| profile    | `make vm/profile DEV=1` | `target/release/inko` | 1 to 5 minutes
 
 ### Packaging
 

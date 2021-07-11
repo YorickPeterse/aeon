@@ -1,16 +1,16 @@
-import std::debug
+import std::debug::(self, StackFrame)
 import std::process
 import std::test::*
 import std::test::test::(
-  FailedTest, Failure, Group, Test, TestRequest, TestResult, ProgressFormatter
+  Failure, Group, Test, TestRequest, TestResult, ProgressFormatter
 )
 import std::time::Duration
 
-def tests(t: Tests) {
+def tests(t: ref Tests) {
   t.group('std::test::test::ProgressFormatter.format_location') do (g) {
     g.test('Generating the failure location description for a failed test') {
-      let fmt = ProgressFormatter.new
-      let frame = debug.stacktrace[-1]
+      let fmt = ProgressFormatter.new(colors: True)
+      let frame = debug.stacktrace(skip: 1, limit: 0)[-1]
 
       try assert_equal(fmt.format_location(frame), `{frame.path}:{frame.line}`)
     }
@@ -18,7 +18,7 @@ def tests(t: Tests) {
 
   t.group('std::test::test::ProgressFormatter.duration_unit') do (g) {
     g.test('Obtaining the time unit for the duration of a test suite') {
-      let fmt = ProgressFormatter.new
+      let fmt = ProgressFormatter.new(colors: True)
 
       try assert_equal(
         fmt.duration_unit(Duration.from_milliseconds(5)),
@@ -33,22 +33,22 @@ def tests(t: Tests) {
     g.test('Formatting the test suite statistics') {
       let fmt = ProgressFormatter.new(colors: False)
       let test = Test.new(
-        id: 0,
         description: 'test name',
         group_description: 'group name',
         code: fn {}
       )
 
-      try assert_equal(
-        fmt.test_suite_statistics(Array.new(test)),
-        '1 tests, 0 failures'
-      )
+      fmt.passed(TestResult.new(test, failure: Option.none))
+
+      try assert_equal(fmt.test_suite_statistics, '1 tests, 0 failures')
     }
   }
 
   t.group('std::test::test::ProgressFormatter.green') do (g) {
     g.test('Generating a green string when colors are enabled') {
-      try assert_equal(ProgressFormatter.new.green('hello'), "\e[32mhello\e[0m")
+      let fmt = ProgressFormatter.new(colors: True)
+
+      try assert_equal(fmt.green('hello'), "\e[32mhello\e[0m")
     }
 
     g.test('Generating a normal string when colors are disabled') {
@@ -61,7 +61,9 @@ def tests(t: Tests) {
 
   t.group('std::test::test::ProgressFormatter.red') do (g) {
     g.test('Generating a red string when colors are enabled') {
-      try assert_equal(ProgressFormatter.new.red('hello'), "\e[31mhello\e[0m")
+      let fmt = ProgressFormatter.new(colors: True)
+
+      try assert_equal(fmt.red('hello'), "\e[31mhello\e[0m")
     }
 
     g.test('Generating a normal string when colors are disabled') {
@@ -74,7 +76,9 @@ def tests(t: Tests) {
 
   t.group('std::test::test::ProgressFormatter.cyan') do (g) {
     g.test('Generating a cyan string when colors are enabled') {
-      try assert_equal(ProgressFormatter.new.cyan('hello'), "\e[36mhello\e[0m")
+      let fmt = ProgressFormatter.new(colors: True)
+
+      try assert_equal(fmt.cyan('hello'), "\e[36mhello\e[0m")
     }
 
     g.test('Generating a normal string when colors are disabled') {
@@ -87,7 +91,9 @@ def tests(t: Tests) {
 
   t.group('std::test::test::ProgressFormatter.bold') do (g) {
     g.test('Generating a bold string when colors are enabled') {
-      try assert_equal(ProgressFormatter.new.bold('hello'), "\e[1mhello\e[0m")
+      let fmt = ProgressFormatter.new(colors: True)
+
+      try assert_equal(fmt.bold('hello'), "\e[1mhello\e[0m")
     }
 
     g.test('Generating a normal string when colors are disabled') {
@@ -100,7 +106,7 @@ def tests(t: Tests) {
 
   t.group('std::test::test::Failure.description') do (g) {
     g.test('Getting the description of a failure') {
-      let failed_at = debug.stacktrace[-1]
+      let failed_at = try! debug.stacktrace(skip: 1, limit: 0).pop.get
       let failure = Failure.new('foo', failed_at)
 
       try assert_equal(failure.description, 'foo')
@@ -109,68 +115,51 @@ def tests(t: Tests) {
 
   t.group('std::test::test::Failure.failed_at') do (g) {
     g.test('Getting the location of a failure') {
-      let failed_at = debug.stacktrace[-1]
+      let failed_at = StackFrame.new(path: 'test.inko', name: 'foo', line: 1)
       let failure = Failure.new('foo', failed_at)
 
-      try assert_same_object(failure.failed_at, failed_at)
+      try assert_equal(failure.failed_at.path.to_string, 'test.inko')
     }
   }
 
-  t.group('std::test::test::TestResult.id') do (g) {
-    g.test('Getting the ID of a test result') {
-      let result = TestResult.new(id: 42)
+  t.group('std::test::test::TestResult.test') do (g) {
+    g.test('Getting the test of a test result') {
+      let test =
+        Test.new(description: 'name', group_description: 'group', code: fn {})
 
-      try assert_equal(result.id, 42)
+      let result = TestResult.new(test, failure: Option.none)
+
+      try assert_equal(result.test.description, 'name')
     }
   }
 
   t.group('std::test::test::TestResult.failure') do (g) {
-    g.test('Getting the test failure') {
-      let failed_at = debug.stacktrace[-1]
-      let failure = Failure.new('foo', failed_at)
-      let result = TestResult.new(id: 42, failure: Option.some(failure))
+    g.test('Getting the test failure of a passed test') {
+      let test =
+        Test.new(description: 'name', group_description: 'group', code: fn {})
 
-      try assert_same_object(result.failure.get, failure)
+      let result = TestResult.new(test, failure: Option.none)
+
+      try assert_true(result.failure.none?)
     }
-  }
 
-  t.group('std::test::test::FailedTest.test') do (g) {
-    g.test('Getting the test that failed') {
-      let failed_at = debug.stacktrace[-1]
+    g.test('Getting the test failure of a failed test') {
+      let failed_at = StackFrame.new(path: 'test.inko', name: 'foo', line: 1)
       let failure = Failure.new('foo', failed_at)
-      let test = Test.new(
-        id: 42,
-        description: 'foo',
-        group_description: 'bar',
-        code: fn {}
-      )
+      let test =
+        Test.new(description: 'name', group_description: 'group', code: fn {})
+      let result = TestResult.new(test, failure: Option.some(failure))
 
-      let failed = FailedTest.new(test, failure)
-
-      try assert_same_object(failed.test, test)
-    }
-  }
-
-  t.group('std::test::test::FailedTest.failure') do (g) {
-    g.test('Getting the failure') {
-      let failed_at = debug.stacktrace[-1]
-      let failure = Failure.new('foo', failed_at)
-      let test = Test.new(
-        id: 42,
-        description: 'foo',
-        group_description: 'bar',
-        code: fn {}
-      )
-
-      let failed = FailedTest.new(test, failure)
-
-      try assert_same_object(failed.failure, failure)
+      try assert_true(result.failure.some?)
     }
   }
 
   t.group('std::test::test::TestRequest.run') do (g) {
     g.test('Running a test that passes') {
-      TestRequest.new(id: 42, code: fn {}, reply_to: process.current).run
+      let test =
+        Test.new(description: 'name', group_description: 'group', code: fn {})
+
+      TestRequest.new(test, reply_to: process.current).run
 
       let result = process.receive as TestResult
 
@@ -178,13 +167,17 @@ def tests(t: Tests) {
     }
 
     g.test('Running a test that fails') {
-      TestRequest
-        .new(
-          id: 42,
-          code: fn { local throw Failure.new('foo', debug.stacktrace[-1]) },
-          reply_to: process.current
+      let code = fn {
+        throw Failure.new(
+          'foo',
+          StackFrame.new(path: 'test.inko', name: 'foo', line: 1)
         )
-        .run
+      }
+
+      let test =
+        Test.new(description: 'name', group_description: 'group', code: code)
+
+      TestRequest.new(test, reply_to: process.current).run
 
       let result = process.receive as TestResult
 
@@ -195,7 +188,6 @@ def tests(t: Tests) {
   t.group('std::test::test::Test.description') do (g) {
     g.test('Getting the description of a test') {
       let test = Test.new(
-        id: 42,
         description: 'foo',
         group_description: 'bar',
         code: fn {}
@@ -208,7 +200,6 @@ def tests(t: Tests) {
   t.group('std::test::test::Test.group_description') do (g) {
     g.test('Getting the description of a test group') {
       let test = Test.new(
-        id: 42,
         description: 'foo',
         group_description: 'bar',
         code: fn {}
@@ -221,20 +212,18 @@ def tests(t: Tests) {
   t.group('std::test::test::Test.defined_at') do (g) {
     g.test('Getting the location of a test') {
       let test = Test.new(
-        id: 42,
         description: 'foo',
         group_description: 'bar',
         code: fn {}
       )
 
-      try assert_equal(test.defined_at.line, 227)
+      try assert_equal(test.defined_at.line, 209)
     }
   }
 
   t.group('std::test::test::Test.schedule') do (g) {
     g.test('Running a test') {
       let test = Test.new(
-        id: 42,
         description: 'foo',
         group_description: 'bar',
         code: fn {}

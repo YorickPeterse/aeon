@@ -1,7 +1,7 @@
-import std::hash::DefaultHasher
+import std::hash::Hasher
 import std::test::*
 
-def tests(t: Tests) {
+def tests(t: ref Tests) {
   t.group('std::block::Block.==') do (g) {
     g.test('Comparing two blocks') {
       let a = { 10 }
@@ -15,11 +15,11 @@ def tests(t: Tests) {
   t.group('std::block::Block.hash') do (g) {
     g.test('Hashing a block') {
       let block = { 10 }
-      let hasher1 = DefaultHasher.new(1, 2)
-      let hasher2 = DefaultHasher.new(1, 2)
+      let hasher1 = Hasher.new(1, 2)
+      let hasher2 = Hasher.new(1, 2)
 
-      block.hash(hasher1)
-      block.hash(hasher2)
+      block.hash(ref hasher1)
+      block.hash(ref hasher2)
 
       try assert_equal(hasher1.to_hash, hasher2.to_hash)
     }

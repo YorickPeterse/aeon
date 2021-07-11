@@ -13,11 +13,13 @@ def lex_all(input: String) -> Array!(Token) {
   loop {
     let token = lexer.next
 
-    token.null?.if(true: { return tokens }, false: { tokens.push(token) })
+    if token.null? { return tokens }
+
+    tokens.push(token)
   }
 }
 
-def tests(t: Tests) {
+def tests(t: ref Tests) {
   t.group('std::compiler::lexer::Lexer.next') do (g) {
     g.test('Lexing an integer') {
       let token = lex('10')
@@ -1597,6 +1599,28 @@ world\n" "hello"'
 
       try assert_equal(token.type, 'static')
       try assert_equal(token.value, 'static')
+      try assert_true(token.keyword?)
+
+      try assert_equal(token.location.column, 1)
+      try assert_equal(token.location.line_range, 1..1)
+    }
+
+    g.test('Lexing the ref keyword') {
+      let token = lex('ref')
+
+      try assert_equal(token.type, 'ref')
+      try assert_equal(token.value, 'ref')
+      try assert_true(token.keyword?)
+
+      try assert_equal(token.location.column, 1)
+      try assert_equal(token.location.line_range, 1..1)
+    }
+
+    g.test('Lexing the move keyword') {
+      let token = lex('move')
+
+      try assert_equal(token.type, 'move')
+      try assert_equal(token.value, 'move')
       try assert_true(token.keyword?)
 
       try assert_equal(token.location.column, 1)

@@ -51,6 +51,18 @@ module Inkoc
         match_equal
         when
         yield
+        ref
+        move
+        if
+        and
+        or
+        not
+        in
+        integer
+        loop
+        next
+        for
+        while
       ]
     ).freeze
 
@@ -80,13 +92,16 @@ module Inkoc
         match
         yield
         tstring_open
+        if
+        for
+        loop
+        while
+        not
       ]
     ).freeze
 
     BINARY_OPERATORS = Set.new(
       %i[
-        or
-        and
         equal
         not_equal
         lower
@@ -128,6 +143,15 @@ module Inkoc
 
     def initialize(input, file_path = Pathname.new('(eval)'), parse_comments: false)
       @lexer = Lexer.new(input, file_path, parse_comments: parse_comments)
+      @without_trailing_block = 0
+    end
+
+    def without_trailing_block
+      @without_trailing_block += 1
+      retval = yield
+      @without_trailing_block -= 1
+
+      retval
     end
 
     def comments
@@ -172,6 +196,8 @@ module Inkoc
         def_trait(start)
       when :impl
         implement_trait(start)
+      when :define
+        def_method(start)
       when :extern
         def_extern_method(start)
       else
@@ -194,7 +220,7 @@ module Inkoc
 
       loop do
         case step.type
-        when :identifier, :class, :trait, :return
+        when :identifier, :class, :trait, :return, :loop
           steps << identifier_from_token(step)
         when :constant
           symbol = import_symbol_from_token(step)
@@ -275,13 +301,34 @@ module Inkoc
     end
 
     def type_cast(start)
-      node = binary_send(start)
+      node = boolean_keywords(start)
 
       while @lexer.next_type_is?(:as)
         advance!
 
         type = type(advance!)
         node = AST::TypeCast.new(node, type, start.location)
+      end
+
+      node
+    end
+
+    def boolean_keywords(start)
+      node = binary_send(start)
+
+      loop do
+        case @lexer.peek.type
+        when :and
+          op = advance!
+          rhs = binary_send(advance!)
+          node = AST::And.new(node, rhs, op.location)
+        when :or
+          op = advance!
+          rhs = binary_send(advance!)
+          node = AST::Or.new(node, rhs, op.location)
+        else
+          break
+        end
       end
 
       node
@@ -360,6 +407,15 @@ module Inkoc
       klass.new(args, returns, throws, start.location)
     end
 
+    def moving_block_type(start)
+      advance_and_expect!(:do)
+
+      node = block_type(start)
+      node.moving = true
+
+      node
+    end
+
     def block_type_arguments
       args = []
 
@@ -367,7 +423,7 @@ module Inkoc
         skip_one
 
         while (token = @lexer.advance) && token.valid_but_not?(:paren_close)
-          args << type_name(token)
+          args << type(token)
 
           break if comma_or_break_on(:paren_close)
         end
@@ -448,6 +504,12 @@ module Inkoc
       peeked = @lexer.peek
       current_end = current.value.length + current.column
 
+      if peeked.type == :curly_open && @without_trailing_block.positive?
+        # Trailing blocks aren't allowed in conditions, as this makes it
+        # impossible to parse them without requiring parentheses.
+        return false
+      end
+
       # Something is only an argument if:
       #
       # 1. It resides on the same line.
@@ -503,6 +565,8 @@ module Inkoc
 
       case @lexer.peek.type
       when :curly_open
+        return if @without_trailing_block.positive?
+
         block_without_arguments(advance!)
       when :do, :lambda
         token = advance!
@@ -579,7 +643,6 @@ module Inkoc
       when :do, :lambda then block(start, start.type)
       when :let then let_define(start)
       when :return then return_value(start)
-      when :local then local_return_or_throw(start)
       when :attribute then attribute_or_reassign(start)
       when :self then self_object(start)
       when :throw then throw_value(start)
@@ -588,14 +651,109 @@ module Inkoc
       when :colon_colon then global(start)
       when :paren_open then grouped_expression
       when :match then pattern_match(start)
+      when :if then if_expression(start)
       when :yield then yield_value(start)
       when :tstring_open then template_string(start)
+      when :ref then ref_value(start)
+      when :not then not_value(start)
+      when :for then for_loop(start)
+      when :loop then infinite_loop(start)
+      when :next then loop_next(start)
+      when :break then loop_break(start)
+      when :while then while_loop(start)
+      when :move then moving_block(start)
       else
         raise ParseError, "A value can not start with a #{start.type.inspect}"
       end
     end
     # rubocop: enable Metrics/AbcSize
     # rubocop: enable Metrics/CyclomaticComplexity
+
+    def ref_value(start)
+      AST::ReferenceValue.new(expression(advance!), start.location)
+    end
+
+    def not_value(start)
+      # We use binary_send() here so `not a or b` is parsed as `(not a) or (b)`,
+      # instead of `not(a or b)`.
+      AST::Not.new(binary_send(advance!), start.location)
+    end
+
+    def for_loop(start)
+      binding = without_trailing_block { for_loop_binding }
+
+      advance_and_expect!(:in)
+
+      error =
+        case @lexer.peek.type
+        when :try, :try_bang
+          advance!.type
+        end
+
+      iterable = without_trailing_block { expression(advance!) }
+      body = block_body(advance_and_expect!(:curly_open))
+      else_arg = nil
+      else_body = nil
+
+      if error == :try && @lexer.next_type_is?(:else)
+        skip_one
+
+        else_arg = optional_else_arg
+        else_body = block_with_optional_curly_braces
+      end
+
+      AST::For
+        .new(binding, error, iterable, body, else_arg, else_body, start.location)
+    end
+
+    def for_loop_binding
+      type = @lexer.peek.type
+
+      case type
+      when :identifier, :mut
+        for_loop_single_binding
+      when :paren_open
+        for_loop_destructure
+      else
+        raise ParseError, "Unexpected token of type #{type}"
+      end
+    end
+
+    def for_loop_single_binding
+      mutable = next_if_mutable
+      name = variable_name
+      vtype = optional_variable_type
+
+      AST::ForBinding.new(name, mutable, vtype, name.location)
+    end
+
+    def for_loop_destructure
+      start = advance!
+      vars = destructure_array_variables
+
+      AST::ForDestructure.new(vars, start.location)
+    end
+
+    def infinite_loop(start)
+      body = block_body(advance_and_expect!(:curly_open))
+
+      AST::Loop.new(body, start.location)
+    end
+
+    def while_loop(start)
+      cond = without_trailing_block { expression(advance!) }
+      body = block_body(advance_and_expect!(:curly_open))
+
+      AST::While.new(cond, body, start.location)
+    end
+
+    def loop_next(start)
+      AST::Next.new(start.location)
+    end
+
+    def loop_break(start)
+      AST::Break.new(start.location)
+    end
 
     def string(start)
       AST::String.new(start.value, start.location)
@@ -621,6 +779,10 @@ module Inkoc
 
     def integer(start)
       AST::Integer.new(Integer(start.value), start.location)
+    end
+
+    def unsigned_integer(start)
+      AST::UnsignedInteger.new(Integer(start.value), start.location)
     end
 
     def float(start)
@@ -677,7 +839,9 @@ module Inkoc
     def constant_value(start)
       peeked = @lexer.peek
 
-      if peeked.type == :curly_open && peeked.line == start.line
+      if peeked.type == :curly_open &&
+          peeked.line == start.line &&
+          @without_trailing_block.zero?
         new_instance(start)
       else
         constant_from_token(start)
@@ -774,6 +938,15 @@ module Inkoc
       klass.new(targs, args, ret_type, throw_type, body, start.location)
     end
 
+    def moving_block(start)
+      advance_and_expect!(:do)
+
+      node = block(start)
+      node.moving = true
+
+      node
+    end
+
     # Parses the body of a block.
     def block_body(start)
       nodes = []
@@ -849,6 +1022,14 @@ module Inkoc
         .new(name, arguments, ret_type, throw_type, start.location)
     end
 
+    def def_move_method(start)
+      def_start = advance_and_expect!(:define)
+
+      def_method(def_start).tap do |method|
+        method.move = true
+      end
+    end
+
     # Parses a list of argument definitions.
     # rubocop: disable Metrics/CyclomaticComplexity
     def def_arguments
@@ -862,10 +1043,8 @@ module Inkoc
         end
 
         type = optional_argument_type
-        default = optional_argument_default unless rest
 
-        args << AST::DefineArgument
-          .new(token.value, type, default, rest, token.location)
+        args << AST::DefineArgument.new(token.value, type, rest, token.location)
 
         break if comma_or_break_on(:paren_close) || rest
       end
@@ -888,14 +1067,6 @@ module Inkoc
       skip_one
 
       type(advance!)
-    end
-
-    def optional_argument_default
-      return unless @lexer.next_type_is?(:assign)
-
-      skip_one
-
-      expression(advance!)
     end
 
     # Parses a list of type argument definitions.
@@ -1021,19 +1192,67 @@ module Inkoc
     #     let number = 10
     #     let mut number = 10
     def let_define(start)
-      mutable =
-        if @lexer.next_type_is?(:mut)
-          skip_one
-          true
-        else
-          false
-        end
+      if @lexer.next_type_is?(:paren_open)
+        return destructure_array(start)
+      end
 
+      mutable = next_if_mutable
       name = variable_name
       vtype = optional_variable_type
       value = variable_value
 
       AST::DefineVariable.new(name, value, vtype, mutable, start.location)
+    end
+
+    def next_if_mutable
+      if @lexer.next_type_is?(:mut)
+        skip_one
+        true
+      else
+        false
+      end
+    end
+
+    def destructure_array(start)
+      advance!
+
+      vars = destructure_array_variables
+
+      advance_and_expect!(:assign)
+
+      AST::DestructArray.new(vars, expression(advance!), start.location)
+    end
+
+    def destructure_array_variables
+      vars = []
+
+      loop do
+        token = @lexer.advance
+        loc = token.location
+
+        break if token.type == :paren_close || token.nil?
+
+        mutable =
+          if token.type == :mut
+            token = @lexer.advance
+            true
+          else
+            false
+          end
+
+        unless token.type == :identifier
+          raise ParseError, "A #{token.type.inspect} is not valid here"
+        end
+
+        name = identifier_from_token(token)
+        vtype = optional_variable_type
+
+        vars << AST::DestructArrayVariable.new(name, vtype, mutable, loc)
+
+        break if comma_or_break_on(:paren_close)
+      end
+
+      vars
     end
 
     def def_attribute(start)
@@ -1073,7 +1292,6 @@ module Inkoc
 
     def variable_value
       advance_and_expect!(:assign)
-
       expression(advance!)
     end
 
@@ -1094,9 +1312,28 @@ module Inkoc
         node =
           case token.type
           when :define then def_method(token)
+          when :move then def_move_method(token)
           when :static then def_static_method(token)
           when :attribute then def_attribute(token)
-          when :documentation then documentation(token)
+          else
+            raise ParseError, "A #{token.type.inspect} is not valid here"
+          end
+
+        nodes << node
+      end
+
+      AST::Body.new(nodes, start.location)
+    end
+
+    def implementation_body(start)
+      nodes = []
+
+      while (token = @lexer.advance) && token.valid_but_not?(:curly_close)
+        node =
+          case token.type
+          when :define then def_method(token)
+          when :move then def_move_method(token)
+          when :static then def_static_method(token)
           else
             raise ParseError, "A #{token.type.inspect} is not valid here"
           end
@@ -1135,7 +1372,15 @@ module Inkoc
       nodes = []
 
       while (token = @lexer.advance) && token.valid_but_not?(:curly_close)
-        nodes << expression(token)
+        node =
+          case token.type
+          when :define then def_method(token)
+          when :move then def_move_method(token)
+          else
+            raise ParseError, "A #{token.type.inspect} is not valid here"
+          end
+
+        nodes << node
       end
 
       AST::Body.new(nodes, start.location)
@@ -1171,7 +1416,7 @@ module Inkoc
       advance_and_expect!(:for)
 
       object_name = constant_from_token(advance_and_expect!(:constant))
-      body = block_body(advance_and_expect!(:curly_open))
+      body = implementation_body(advance_and_expect!(:curly_open))
 
       AST::TraitImplementation.new(
         trait_name,
@@ -1182,7 +1427,7 @@ module Inkoc
     end
 
     def reopen_object(name, location)
-      body = block_body(advance_and_expect!(:curly_open))
+      body = implementation_body(advance_and_expect!(:curly_open))
 
       AST::ReopenObject.new(name, body, location)
     end
@@ -1196,19 +1441,6 @@ module Inkoc
       value = expression(advance!) if next_expression_is_argument?(start)
 
       AST::Return.new(value, location)
-    end
-
-    def local_return_or_throw(start)
-      next_token = advance!
-
-      case next_token.type
-      when :throw
-        throw_value(next_token, true, start.location)
-      when :try
-        try(next_token, true, start.location)
-      else
-        raise ParseError, 'expected `throw`, `return`, or `try`'
-      end
     end
 
     def yield_value(start)
@@ -1303,8 +1535,8 @@ module Inkoc
     # Example:
     #
     #     throw Foo
-    def throw_value(start, local = false, location = start.location)
-      AST::Throw.new(expression(advance!), local, location)
+    def throw_value(start, location = start.location)
+      AST::Throw.new(expression(advance!), location)
     end
 
     # Parses a "try" statement.
@@ -1314,7 +1546,7 @@ module Inkoc
     #     try foo
     #     try foo else bar
     #     try foo else (error) { error }
-    def try(start, local = false, location = start.location)
+    def try(start, location = start.location)
       expression = try_expression
       else_arg = nil
 
@@ -1329,7 +1561,7 @@ module Inkoc
           AST::Body.new([], start.location)
         end
 
-      AST::Try.new(expression, else_body, else_arg, local, location)
+      AST::Try.new(expression, else_body, else_arg, location)
     end
 
     # Parses a "try!" statement
@@ -1337,7 +1569,7 @@ module Inkoc
       expression = try_expression
       else_arg, else_body = try_bang_else(start)
 
-      AST::Try.new(expression, else_body, else_arg, false, start.location)
+      AST::Try.new(expression, else_body, else_arg, start.location)
     end
 
     def try_expression
@@ -1347,7 +1579,7 @@ module Inkoc
           true
         end
 
-      expression = expression(advance!)
+      expression = binary_send(advance!)
 
       advance_and_expect!(:curly_close) if with_curly
 
@@ -1399,59 +1631,44 @@ module Inkoc
       name
     end
 
-    # Parses a type
-    #
-    # Examples:
-    #
-    #     Integer
-    #     ?Integer
-    #     (T) -> R
     def type(start)
-      optional =
-        if start.type == :question
-          start = advance!
-          true
-        else
-          false
-        end
+      if start.type == :ref
+        AST::ReferenceType.new(type_without_modifier(advance!), start.location)
+      else
+        type_without_modifier(start)
+      end
+    end
 
-      type =
-        case start.type
-        when :constant
-          type_name(start)
-        when :do, :lambda
-          block_type(start, start.type)
-        else
-          raise(
-            ParseError,
-            "Unexpected #{start.type}, expected a constant or a ("
-          )
-        end
-
-      type.optional = optional
-
-      type
+    def type_without_modifier(start)
+      case start.type
+      when :question
+        type(advance!).tap { |t| t.optional = true }
+      when :constant
+        type_name(start)
+      when :do, :lambda
+        block_type(start, start.type)
+      when :move
+        moving_block_type(start)
+      else
+        raise(
+          ParseError,
+          "Unexpected #{start.type}, expected a constant or a ("
+        )
+      end
     end
 
     def pattern_match(start)
       bind_to = nil
-      to_match = nil
       match_arms = []
       match_else = nil
 
-      if @lexer.next_type_is?(:paren_open)
-        advance_and_expect!(:paren_open)
-
-        if @lexer.next_type_is?(:let)
-          skip_one
-          bind_to = identifier_from_token(advance_and_expect!(:identifier))
-          advance_and_expect!(:assign)
-        end
-
-        to_match = expression(advance!)
-
-        advance_and_expect!(:paren_close)
+      if @lexer.next_type_is?(:let)
+        skip_one
+        bind_to = identifier_from_token(advance_and_expect!(:identifier))
+        advance_and_expect!(:assign)
       end
+
+      to_match = without_trailing_block { expression(advance!) }
 
       advance_and_expect!(:curly_open)
 
@@ -1507,6 +1724,37 @@ module Inkoc
       advance_and_expect!(:curly_close)
 
       AST::Match.new(to_match, bind_to, match_arms, match_else, start.location)
+    end
+
+    def if_expression(token)
+      cond = without_trailing_block { expression(advance!) }
+      body = block_body(advance_and_expect!(:curly_open))
+      conds = [AST::IfCondition.new(cond, body, token.location)]
+      else_body = nil
+
+      while @lexer.next_type_is?(:else)
+        else_start = advance!
+
+        case @lexer.peek.type
+        when :if
+          advance!
+
+          conds.push(
+            AST::IfCondition.new(
+              without_trailing_block { expression(advance!) },
+              block_body(advance_and_expect!(:curly_open)),
+              else_start.location
+            )
+          )
+        when :curly_open
+          else_body = block_body(advance_and_expect!(:curly_open))
+          break
+        else
+          raise ParseError, "Unexpected #{@lexer.peek.type.inspect}"
+        end
+      end
+
+      AST::If.new(conds, else_body, token.location)
     end
 
     def constant_from_token(token)

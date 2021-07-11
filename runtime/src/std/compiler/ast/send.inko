@@ -81,7 +81,7 @@ class Send {
     arguments: Array!(Node),
     type_arguments: Array!(TypeNode),
     location: SourceLocation,
-    receiver: ?Node = Option.none
+    receiver: ?Node
   ) -> Self {
     Self {
       @message = message,
@@ -113,9 +113,9 @@ class Send {
   }
 
   def instruction? -> Boolean {
-    let receiver = @receiver.get_or_else { return False }
+    let receiver = try @receiver.get else return False
 
-    match(let matched = receiver) {
+    match let matched = receiver {
       as Constant when matched.name == INSTRUCTION_RECEIVER_NAME -> { True }
       else -> { False }
     }

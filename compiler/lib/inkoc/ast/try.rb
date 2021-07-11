@@ -7,17 +7,15 @@ module Inkoc
       include Predicates
       include Inspect
 
-      attr_reader :expression, :else_argument, :else_body, :location, :local
-      attr_accessor :try_block_type, :else_block_type
+      attr_reader :expression, :else_argument, :else_body, :location
+      attr_accessor :else_argument_symbol
 
-      def initialize(expr, else_body, else_arg, local, location)
+      def initialize(expr, else_body, else_arg, location)
         @expression = expr
         @else_argument = else_arg
         @else_body = else_body
-        @local = local
         @location = location
-        @try_block_type = nil
-        @else_block_type = nil
+        @else_argument_symbol = nil
       end
 
       def visitor_method

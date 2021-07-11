@@ -1,4 +1,4 @@
-import std::hash::DefaultHasher
+import std::hash::Hasher
 import std::test::*
 
 class Dummy {
@@ -7,11 +7,11 @@ class Dummy {
   }
 }
 
-def tests(t: Tests) {
-  t.group('std::map::DefaultHasher.write') do (g) {
-    g.test('Hashing an Integer') {
-      let hasher1 = DefaultHasher.new(1, 2)
-      let hasher2 = DefaultHasher.new(1, 2)
+def tests(t: ref Tests) {
+  t.group('std::map::Hasher.write') do (g) {
+    g.test('Hashing an Int') {
+      let hasher1 = Hasher.new(1, 2)
+      let hasher2 = Hasher.new(1, 2)
 
       hasher1.write(10)
       hasher2.write(10)
@@ -20,8 +20,8 @@ def tests(t: Tests) {
     }
 
     g.test('Hashing an Float') {
-      let hasher1 = DefaultHasher.new(1, 2)
-      let hasher2 = DefaultHasher.new(1, 2)
+      let hasher1 = Hasher.new(1, 2)
+      let hasher2 = Hasher.new(1, 2)
 
       hasher1.write(10.0)
       hasher2.write(10.0)
@@ -30,8 +30,8 @@ def tests(t: Tests) {
     }
 
     g.test('Hashing a String') {
-      let hasher1 = DefaultHasher.new(1, 2)
-      let hasher2 = DefaultHasher.new(1, 2)
+      let hasher1 = Hasher.new(1, 2)
+      let hasher2 = Hasher.new(1, 2)
 
       hasher1.write('hello')
       hasher2.write('hello')
@@ -40,8 +40,8 @@ def tests(t: Tests) {
     }
 
     g.test('Hashing a Boolean') {
-      let hasher1 = DefaultHasher.new(1, 2)
-      let hasher2 = DefaultHasher.new(1, 2)
+      let hasher1 = Hasher.new(1, 2)
+      let hasher2 = Hasher.new(1, 2)
 
       hasher1.write(True)
       hasher2.write(True)
@@ -51,8 +51,8 @@ def tests(t: Tests) {
 
     g.test('Hashing a regular object') {
       let dummy = Dummy.new
-      let hasher1 = DefaultHasher.new(1, 2)
-      let hasher2 = DefaultHasher.new(1, 2)
+      let hasher1 = Hasher.new(1, 2)
+      let hasher2 = Hasher.new(1, 2)
 
       hasher1.write(dummy)
       hasher2.write(dummy)

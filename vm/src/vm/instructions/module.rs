@@ -1,44 +1,28 @@
 //! VM functions for working with Inko modules.
-use crate::block::Block;
-use crate::execution_context::ExecutionContext;
-use crate::object_pointer::ObjectPointer;
-use crate::process::RcProcess;
-use crate::vm::state::RcState;
+use crate::mem::allocator::Pointer;
+use crate::mem::generator::GeneratorPointer;
+use crate::mem::objects::String as InkoString;
+use crate::vm::state::State;
 
 #[inline(always)]
-pub fn module_load(
-    state: &RcState,
-    process: &RcProcess,
-    name_ptr: ObjectPointer,
-) -> Result<ObjectPointer, String> {
-    let name = name_ptr.string_value()?;
-    let (res, block, execute) = module_load_string(state, name)?;
+pub fn load(
+    state: &State,
+    module_name_ptr: Pointer,
+) -> Result<(Pointer, Pointer), String> {
+    let name = unsafe { InkoString::read(&module_name_ptr) };
+    let (module, exec) =
+        state.permanent_space.get_module_for_execution(name)?;
 
-    if execute {
-        process.push_context(ExecutionContext::from_block(&block));
-    }
+    let exec_ptr = if exec {
+        state.permanent_space.true_singleton
+    } else {
+        state.permanent_space.false_singleton
+    };
 
-    Ok(res)
+    Ok((module.as_pointer(), exec_ptr))
 }
 
 #[inline(always)]
-pub fn module_load_string(
-    state: &RcState,
-    name: &str,
-) -> Result<(ObjectPointer, Block, bool), String> {
-    let (mod_ptr, exec) = state.modules.lock().get_for_execution(name)?;
-    let module = mod_ptr.module_value()?;
-    let block = Block::new(module.code(), None, mod_ptr, module);
-
-    Ok((mod_ptr, block, exec))
-}
-
-#[inline(always)]
-pub fn module_get(
-    state: &RcState,
-    name_ptr: ObjectPointer,
-) -> Result<ObjectPointer, String> {
-    let name = name_ptr.string_value()?;
-
-    state.modules.lock().get(name)
+pub fn current(generator: GeneratorPointer) -> Pointer {
+    generator.context.method.module.as_pointer()
 }

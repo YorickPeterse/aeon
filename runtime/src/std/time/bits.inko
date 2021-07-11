@@ -49,10 +49,10 @@ let UNIX_EPOCH_YEAR = 1970
 # Returns the number of days since January 1st.
 #
 # The `month` argument starts at `0`, not `1`.
-def days_since_january(month: Integer, leap: Boolean) -> Integer {
-  let leap_days = leap.if(true: { 1 }, false: { 0 })
+def days_since_january(month: Int, leap: Boolean) -> Int {
+  let leap_days = if leap { 1 } else { 0 }
 
-  match(month) {
+  match month {
     0 -> { 0 }
     1 -> { 31 }
     2 -> { 59 + leap_days }
@@ -72,8 +72,8 @@ def days_since_january(month: Integer, leap: Boolean) -> Integer {
 # Returns the number of days in every month of our internal calendar.
 #
 # The first entry is for March, not January.
-def days_in_month(month: Integer) -> Integer {
-  match(month) {
+def days_in_month(month: Int) -> Int {
+  match month {
     0 -> { 31 }
     1 -> { 30 }
     2 -> { 31 }

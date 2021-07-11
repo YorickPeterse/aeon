@@ -5,7 +5,7 @@ use crate::error::Error;
 use crate::options::print_usage;
 use getopts::Options;
 use std::env;
-use std::path::{PathBuf, MAIN_SEPARATOR};
+use std::path::{Path, PathBuf, MAIN_SEPARATOR};
 
 const USAGE: &str = "Usage: inko test [OPTIONS]
 
@@ -114,9 +114,9 @@ pub fn run(arguments: &[String]) -> Result<i32, Error> {
 }
 
 /// Returns the full module names of all unit tests.
-fn test_modules(directory: &PathBuf) -> Result<Vec<String>, Error> {
+fn test_modules(directory: &Path) -> Result<Vec<String>, Error> {
     let mut mods = Vec::new();
-    let mut dirs = vec![directory.clone()];
+    let mut dirs = vec![directory.to_path_buf()];
 
     while let Some(dir) = dirs.pop() {
         let contents = dir.read_dir()?;
@@ -161,7 +161,7 @@ fn test_modules(directory: &PathBuf) -> Result<Vec<String>, Error> {
     Ok(mods)
 }
 
-fn module_name(path: PathBuf, directory: &PathBuf) -> Result<String, Error> {
+fn module_name(path: PathBuf, directory: &Path) -> Result<String, Error> {
     let mut mod_path = path
         .strip_prefix(directory)
         .unwrap_or(&path)

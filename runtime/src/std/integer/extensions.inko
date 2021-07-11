@@ -1,20 +1,19 @@
-# Extensions for the `Integer` type that can only be defined later on in the
+# Extensions for the `Int` type that can only be defined later on in the
 # bootstrapping process.
 import std::error::StandardError
-import std::loop::(repeat, while)
+import std::loop::(repeat)
 import std::process::(panic)
 import std::range::(Range, ToRange)
 import std::string_buffer::StringBuffer
 
-extern def string_to_integer(string: String, radix: Integer) -> Integer
+extern def string_to_integer(string: ref String, radix: ref Int) -> Int
 
-impl Integer {
-  # Parses an `Integer` from a `String` in a given base.
+impl Int {
+  # Parses an `Int` from a `String` in a given base.
   #
-  # # Error handling
+  # # Panics
   #
-  # This method will panic if `radix` is not between `2` and `36`. If the input
-  # `String` is invalid, an error will be thrown instead.
+  # This method panics if `radix` isn't within the range `2..36`.
   #
   # # Format
   #
@@ -31,22 +30,25 @@ impl Integer {
   #
   # # Examples
   #
-  # Parsing a `String` into a base 2 `Integer`:
+  # Parsing a `String` into a base 2 `Int`:
   #
-  #     try! Integer.parse('11', 2) # => 3
+  #     try! Int.parse(string: '11', radix: 2) # => 3
   #
-  # Parsing a `String` into a base 8 `Integer`:
+  # Parsing a `String` into a base 8 `Int`:
   #
-  #     try! Integer.parse('0o52', 8) # => 42
+  #     try! Int.parse(string: '0o52', radix: 8) # => 42
   #
-  # Parsing a `String` into a base 10 `Integer`:
+  # Parsing a `String` into a base 10 `Int`:
   #
-  #     try! Integer.parse('10') # => 10
+  #     try! Int.parse(string: '10', radix: 10) # => 10
   #
-  # Parsing a `String` into a base 16 `Integer`:
+  # Parsing a `String` into a base 16 `Int`:
   #
-  #     try! Integer.parse('F', 16) # => 15
-  static def parse(string: String, radix = 10) !! StandardError -> Integer {
+  #     try! Int.parse(string: 'F', radix: 16) # => 15
+  static def parse(
+    string: ref String,
+    radix: Int
+  ) !! StandardError -> Int {
     try {
       string_to_integer(string, radix)
     } else (error) {
@@ -58,27 +60,25 @@ impl Integer {
   #
   # # Panics
   #
-  # This method will panic if `radix` is smaller than 2, or greater than 36.
+  # This method panics if `radix` isn't within the range `2..36`.
   #
   # # Examples
   #
   # Formatting an integer in base 16 (hexadecimal):
   #
   #     0x2ff.format(radix: 16) # => '2ff'
-  def format(radix = 10) -> String {
-    (radix < 2).or { radix > 36 }.if_true {
+  def format(radix: Int) -> String {
+    if radix < 2 or radix > 36 {
       panic('The radix argument must be between 2 and 36')
     }
 
-    zero?.if_true { return '0' }
+    if zero? { return '0' }
 
     let characters = Array.new
     let mut integer = absolute
 
-    negative?.if_true { characters.push('-') }
-
-    while({ integer.positive? }) {
-      let digit = match(integer % radix) {
+    while integer.positive? {
+      let digit = match integer % radix {
         0 -> { '0' }
         1 -> { '1' }
         2 -> { '2' }
@@ -121,26 +121,18 @@ impl Integer {
       integer /= radix
     }
 
+    if negative? { characters.push('-') }
+
     # The above operation pushes the digits from the back, resulting in our
     # characters being in reverse order. For example, for 0x2ff the `characters`
-    # `Array` would be `['f', 'f', '2']`. Below we'll reverse the values
-    # in-place.
-    let start_at = negative?.if(true: { 1 }, false: { 0 })
-    let mut old_index = characters.length - 1
-    let mut new_index = start_at
+    # `Array` would be `['f', 'f', '2']`.
+    let sorted = Array.new
 
-    while({ old_index > new_index }) {
-      let old = characters[old_index]
-      let new = characters[new_index]
-
-      characters[new_index] = old
-      characters[old_index] = new
-
-      old_index -= 1
-      new_index += 1
+    loop {
+      sorted.push(try characters.pop.get else break)
     }
 
-    StringBuffer.from_array(characters).to_string
+    StringBuffer.from_array(sorted).to_string
   }
 
   # Returns an `Iterator` that iterates from `0` up to the value of `self`.
@@ -150,12 +142,12 @@ impl Integer {
   # Iterating from `0` to `10`:
   #
   #     4.times.to_array # => Array.new(0, 1, 2, 3)
-  def times => Integer {
+  move def times => Int {
     repeat(self) do (index) { yield index }
   }
 }
 
-impl ToRange!(Integer) for Integer {
+impl ToRange!(Int) for Int {
   # Returns a `Range` starting at `self` up to (and including) `other`.
   #
   # # Examples
@@ -166,7 +158,7 @@ impl ToRange!(Integer) for Integer {
   #
   #     range.start # => 1
   #     range.end   # => 10
-  def ..(other: Self) -> Range!(Self) {
+  move def ..(other: Int) -> Range!(Int) {
     Range.new(start: self, end: other)
   }
 }

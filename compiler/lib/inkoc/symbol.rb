@@ -68,7 +68,7 @@ module Inkoc
 
     def initialize(name)
       @name = name
-      @type = TypeSystem::Any.singleton
+      @type = TypeSystem::Any.new
       @index = -1
     end
 

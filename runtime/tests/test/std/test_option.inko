@@ -1,6 +1,6 @@
 import std::test::*
 
-def tests(t: Tests) {
+def tests(t: ref Tests) {
   t.group('std::option::Option.truthy?') do (g) {
     g.test('Using a Some') {
       try assert_true(Option.some(10).truthy?)
@@ -8,24 +8,6 @@ def tests(t: Tests) {
 
     g.test('Using a None') {
       try assert_false(Option.none.truthy?)
-    }
-  }
-
-  t.group('std::option::Option.if_let') do (g) {
-    g.test('Using a Some') {
-      let mut num = 0
-
-      Option.some(10).let do (n) { num = n }
-
-      try assert_equal(num, 10)
-    }
-
-    g.test('Using a None') {
-      let mut num = 0
-
-      Option.none.let do (n: Integer) { num = n }
-
-      try assert_equal(num, 0)
     }
   }
 
@@ -45,37 +27,17 @@ def tests(t: Tests) {
 
   t.group('std::option::Option.get') do (g) {
     g.test('Using a Some') {
-      try assert_equal(Option.some(10).get, 10)
+      try assert_equal(try! Option.some(10).get, 10)
     }
 
     g.test('Using a None') {
-      try assert_panic('Option.none.get')
-    }
-  }
-
-  t.group('std::option::Option.get_or') do (g) {
-    g.test('Using a Some') {
-      try assert_equal(Option.some(10).get_or(20), 10)
-    }
-
-    g.test('Using a None') {
-      try assert_equal(Option.none.get_or(10), 10)
-    }
-  }
-
-  t.group('std::option::Option.get_or_else') do (g) {
-    g.test('Using a Some') {
-      try assert_equal(Option.some(10).get_or_else({ 20 }), 10)
-    }
-
-    g.test('Using a None') {
-      try assert_equal(Option.none.get_or_else({ 10 }), 10)
+      try assert_throw { try Option.none.get }
     }
   }
 
   t.group('std::option::Option.map') do (g) {
     g.test('Using a Some') {
-      try assert_equal(Option.some(10).map(do (_) { 20 }).get, 20)
+      try assert_equal(try! Option.some(10).map(do (_) { 20 }).get, 20)
     }
 
     g.test('Using a None') {
@@ -87,7 +49,7 @@ def tests(t: Tests) {
     g.test('Using a Some') {
       let option = Option.some(10).then do (_) { Option.some(20) }
 
-      try assert_equal(option.get, 20)
+      try assert_equal(try! option.get, 20)
     }
 
     g.test('Using a None') {

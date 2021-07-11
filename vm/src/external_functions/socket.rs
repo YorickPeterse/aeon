@@ -1,11 +1,14 @@
 //! Functions for working with non-blocking sockets.
+use crate::mem::allocator::{BumpAllocator, Pointer};
+use crate::mem::generator::GeneratorPointer;
+use crate::mem::objects::{
+    Array, ByteArray, Float, Int, String as InkoString, UnsignedInt,
+};
+use crate::mem::process::ServerPointer;
 use crate::network_poller::Interest;
-use crate::object_pointer::ObjectPointer;
-use crate::object_value;
-use crate::process::RcProcess;
 use crate::runtime_error::RuntimeError;
 use crate::socket::Socket;
-use crate::vm::state::RcState;
+use crate::vm::state::State;
 use std::io::Write;
 
 macro_rules! ret {
@@ -24,48 +27,48 @@ macro_rules! ret {
 ///
 /// This function requires requires one argument: the socket type.
 pub fn socket_allocate_ipv4(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let kind = arguments[0].u8_value()?;
+    _: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let kind = unsafe { UnsignedInt::read(arguments[0]) };
     let socket = Socket::ipv4(kind)?;
-    let socket_ptr = process
-        .allocate(object_value::socket(socket), state.ip_socket_prototype);
 
-    Ok(socket_ptr)
+    Ok(Pointer::boxed(socket))
 }
 
 /// Allocates a new IPv6 socket.
 ///
 /// This function requires requires one argument: the socket type.
 pub fn socket_allocate_ipv6(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let kind = arguments[0].u8_value()?;
+    _: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let kind = unsafe { UnsignedInt::read(arguments[0]) };
     let socket = Socket::ipv6(kind)?;
-    let socket_ptr = process
-        .allocate(object_value::socket(socket), state.ip_socket_prototype);
 
-    Ok(socket_ptr)
+    Ok(Pointer::boxed(socket))
 }
 
 /// Allocates a new UNIX socket.
 ///
 /// This function requires requires one argument: the socket type.
 pub fn socket_allocate_unix(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let kind = arguments[0].u8_value()?;
+    _: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let kind = unsafe { UnsignedInt::read(arguments[0]) };
     let socket = Socket::unix(kind)?;
-    let socket_ptr = process
-        .allocate(object_value::socket(socket), state.unix_socket_prototype);
 
-    Ok(socket_ptr)
+    Ok(Pointer::boxed(socket))
 }
 
 /// Writes a String to a socket.
@@ -75,15 +78,23 @@ pub fn socket_allocate_unix(
 /// 1. The socket to write to.
 /// 2. The String to write.
 pub fn socket_write_string(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let sock = arguments[0].socket_value_mut()?;
-    let input = arguments[1].string_value()?.as_bytes();
+    state: &State,
+    alloc: &mut BumpAllocator,
+    process: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let sock = unsafe { arguments[0].get_mut::<Socket>() };
+    let input = unsafe { InkoString::read(&arguments[1]).as_bytes() };
     let res = sock
         .write(input)
-        .map(|written| process.allocate_usize(written, state.integer_prototype))
+        .map(|size| {
+            UnsignedInt::alloc(
+                alloc,
+                state.permanent_space.unsigned_int_class(),
+                size as u64,
+            )
+        })
         .map_err(RuntimeError::from);
 
     ret!(res, state, process, sock, Interest::Write)
@@ -96,15 +107,23 @@ pub fn socket_write_string(
 /// 1. The socket to write to.
 /// 2. The ByteArray to write.
 pub fn socket_write_bytes(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let sock = arguments[0].socket_value_mut()?;
-    let input = arguments[1].byte_array_value()?;
+    state: &State,
+    alloc: &mut BumpAllocator,
+    process: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let sock = unsafe { arguments[0].get_mut::<Socket>() };
+    let input = unsafe { arguments[1].get::<ByteArray>() }.value();
     let res = sock
         .write(input)
-        .map(|written| process.allocate_usize(written, state.integer_prototype))
+        .map(|size| {
+            UnsignedInt::alloc(
+                alloc,
+                state.permanent_space.unsigned_int_class(),
+                size as u64,
+            )
+        })
         .map_err(RuntimeError::from);
 
     ret!(res, state, process, sock, Interest::Write)
@@ -118,17 +137,23 @@ pub fn socket_write_bytes(
 /// 2. The ByteArray to read into.
 /// 3. The number of bytes to read.
 pub fn socket_read(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let sock = arguments[0].socket_value_mut()?;
-    let buffer = arguments[1].byte_array_value_mut()?;
-    let amount = arguments[2].usize_value()?;
+    state: &State,
+    alloc: &mut BumpAllocator,
+    process: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let sock = unsafe { arguments[0].get_mut::<Socket>() };
+    let buffer = unsafe { arguments[1].get_mut::<ByteArray>() }.value_mut();
+    let amount = unsafe { UnsignedInt::read(arguments[2]) } as usize;
 
-    let result = sock
-        .read(buffer, amount)
-        .map(|read| process.allocate_usize(read, state.integer_prototype));
+    let result = sock.read(buffer, amount).map(|size| {
+        UnsignedInt::alloc(
+            alloc,
+            state.permanent_space.unsigned_int_class(),
+            size as u64,
+        )
+    });
 
     ret!(result, state, process, sock, Interest::Read)
 }
@@ -140,16 +165,17 @@ pub fn socket_read(
 /// 1. The socket to listen on.
 /// 2. The listen backlog.
 pub fn socket_listen(
-    _: &RcState,
-    _: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let backlog_ptr = arguments[1];
-    let sock = arguments[0].socket_value()?;
-    let backlog = backlog_ptr.i32_value()?;
+    state: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let sock = unsafe { arguments[0].get_mut::<Socket>() };
+    let backlog = unsafe { Int::read(arguments[1]) } as i32;
 
     sock.listen(backlog)?;
-    Ok(backlog_ptr)
+    Ok(state.permanent_space.nil_singleton)
 }
 
 /// Binds a socket to an address.
@@ -160,14 +186,18 @@ pub fn socket_listen(
 /// 2. The address to bind to.
 /// 3. The port to bind to.
 pub fn socket_bind(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let sock = arguments[0].socket_value_mut()?;
-    let addr = arguments[1].string_value()?;
-    let port = arguments[2].u16_value()?;
-    let result = sock.bind(addr, port).map(|_| state.nil_object);
+    state: &State,
+    _: &mut BumpAllocator,
+    process: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let sock = unsafe { arguments[0].get_mut::<Socket>() };
+    let addr = unsafe { InkoString::read(&arguments[1]) };
+    let port = unsafe { UnsignedInt::read(arguments[2]) } as u16;
+    let result = sock
+        .bind(addr, port)
+        .map(|_| state.permanent_space.nil_singleton);
 
     ret!(result, state, process, sock, Interest::Read)
 }
@@ -177,17 +207,21 @@ pub fn socket_bind(
 /// This function requires the following arguments:
 ///
 /// 1. The socket to connect.
-/// 2. The address to connect to.
+/// 2alloc. The address to connect to.
 /// 3. The port to connect to.
 pub fn socket_connect(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let sock = arguments[0].socket_value_mut()?;
-    let addr = arguments[1].string_value()?;
-    let port = arguments[2].u16_value()?;
-    let result = sock.connect(addr, port).map(|_| state.nil_object);
+    state: &State,
+    _: &mut BumpAllocator,
+    process: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let sock = unsafe { arguments[0].get_mut::<Socket>() };
+    let addr = unsafe { InkoString::read(&arguments[1]) };
+    let port = unsafe { UnsignedInt::read(arguments[2]) } as u16;
+    let result = sock
+        .connect(addr, port)
+        .map(|_| state.permanent_space.nil_singleton);
 
     ret!(result, state, process, sock, Interest::Write)
 }
@@ -196,15 +230,14 @@ pub fn socket_connect(
 ///
 /// This function requires one argument: the socket to accept connections on.
 pub fn socket_accept_ip(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let sock = arguments[0].socket_value_mut()?;
-
-    let result = sock.accept().map(|sock| {
-        process.allocate(object_value::socket(sock), state.ip_socket_prototype)
-    });
+    state: &State,
+    _: &mut BumpAllocator,
+    process: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let sock = unsafe { arguments[0].get_mut::<Socket>() };
+    let result = sock.accept().map(Pointer::boxed);
 
     ret!(result, state, process, sock, Interest::Read)
 }
@@ -213,16 +246,14 @@ pub fn socket_accept_ip(
 ///
 /// This function requires one argument: the socket to accept connections on.
 pub fn socket_accept_unix(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let sock = arguments[0].socket_value_mut()?;
-
-    let result = sock.accept().map(|sock| {
-        process
-            .allocate(object_value::socket(sock), state.unix_socket_prototype)
-    });
+    state: &State,
+    _: &mut BumpAllocator,
+    process: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let sock = unsafe { arguments[0].get_mut::<Socket>() };
+    let result = sock.accept().map(Pointer::boxed);
 
     ret!(result, state, process, sock, Interest::Read)
 }
@@ -235,16 +266,18 @@ pub fn socket_accept_unix(
 /// 2. The ByteArray to write into.
 /// 3. The number of bytes to read.
 pub fn socket_receive_from(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let sock = arguments[0].socket_value_mut()?;
-    let mut buffer = arguments[1].byte_array_value_mut()?;
-    let amount = arguments[2].usize_value()?;
+    state: &State,
+    alloc: &mut BumpAllocator,
+    process: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let sock = unsafe { arguments[0].get_mut::<Socket>() };
+    let buffer = unsafe { arguments[1].get_mut::<ByteArray>() }.value_mut();
+    let amount = unsafe { UnsignedInt::read(arguments[2]) } as usize;
     let result = sock
-        .recv_from(&mut buffer, amount)
-        .map(|(addr, port)| allocate_address_pair(state, process, addr, port));
+        .recv_from(buffer, amount)
+        .map(|(addr, port)| allocate_address_pair(state, alloc, addr, port));
 
     ret!(result, state, process, sock, Interest::Read)
 }
@@ -258,17 +291,23 @@ pub fn socket_receive_from(
 /// 3. The address to send the data to.
 /// 4. The port to send the data to.
 pub fn socket_send_bytes_to(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let sock = arguments[0].socket_value_mut()?;
-    let buffer = arguments[1].byte_array_value()?;
-    let address = arguments[2].string_value()?;
-    let port = arguments[3].u16_value()?;
-    let result = sock
-        .send_to(buffer, address, port)
-        .map(|bytes| process.allocate_usize(bytes, state.integer_prototype));
+    state: &State,
+    alloc: &mut BumpAllocator,
+    process: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let sock = unsafe { arguments[0].get_mut::<Socket>() };
+    let buffer = unsafe { arguments[1].get_mut::<ByteArray>() }.value_mut();
+    let address = unsafe { InkoString::read(&arguments[2]) };
+    let port = unsafe { UnsignedInt::read(arguments[3]) } as u16;
+    let result = sock.send_to(buffer, address, port).map(|size| {
+        UnsignedInt::alloc(
+            alloc,
+            state.permanent_space.unsigned_int_class(),
+            size as u64,
+        )
+    });
 
     ret!(result, state, process, sock, Interest::Write)
 }
@@ -282,17 +321,23 @@ pub fn socket_send_bytes_to(
 /// 3. The address to send the data to.
 /// 4. The port to send the data to.
 pub fn socket_send_string_to(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let sock = arguments[0].socket_value_mut()?;
-    let buffer = arguments[1].string_value()?.as_bytes();
-    let address = arguments[2].string_value()?;
-    let port = arguments[3].u16_value()?;
-    let result = sock
-        .send_to(buffer, address, port)
-        .map(|bytes| process.allocate_usize(bytes, state.integer_prototype));
+    state: &State,
+    alloc: &mut BumpAllocator,
+    process: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let sock = unsafe { arguments[0].get_mut::<Socket>() };
+    let buffer = unsafe { arguments[1].get_mut::<ByteArray>() }.value_mut();
+    let address = unsafe { InkoString::read(&arguments[2]) };
+    let port = unsafe { UnsignedInt::read(arguments[3]) } as u16;
+    let result = sock.send_to(buffer, address, port).map(|size| {
+        UnsignedInt::alloc(
+            alloc,
+            state.permanent_space.unsigned_int_class(),
+            size as u64,
+        )
+    });
 
     ret!(result, state, process, sock, Interest::Write)
 }
@@ -301,83 +346,98 @@ pub fn socket_send_string_to(
 ///
 /// This function requires one argument: the socket to shut down.
 pub fn socket_shutdown_read(
-    state: &RcState,
-    _: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    arguments[0]
-        .socket_value()?
-        .shutdown_read()
-        .map(|_| state.nil_object)
+    state: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let sock = unsafe { arguments[0].get_mut::<Socket>() };
+
+    sock.shutdown_read()
+        .map(|_| state.permanent_space.nil_singleton)
 }
 
 /// Shuts down a socket for writing.
 ///
 /// This function requires one argument: the socket to shut down.
 pub fn socket_shutdown_write(
-    state: &RcState,
-    _: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    arguments[0]
-        .socket_value()?
-        .shutdown_write()
-        .map(|_| state.nil_object)
+    state: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let sock = unsafe { arguments[0].get_mut::<Socket>() };
+
+    sock.shutdown_write()
+        .map(|_| state.permanent_space.nil_singleton)
 }
 
 /// Shuts down a socket for reading and writing.
 ///
 /// This function requires one argument: the socket to shut down.
 pub fn socket_shutdown_read_write(
-    state: &RcState,
-    _: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    arguments[0]
-        .socket_value()?
-        .shutdown_read_write()
-        .map(|_| state.nil_object)
+    state: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let sock = unsafe { arguments[0].get_mut::<Socket>() };
+
+    sock.shutdown_read_write()
+        .map(|_| state.permanent_space.nil_singleton)
 }
 
 /// Returns the local address of a socket.
 ///
 /// This function requires one argument: the socket to return the address for.
 pub fn socket_local_address(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    arguments[0]
-        .socket_value()?
-        .local_address()
-        .map(|(addr, port)| allocate_address_pair(state, process, addr, port))
+    state: &State,
+    alloc: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let sock = unsafe { arguments[0].get::<Socket>() };
+
+    sock.local_address()
+        .map(|(addr, port)| allocate_address_pair(state, alloc, addr, port))
 }
 
 /// Returns the peer address of a socket.
 ///
 /// This function requires one argument: the socket to return the address for.
 pub fn socket_peer_address(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    arguments[0]
-        .socket_value()?
-        .peer_address()
-        .map(|(addr, port)| allocate_address_pair(state, process, addr, port))
+    state: &State,
+    alloc: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let sock = unsafe { arguments[0].get::<Socket>() };
+
+    sock.peer_address()
+        .map(|(addr, port)| allocate_address_pair(state, alloc, addr, port))
 }
 
 /// Returns the value of the `IP_TTL` option.
 ///
 /// This function requires one argument: the function to get the value for.
 pub fn socket_get_ttl(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    Ok(process.allocate_usize(
-        arguments[0].socket_value()?.ttl()?,
-        state.integer_prototype,
+    state: &State,
+    alloc: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let value = unsafe { arguments[0].get::<Socket>() }.ttl()? as u64;
+
+    Ok(UnsignedInt::alloc(
+        alloc,
+        state.permanent_space.unsigned_int_class(),
+        value,
     ))
 }
 
@@ -385,14 +445,16 @@ pub fn socket_get_ttl(
 ///
 /// This function requires one argument: the function to get the value for.
 pub fn socket_get_only_v6(
-    state: &RcState,
-    _: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    if arguments[0].socket_value()?.only_v6()? {
-        Ok(state.true_object)
+    state: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    if unsafe { arguments[0].get::<Socket>() }.only_v6()? {
+        Ok(state.permanent_space.true_singleton)
     } else {
-        Ok(state.false_object)
+        Ok(state.permanent_space.false_singleton)
     }
 }
 
@@ -400,14 +462,16 @@ pub fn socket_get_only_v6(
 ///
 /// This function requires one argument: the function to get the value for.
 pub fn socket_get_nodelay(
-    state: &RcState,
-    _: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    if arguments[0].socket_value()?.nodelay()? {
-        Ok(state.true_object)
+    state: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    if unsafe { arguments[0].get_mut::<Socket>() }.nodelay()? {
+        Ok(state.permanent_space.true_singleton)
     } else {
-        Ok(state.false_object)
+        Ok(state.permanent_space.false_singleton)
     }
 }
 
@@ -415,14 +479,16 @@ pub fn socket_get_nodelay(
 ///
 /// This function requires one argument: the function to get the value for.
 pub fn socket_get_broadcast(
-    state: &RcState,
-    _: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    if arguments[0].socket_value()?.broadcast()? {
-        Ok(state.true_object)
+    state: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    if unsafe { arguments[0].get::<Socket>() }.broadcast()? {
+        Ok(state.permanent_space.true_singleton)
     } else {
-        Ok(state.false_object)
+        Ok(state.permanent_space.false_singleton)
     }
 }
 
@@ -430,13 +496,18 @@ pub fn socket_get_broadcast(
 ///
 /// This function requires one argument: the function to get the value for.
 pub fn socket_get_linger(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    Ok(process.allocate(
-        object_value::float(arguments[0].socket_value()?.linger()?),
-        state.float_prototype,
+    state: &State,
+    alloc: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let value = unsafe { arguments[0].get::<Socket>() }.linger()?;
+
+    Ok(Float::alloc(
+        alloc,
+        state.permanent_space.float_class(),
+        value,
     ))
 }
 
@@ -444,13 +515,16 @@ pub fn socket_get_linger(
 ///
 /// This function requires one argument: the function to get the value for.
 pub fn socket_get_recv_size(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    Ok(process.allocate_usize(
-        arguments[0].socket_value()?.recv_buffer_size()?,
-        state.integer_prototype,
+    state: &State,
+    alloc: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    Ok(UnsignedInt::alloc(
+        alloc,
+        state.permanent_space.unsigned_int_class(),
+        unsafe { arguments[0].get::<Socket>() }.recv_buffer_size()? as u64,
     ))
 }
 
@@ -458,13 +532,16 @@ pub fn socket_get_recv_size(
 ///
 /// This function requires one argument: the function to get the value for.
 pub fn socket_get_send_size(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    Ok(process.allocate_usize(
-        arguments[0].socket_value()?.send_buffer_size()?,
-        state.integer_prototype,
+    state: &State,
+    alloc: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    Ok(UnsignedInt::alloc(
+        alloc,
+        state.permanent_space.unsigned_int_class(),
+        unsafe { arguments[0].get::<Socket>() }.send_buffer_size()? as u64,
     ))
 }
 
@@ -472,13 +549,18 @@ pub fn socket_get_send_size(
 ///
 /// This function requires one argument: the function to get the value for.
 pub fn socket_get_keepalive(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    Ok(process.allocate(
-        object_value::float(arguments[0].socket_value()?.keepalive()?),
-        state.float_prototype,
+    state: &State,
+    alloc: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let value = unsafe { arguments[0].get::<Socket>() }.keepalive()?;
+
+    Ok(Float::alloc(
+        alloc,
+        state.permanent_space.float_class(),
+        value,
     ))
 }
 
@@ -486,14 +568,16 @@ pub fn socket_get_keepalive(
 ///
 /// This function requires one argument: the function to get the value for.
 pub fn socket_get_multicast_loop_v4(
-    state: &RcState,
-    _: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    if arguments[0].socket_value()?.multicast_loop_v4()? {
-        Ok(state.true_object)
+    state: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    if unsafe { arguments[0].get::<Socket>() }.multicast_loop_v4()? {
+        Ok(state.permanent_space.true_singleton)
     } else {
-        Ok(state.false_object)
+        Ok(state.permanent_space.false_singleton)
     }
 }
 
@@ -501,14 +585,16 @@ pub fn socket_get_multicast_loop_v4(
 ///
 /// This function requires one argument: the function to get the value for.
 pub fn socket_get_multicast_loop_v6(
-    state: &RcState,
-    _: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    if arguments[0].socket_value()?.multicast_loop_v6()? {
-        Ok(state.true_object)
+    state: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    if unsafe { arguments[0].get::<Socket>() }.multicast_loop_v6()? {
+        Ok(state.permanent_space.true_singleton)
     } else {
-        Ok(state.false_object)
+        Ok(state.permanent_space.false_singleton)
     }
 }
 
@@ -516,13 +602,16 @@ pub fn socket_get_multicast_loop_v6(
 ///
 /// This function requires one argument: the function to get the value for.
 pub fn socket_get_multicast_ttl_v4(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    Ok(process.allocate_usize(
-        arguments[0].socket_value()?.multicast_ttl_v4()?,
-        state.integer_prototype,
+    state: &State,
+    alloc: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    Ok(UnsignedInt::alloc(
+        alloc,
+        state.permanent_space.unsigned_int_class(),
+        unsafe { arguments[0].get::<Socket>() }.multicast_ttl_v4()? as u64,
     ))
 }
 
@@ -530,13 +619,16 @@ pub fn socket_get_multicast_ttl_v4(
 ///
 /// This function requires one argument: the function to get the value for.
 pub fn socket_get_multicast_hops_v6(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    Ok(process.allocate_usize(
-        arguments[0].socket_value()?.multicast_hops_v6()?,
-        state.integer_prototype,
+    state: &State,
+    alloc: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    Ok(UnsignedInt::alloc(
+        alloc,
+        state.permanent_space.unsigned_int_class(),
+        unsafe { arguments[0].get::<Socket>() }.multicast_hops_v6()? as u64,
     ))
 }
 
@@ -544,13 +636,18 @@ pub fn socket_get_multicast_hops_v6(
 ///
 /// This function requires one argument: the function to get the value for.
 pub fn socket_get_multicast_if_v4(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    Ok(process.allocate(
-        object_value::string(arguments[0].socket_value()?.multicast_if_v4()?),
-        state.string_prototype,
+    state: &State,
+    alloc: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let value = unsafe { arguments[0].get::<Socket>() }.multicast_if_v4()?;
+
+    Ok(InkoString::alloc(
+        alloc,
+        state.permanent_space.string_class(),
+        value,
     ))
 }
 
@@ -558,13 +655,16 @@ pub fn socket_get_multicast_if_v4(
 ///
 /// This function requires one argument: the function to get the value for.
 pub fn socket_get_multicast_if_v6(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    Ok(process.allocate_usize(
-        arguments[0].socket_value()?.multicast_if_v6()?,
-        state.integer_prototype,
+    state: &State,
+    alloc: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    Ok(UnsignedInt::alloc(
+        alloc,
+        state.permanent_space.unsigned_int_class(),
+        unsafe { arguments[0].get::<Socket>() }.multicast_if_v6()? as u64,
     ))
 }
 
@@ -572,13 +672,16 @@ pub fn socket_get_multicast_if_v6(
 ///
 /// This function requires one argument: the function to get the value for.
 pub fn socket_get_unicast_hops_v6(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    Ok(process.allocate_usize(
-        arguments[0].socket_value()?.unicast_hops_v6()?,
-        state.integer_prototype,
+    state: &State,
+    alloc: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    Ok(UnsignedInt::alloc(
+        alloc,
+        state.permanent_space.unsigned_int_class(),
+        unsafe { arguments[0].get::<Socket>() }.unicast_hops_v6()? as u64,
     ))
 }
 
@@ -586,14 +689,16 @@ pub fn socket_get_unicast_hops_v6(
 ///
 /// This function requires one argument: the function to get the value for.
 pub fn socket_get_reuse_address(
-    state: &RcState,
-    _: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    if arguments[0].socket_value()?.reuse_address()? {
-        Ok(state.true_object)
+    state: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    if unsafe { arguments[0].get::<Socket>() }.reuse_address()? {
+        Ok(state.permanent_space.true_singleton)
     } else {
-        Ok(state.false_object)
+        Ok(state.permanent_space.false_singleton)
     }
 }
 
@@ -601,14 +706,16 @@ pub fn socket_get_reuse_address(
 ///
 /// This function requires one argument: the function to get the value for.
 pub fn socket_get_reuse_port(
-    state: &RcState,
-    _: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    if arguments[0].socket_value()?.reuse_port()? {
-        Ok(state.true_object)
+    state: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    if unsafe { arguments[0].get::<Socket>() }.reuse_port()? {
+        Ok(state.permanent_space.true_singleton)
     } else {
-        Ok(state.false_object)
+        Ok(state.permanent_space.false_singleton)
     }
 }
 
@@ -619,16 +726,17 @@ pub fn socket_get_reuse_port(
 /// 1. The socket to set the option for.
 /// 2. The value to set.
 pub fn socket_set_ttl(
-    _: &RcState,
-    _: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let value = arguments[1];
+    state: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let sock = unsafe { arguments[0].get_mut::<Socket>() };
+    let value = unsafe { UnsignedInt::read(arguments[1]) } as u32;
 
-    arguments[0]
-        .socket_value_mut()?
-        .set_ttl(value.u32_value()?)?;
-    Ok(value)
+    sock.set_ttl(value)?;
+    Ok(state.permanent_space.nil_singleton)
 }
 
 /// Sets the value of the `IPV6_ONLY` option.
@@ -638,16 +746,16 @@ pub fn socket_set_ttl(
 /// 1. The socket to set the option for.
 /// 2. The value to set.
 pub fn socket_set_only_v6(
-    state: &RcState,
-    _: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let value = arguments[1];
+    state: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let sock = unsafe { arguments[0].get_mut::<Socket>() };
 
-    arguments[0]
-        .socket_value_mut()?
-        .set_only_v6(is_true!(state, arguments[1]))?;
-    Ok(value)
+    sock.set_only_v6(arguments[1] == state.permanent_space.true_singleton)?;
+    Ok(state.permanent_space.nil_singleton)
 }
 
 /// Sets the value of the `TCP_NODELAY` option.
@@ -657,16 +765,16 @@ pub fn socket_set_only_v6(
 /// 1. The socket to set the option for.
 /// 2. The value to set.
 pub fn socket_set_nodelay(
-    state: &RcState,
-    _: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let value = arguments[1];
+    state: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let sock = unsafe { arguments[0].get_mut::<Socket>() };
 
-    arguments[0]
-        .socket_value_mut()?
-        .set_nodelay(is_true!(state, arguments[1]))?;
-    Ok(value)
+    sock.set_nodelay(arguments[1] == state.permanent_space.true_singleton)?;
+    Ok(state.permanent_space.nil_singleton)
 }
 
 /// Sets the value of the `SO_BROADCAST` option.
@@ -676,16 +784,16 @@ pub fn socket_set_nodelay(
 /// 1. The socket to set the option for.
 /// 2. The value to set.
 pub fn socket_set_broadcast(
-    state: &RcState,
-    _: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let value = arguments[1];
+    state: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let sock = unsafe { arguments[0].get_mut::<Socket>() };
 
-    arguments[0]
-        .socket_value_mut()?
-        .set_broadcast(is_true!(state, arguments[1]))?;
-    Ok(value)
+    sock.set_broadcast(arguments[1] == state.permanent_space.true_singleton)?;
+    Ok(state.permanent_space.nil_singleton)
 }
 
 /// Sets the value of the `SO_LINGER` option.
@@ -695,16 +803,17 @@ pub fn socket_set_broadcast(
 /// 1. The socket to set the option for.
 /// 2. The value to set.
 pub fn socket_set_linger(
-    _: &RcState,
-    _: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let value = arguments[1];
+    state: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let sock = unsafe { arguments[0].get_mut::<Socket>() };
+    let value = unsafe { Float::read(arguments[1]) };
 
-    arguments[0]
-        .socket_value_mut()?
-        .set_linger(value.float_value()?)?;
-    Ok(value)
+    sock.set_linger(value)?;
+    Ok(state.permanent_space.nil_singleton)
 }
 
 /// Sets the value of the `SO_RCVBUF` option.
@@ -714,16 +823,17 @@ pub fn socket_set_linger(
 /// 1. The socket to set the option for.
 /// 2. The value to set.
 pub fn socket_set_recv_size(
-    _: &RcState,
-    _: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let value = arguments[1];
+    state: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let sock = unsafe { arguments[0].get_mut::<Socket>() };
+    let value = unsafe { UnsignedInt::read(arguments[1]) } as usize;
 
-    arguments[0]
-        .socket_value_mut()?
-        .set_recv_buffer_size(value.usize_value()?)?;
-    Ok(value)
+    sock.set_recv_buffer_size(value)?;
+    Ok(state.permanent_space.nil_singleton)
 }
 
 /// Sets the value of the `SO_SNDBUF` option.
@@ -733,16 +843,17 @@ pub fn socket_set_recv_size(
 /// 1. The socket to set the option for.
 /// 2. The value to set.
 pub fn socket_set_send_size(
-    _: &RcState,
-    _: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let value = arguments[1];
+    state: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let sock = unsafe { arguments[0].get_mut::<Socket>() };
+    let value = unsafe { UnsignedInt::read(arguments[1]) } as usize;
 
-    arguments[0]
-        .socket_value_mut()?
-        .set_send_buffer_size(value.usize_value()?)?;
-    Ok(value)
+    sock.set_send_buffer_size(value)?;
+    Ok(state.permanent_space.nil_singleton)
 }
 
 /// Sets the value of the `SO_KEEPALIVE` option.
@@ -752,16 +863,17 @@ pub fn socket_set_send_size(
 /// 1. The socket to set the option for.
 /// 2. The value to set.
 pub fn socket_set_keepalive(
-    _: &RcState,
-    _: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let value = arguments[1];
+    state: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let sock = unsafe { arguments[0].get_mut::<Socket>() };
+    let value = unsafe { Float::read(arguments[1]) };
 
-    arguments[0]
-        .socket_value_mut()?
-        .set_keepalive(value.float_value()?)?;
-    Ok(value)
+    sock.set_keepalive(value)?;
+    Ok(state.permanent_space.nil_singleton)
 }
 
 /// Sets the value of the `IP_MULTICAST_LOOP` option.
@@ -771,16 +883,17 @@ pub fn socket_set_keepalive(
 /// 1. The socket to set the option for.
 /// 2. The value to set.
 pub fn socket_set_multicast_loop_v4(
-    state: &RcState,
-    _: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
+    state: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let sock = unsafe { arguments[0].get_mut::<Socket>() };
     let value = arguments[1];
 
-    arguments[0]
-        .socket_value_mut()?
-        .set_multicast_loop_v4(is_true!(state, arguments[1]))?;
-    Ok(value)
+    sock.set_multicast_loop_v4(value == state.permanent_space.true_singleton)?;
+    Ok(state.permanent_space.nil_singleton)
 }
 
 /// Sets the value of the `IPV6_MULTICAST_LOOP` option.
@@ -790,16 +903,17 @@ pub fn socket_set_multicast_loop_v4(
 /// 1. The socket to set the option for.
 /// 2. The value to set.
 pub fn socket_set_multicast_loop_v6(
-    state: &RcState,
-    _: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
+    state: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let sock = unsafe { arguments[0].get_mut::<Socket>() };
     let value = arguments[1];
 
-    arguments[0]
-        .socket_value_mut()?
-        .set_multicast_loop_v6(is_true!(state, arguments[1]))?;
-    Ok(value)
+    sock.set_multicast_loop_v6(value == state.permanent_space.true_singleton)?;
+    Ok(state.permanent_space.nil_singleton)
 }
 
 /// Sets the value of the `IP_MULTICAST_TTL` option.
@@ -809,16 +923,17 @@ pub fn socket_set_multicast_loop_v6(
 /// 1. The socket to set the option for.
 /// 2. The value to set.
 pub fn socket_set_multicast_ttl_v4(
-    _: &RcState,
-    _: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let value = arguments[1];
+    state: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let sock = unsafe { arguments[0].get_mut::<Socket>() };
+    let value = unsafe { UnsignedInt::read(arguments[1]) } as u32;
 
-    arguments[0]
-        .socket_value_mut()?
-        .set_multicast_ttl_v4(value.u32_value()?)?;
-    Ok(value)
+    sock.set_multicast_ttl_v4(value)?;
+    Ok(state.permanent_space.nil_singleton)
 }
 
 /// Sets the value of the `IPV6_MULTICAST_HOPS` option.
@@ -828,16 +943,17 @@ pub fn socket_set_multicast_ttl_v4(
 /// 1. The socket to set the option for.
 /// 2. The value to set.
 pub fn socket_set_multicast_hops_v6(
-    _: &RcState,
-    _: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let value = arguments[1];
+    state: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let sock = unsafe { arguments[0].get_mut::<Socket>() };
+    let value = unsafe { UnsignedInt::read(arguments[1]) } as u32;
 
-    arguments[0]
-        .socket_value_mut()?
-        .set_multicast_hops_v6(value.u32_value()?)?;
-    Ok(value)
+    sock.set_multicast_hops_v6(value)?;
+    Ok(state.permanent_space.nil_singleton)
 }
 
 /// Sets the value of the `IP_MULTICAST_IF` option.
@@ -847,16 +963,17 @@ pub fn socket_set_multicast_hops_v6(
 /// 1. The socket to set the option for.
 /// 2. The value to set.
 pub fn socket_set_multicast_if_v4(
-    _: &RcState,
-    _: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let value = arguments[1];
+    state: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let sock = unsafe { arguments[0].get_mut::<Socket>() };
+    let value = unsafe { InkoString::read(&arguments[1]) };
 
-    arguments[0]
-        .socket_value_mut()?
-        .set_multicast_if_v4(value.string_value()?)?;
-    Ok(value)
+    sock.set_multicast_if_v4(value)?;
+    Ok(state.permanent_space.nil_singleton)
 }
 
 /// Sets the value of the `IPV6_MULTICAST_IF` option.
@@ -866,16 +983,17 @@ pub fn socket_set_multicast_if_v4(
 /// 1. The socket to set the option for.
 /// 2. The value to set.
 pub fn socket_set_multicast_if_v6(
-    _: &RcState,
-    _: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let value = arguments[1];
+    state: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let sock = unsafe { arguments[0].get_mut::<Socket>() };
+    let value = unsafe { UnsignedInt::read(arguments[1]) } as u32;
 
-    arguments[0]
-        .socket_value_mut()?
-        .set_multicast_if_v6(value.u32_value()?)?;
-    Ok(value)
+    sock.set_multicast_if_v6(value)?;
+    Ok(state.permanent_space.nil_singleton)
 }
 
 /// Sets the value of the `IPV6_UNICAST_HOPS` option.
@@ -885,16 +1003,17 @@ pub fn socket_set_multicast_if_v6(
 /// 1. The socket to set the option for.
 /// 2. The value to set.
 pub fn socket_set_unicast_hops_v6(
-    _: &RcState,
-    _: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let value = arguments[1];
+    state: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let sock = unsafe { arguments[0].get_mut::<Socket>() };
+    let value = unsafe { UnsignedInt::read(arguments[1]) } as u32;
 
-    arguments[0]
-        .socket_value_mut()?
-        .set_unicast_hops_v6(value.u32_value()?)?;
-    Ok(value)
+    sock.set_unicast_hops_v6(value)?;
+    Ok(state.permanent_space.nil_singleton)
 }
 
 /// Sets the value of the `SO_REUSEADDR` option.
@@ -904,16 +1023,17 @@ pub fn socket_set_unicast_hops_v6(
 /// 1. The socket to set the option for.
 /// 2. The value to set.
 pub fn socket_set_reuse_address(
-    state: &RcState,
-    _: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
+    state: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let sock = unsafe { arguments[0].get_mut::<Socket>() };
     let value = arguments[1];
 
-    arguments[0]
-        .socket_value_mut()?
-        .set_reuse_address(is_true!(state, arguments[1]))?;
-    Ok(value)
+    sock.set_reuse_address(value == state.permanent_space.true_singleton)?;
+    Ok(state.permanent_space.nil_singleton)
 }
 
 /// Sets the value of the `SO_REUSEPORT` option.
@@ -923,33 +1043,34 @@ pub fn socket_set_reuse_address(
 /// 1. The socket to set the option for.
 /// 2. The value to set.
 pub fn socket_set_reuse_port(
-    state: &RcState,
-    _: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
+    state: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let sock = unsafe { arguments[0].get_mut::<Socket>() };
     let value = arguments[1];
 
-    arguments[0]
-        .socket_value_mut()?
-        .set_reuse_port(is_true!(state, arguments[1]))?;
-    Ok(value)
+    sock.set_reuse_port(value == state.permanent_space.true_singleton)?;
+    Ok(state.permanent_space.nil_singleton)
 }
 
 fn allocate_address_pair(
-    state: &RcState,
-    process: &RcProcess,
+    state: &State,
+    alloc: &mut BumpAllocator,
     addr: String,
-    port: i64,
-) -> ObjectPointer {
-    let addr_ptr =
-        process.allocate(object_value::string(addr), state.string_prototype);
+    port: u64,
+) -> Pointer {
+    let addr =
+        InkoString::alloc(alloc, state.permanent_space.string_class(), addr);
+    let port = UnsignedInt::alloc(
+        alloc,
+        state.permanent_space.unsigned_int_class(),
+        port,
+    );
 
-    let port_ptr = ObjectPointer::integer(port);
-
-    process.allocate(
-        object_value::array(vec![addr_ptr, port_ptr]),
-        state.array_prototype,
-    )
+    Array::alloc(alloc, state.permanent_space.array_class(), vec![addr, port])
 }
 
 register!(

@@ -1,41 +1,44 @@
 //! VM functions for working with Inko byte arrays.
-use crate::object_pointer::ObjectPointer;
-use crate::object_value;
-use crate::process::RcProcess;
+use crate::mem::allocator::Pointer;
+use crate::mem::generator::GeneratorPointer;
+use crate::mem::objects::{ByteArray, UnsignedInt};
 use crate::runtime_error::RuntimeError;
+use crate::scheduler::process_worker::ProcessWorker;
 use crate::slicing;
-use crate::vm::state::RcState;
-use std::u8;
-
-const MIN_BYTE: i64 = u8::MIN as i64;
-const MAX_BYTE: i64 = u8::MAX as i64;
+use crate::vm::state::State;
 
 #[inline(always)]
-pub fn byte_array_from_array(
-    state: &RcState,
-    process: &RcProcess,
-    array_ptr: ObjectPointer,
-) -> Result<ObjectPointer, String> {
-    let integers = array_ptr.array_value()?;
-    let mut bytes = Vec::with_capacity(integers.len());
+pub fn allocate(
+    state: &State,
+    worker: &mut ProcessWorker,
+    generator: GeneratorPointer,
+    start_reg: u16,
+    amount: u16,
+) -> Pointer {
+    let mut values = Vec::with_capacity(amount as usize);
 
-    for value in integers.iter() {
-        bytes.push(integer_to_byte(*value)?);
+    for value in generator.context.get_registers(start_reg, amount) {
+        values.push(unsafe { UnsignedInt::read(*value) } as u8);
     }
 
-    Ok(process
-        .allocate(object_value::byte_array(bytes), state.byte_array_prototype))
+    ByteArray::alloc(
+        worker.allocator(),
+        state.permanent_space.byte_array_class(),
+        values,
+    )
 }
 
 #[inline(always)]
-pub fn byte_array_set(
-    array_ptr: ObjectPointer,
-    index_ptr: ObjectPointer,
-    value_ptr: ObjectPointer,
-) -> Result<ObjectPointer, RuntimeError> {
-    let bytes = array_ptr.byte_array_value_mut()?;
-    let index = slicing::slice_index_to_usize(index_ptr, bytes.len())?;
-    let value = integer_to_byte(value_ptr)?;
+pub fn set(
+    _: &State,
+    array_ptr: Pointer,
+    index_ptr: Pointer,
+    value_ptr: Pointer,
+) -> Result<(), RuntimeError> {
+    let byte_array = unsafe { array_ptr.get_mut::<ByteArray>() };
+    let bytes = byte_array.value_mut();
+    let index = slicing::slice_index_to_usize(index_ptr, bytes.len());
+    let value = unsafe { UnsignedInt::read(value_ptr) } as u8;
 
     if index > bytes.len() {
         return Err(RuntimeError::out_of_bounds(index));
@@ -49,75 +52,68 @@ pub fn byte_array_set(
         }
     }
 
-    Ok(value_ptr)
+    Ok(())
 }
 
 #[inline(always)]
-pub fn byte_array_get(
-    array_ptr: ObjectPointer,
-    index_ptr: ObjectPointer,
-) -> Result<ObjectPointer, RuntimeError> {
-    let bytes = array_ptr.byte_array_value()?;
-    let index = slicing::slice_index_to_usize(index_ptr, bytes.len())?;
+pub fn get(
+    array_ptr: Pointer,
+    index_ptr: Pointer,
+) -> Result<Pointer, RuntimeError> {
+    let byte_array = unsafe { array_ptr.get::<ByteArray>() };
+    let bytes = byte_array.value();
+    let index = slicing::slice_index_to_usize(index_ptr, bytes.len());
 
     bytes
         .get(index)
-        .map(|byte| ObjectPointer::byte(*byte))
+        .map(|byte| Pointer::int(*byte as i64))
         .ok_or_else(|| RuntimeError::out_of_bounds(index))
 }
 
 #[inline(always)]
-pub fn byte_array_remove(
-    array_ptr: ObjectPointer,
-    index_ptr: ObjectPointer,
-) -> Result<ObjectPointer, RuntimeError> {
-    let bytes = array_ptr.byte_array_value_mut()?;
-    let index = slicing::slice_index_to_usize(index_ptr, bytes.len())?;
+pub fn remove(
+    array_ptr: Pointer,
+    index_ptr: Pointer,
+) -> Result<Pointer, RuntimeError> {
+    let byte_array = unsafe { array_ptr.get_mut::<ByteArray>() };
+    let bytes = byte_array.value_mut();
+    let index = slicing::slice_index_to_usize(index_ptr, bytes.len());
 
     if index >= bytes.len() {
         Err(RuntimeError::out_of_bounds(index))
     } else {
-        Ok(ObjectPointer::byte(bytes.remove(index)))
+        Ok(Pointer::int(bytes.remove(index) as i64))
     }
 }
 
 #[inline(always)]
-pub fn byte_array_length(
-    state: &RcState,
-    process: &RcProcess,
-    array_ptr: ObjectPointer,
-) -> Result<ObjectPointer, String> {
-    let bytes = array_ptr.byte_array_value()?;
+pub fn length(
+    state: &State,
+    worker: &mut ProcessWorker,
+    array_ptr: Pointer,
+) -> Pointer {
+    let byte_array = unsafe { array_ptr.get::<ByteArray>() };
+    let bytes = byte_array.value();
 
-    Ok(process.allocate_usize(bytes.len(), state.integer_prototype))
+    UnsignedInt::alloc(
+        worker.allocator(),
+        state.permanent_space.int_class(),
+        bytes.len() as u64,
+    )
 }
 
 #[inline(always)]
-pub fn byte_array_equals(
-    state: &RcState,
-    compare_ptr: ObjectPointer,
-    compare_with_ptr: ObjectPointer,
-) -> Result<ObjectPointer, String> {
-    let result = if compare_ptr.byte_array_value()?
-        == compare_with_ptr.byte_array_value()?
-    {
-        state.true_object
+pub fn equals(
+    state: &State,
+    compare_ptr: Pointer,
+    compare_with_ptr: Pointer,
+) -> Pointer {
+    let compare = unsafe { compare_ptr.get::<ByteArray>() };
+    let compare_with = unsafe { compare_with_ptr.get::<ByteArray>() };
+
+    if compare.value() == compare_with.value() {
+        state.permanent_space.true_singleton
     } else {
-        state.false_object
-    };
-
-    Ok(result)
-}
-
-fn integer_to_byte(pointer: ObjectPointer) -> Result<u8, String> {
-    let value = pointer.integer_value()?;
-
-    if (MIN_BYTE..=MAX_BYTE).contains(&value) {
-        Ok(value as u8)
-    } else {
-        Err(format!(
-            "The value {} is not within the range 0..256",
-            value
-        ))
+        state.permanent_space.false_singleton
     }
 }

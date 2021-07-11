@@ -1,11 +1,10 @@
 # Extensions for the `String` type that can only be defined later on in the
 # bootstrapping process.
 import std::byte_array::ToByteArray
-import std::conversion::(ToFloat, ToInteger)
-import std::loop::(while)
+import std::conversion::(ToFloat, ToInt)
 import std::process::(panic)
 
-extern def string_to_byte_array(string: String) -> ByteArray
+extern def string_to_byte_array(string: ref String) -> ByteArray
 
 # Returns `True` if a string separator starts at the given byte position.
 #
@@ -16,13 +15,13 @@ extern def string_to_byte_array(string: String) -> ByteArray
 # for the separator.
 def split_at?(
   string: String,
-  separator: ByteArray,
-  start: Integer
+  separator: ref ByteArray,
+  start: Int
 ) -> Boolean {
-  (string.bytesize - start < separator.length).if_true { return False }
+  if string.bytesize - start < separator.length { return False }
 
-  separator.each_with_index do (byte, index) {
-    (byte == string.byte(start + index)).if_false { return False }
+  for (index, byte) in separator.iter.with_index {
+    if byte != string.byte(start + index) { return False }
   }
 
   True
@@ -35,20 +34,20 @@ impl ToByteArray for String {
   }
 }
 
-impl ToInteger for String {
-  # Converts `self` to an `Integer`.
+impl ToInt for String {
+  # Converts `self` to an `Int`.
   #
   # The string is parsed in base 10. If the `String` can not be converted to
-  # an `Integer`, `0` is returned instead.
+  # an `Int`, `0` is returned instead.
   #
   # # Examples
   #
-  # Converting a `String` to an `Integer`:
+  # Converting a `String` to an `Int`:
   #
-  #     '10'.to_integer # => 10
-  #     'a'.to_integer  # => 0
-  def to_integer -> Integer {
-    try Integer.parse(self, 10) else (_) 0
+  #     '10'.to_int # => 10
+  #     'a'.to_int  # => 0
+  def to_int -> Int {
+    try Int.parse(string: self, radix: 10) else (_) 0
   }
 }
 
@@ -65,7 +64,7 @@ impl ToFloat for String {
   #     '10.5'.to_float # => 10.5
   #     'a'.to_float    # => 0.0
   def to_float -> Float {
-    try Float.parse(self) else (_) 0.0
+    try Float.parse(self.clone) else (_) 0.0
   }
 }
 
@@ -89,21 +88,19 @@ impl String {
   # Slicing a `String` into a `ByteArray` using a negative start index:
   #
   #     'inko'.slice_bytes(start: -4, length: 4).to_string # => 'inko'
-  def slice_bytes(start: Integer, length: Integer) -> ByteArray {
-    length.negative?.if_true {
+  def slice_bytes(start: Int, length: Int) -> ByteArray {
+    if length.negative? {
       panic('The slice length must be zero or greater')
     }
 
     let bytes = ByteArray.new
     let total_bytes = bytesize
-    let mut index =
-      start.negative?.if(true: { start % total_bytes }, false: { start })
-
+    let mut index = if start.negative? { start % total_bytes } else { start }
     let mut end_at = index + length
 
-    (end_at > total_bytes).if_true { end_at = total_bytes }
+    if end_at > total_bytes { end_at = total_bytes }
 
-    while({ index < end_at }) {
+    while index < end_at {
       bytes.push(byte(index))
       index += 1
     }
@@ -138,9 +135,10 @@ impl String {
   #     iter.advance
   #     iter.current # => 'bar'
   def split(separator: String) => String {
-    empty?.if_true { return }
-    separator.empty?.or { separator.length >= length }.if_true {
-      yield self
+    if empty? { return }
+
+    if separator.empty? or separator.length >= length {
+      yield clone
       return
     }
 
@@ -150,23 +148,20 @@ impl String {
     let mut index = 0
     let max = bytesize
 
-    while({ index < max }) {
+    while index < max {
       let byte = byte(index)
 
-      (byte == sep_start)
-        .and { split_at?(string: self, separator: sep_bytes, start: index) }
-        .if(
-          true: {
-            yield buffer.drain_to_string
-            index += sep_bytes.length
-          },
-          false: {
-            buffer.push(byte)
-            index += 1
-          }
-        )
+      if byte == sep_start
+        and split_at?(string: self.clone, separator: sep_bytes, start: index)
+      {
+        yield buffer.drain_to_string
+        index += sep_bytes.length
+      } else {
+        buffer.push(byte)
+        index += 1
+      }
     }
 
-    buffer.empty?.if_false { yield buffer.drain_to_string }
+    if not buffer.empty? { yield buffer.drain_to_string }
   }
 }

@@ -1,67 +1,62 @@
 //! VM functions for working with Inko arrays.
-use crate::execution_context::ExecutionContext;
-use crate::immix::copy_object::CopyObject;
-use crate::object_pointer::ObjectPointer;
-use crate::object_value;
-use crate::process::RcProcess;
+use crate::mem::allocator::Pointer;
+use crate::mem::generator::GeneratorPointer;
+use crate::mem::objects::{Array, Int};
 use crate::runtime_error::RuntimeError;
+use crate::scheduler::process_worker::ProcessWorker;
 use crate::slicing;
-use crate::vm::state::RcState;
+use crate::vm::state::State;
 
 #[inline(always)]
-pub fn array_allocate(
-    state: &RcState,
-    process: &RcProcess,
-    context: &ExecutionContext,
+pub fn allocate(
+    state: &State,
+    worker: &mut ProcessWorker,
+    generator: GeneratorPointer,
     start_reg: u16,
     amount: u16,
-) -> ObjectPointer {
-    let mut values = Vec::with_capacity(amount as usize);
+) -> Pointer {
+    let values = generator.context.get_registers(start_reg, amount).to_vec();
 
-    for register in start_reg..(start_reg + amount) {
-        values.push(context.get_register(register));
-    }
-
-    process.allocate(object_value::array(values), state.array_prototype)
+    Array::alloc(
+        worker.allocator(),
+        state.permanent_space.array_class(),
+        values,
+    )
 }
 
 #[inline(always)]
-pub fn array_set(
-    state: &RcState,
-    process: &RcProcess,
-    array_ptr: ObjectPointer,
-    index_ptr: ObjectPointer,
-    value_ptr: ObjectPointer,
-) -> Result<ObjectPointer, RuntimeError> {
-    let vector = array_ptr.array_value_mut()?;
-    let index = slicing::slice_index_to_usize(index_ptr, vector.len())?;
+pub fn set(
+    array_ptr: Pointer,
+    index_ptr: Pointer,
+    value_ptr: Pointer,
+) -> Result<(), RuntimeError> {
+    let array = unsafe { array_ptr.get_mut::<Array>() };
+    let vector = array.value_mut();
+    let index = slicing::slice_index_to_usize(index_ptr, vector.len());
 
     if index > vector.len() {
         return Err(RuntimeError::out_of_bounds(index));
     }
 
-    let value =
-        copy_if_permanent!(state.permanent_allocator, value_ptr, array_ptr);
-
     if index == vector.len() {
-        vector.push(value);
+        vector.push(value_ptr);
     } else {
         unsafe {
-            *vector.get_unchecked_mut(index) = value;
+            *vector.get_unchecked_mut(index) = value_ptr;
         }
     }
 
-    process.write_barrier(array_ptr, value);
-    Ok(value)
+    Ok(())
 }
 
 #[inline(always)]
-pub fn array_get(
-    array_ptr: ObjectPointer,
-    index_ptr: ObjectPointer,
-) -> Result<ObjectPointer, RuntimeError> {
-    let vector = array_ptr.array_value()?;
-    let index = slicing::slice_index_to_usize(index_ptr, vector.len())?;
+pub fn get(
+    array_ptr: Pointer,
+    index_ptr: Pointer,
+) -> Result<Pointer, RuntimeError> {
+    let array = unsafe { array_ptr.get::<Array>() };
+    let vector = array.value();
+    let index = slicing::slice_index_to_usize(index_ptr, vector.len());
 
     vector
         .get(index)
@@ -70,27 +65,33 @@ pub fn array_get(
 }
 
 #[inline(always)]
-pub fn array_remove(
-    array_ptr: ObjectPointer,
-    index_ptr: ObjectPointer,
-) -> Result<ObjectPointer, RuntimeError> {
-    let vector = array_ptr.array_value_mut()?;
-    let index = slicing::slice_index_to_usize(index_ptr, vector.len())?;
+pub fn remove(
+    array_ptr: Pointer,
+    index_ptr: Pointer,
+) -> Result<Pointer, RuntimeError> {
+    let array = unsafe { array_ptr.get_mut::<Array>() };
+    let vector = array.value_mut();
+    let index = slicing::slice_index_to_usize(index_ptr, vector.len());
 
     if index >= vector.len() {
-        Err(RuntimeError::out_of_bounds(index))
-    } else {
-        Ok(vector.remove(index))
+        return Err(RuntimeError::out_of_bounds(index));
     }
+
+    Ok(vector.remove(index))
 }
 
 #[inline(always)]
-pub fn array_length(
-    state: &RcState,
-    process: &RcProcess,
-    array_ptr: ObjectPointer,
-) -> Result<ObjectPointer, String> {
-    let vector = array_ptr.array_value()?;
+pub fn length(
+    state: &State,
+    worker: &mut ProcessWorker,
+    pointer: Pointer,
+) -> Pointer {
+    let array = unsafe { pointer.get::<Array>() };
+    let vector = array.value();
 
-    Ok(process.allocate_usize(vector.len(), state.integer_prototype))
+    Int::alloc(
+        worker.allocator(),
+        state.permanent_space.int_class(),
+        vector.len() as i64,
+    )
 }

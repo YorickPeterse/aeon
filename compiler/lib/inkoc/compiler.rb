@@ -8,6 +8,7 @@ module Inkoc
       Pass::SourceToAst,
       Pass::DesugarObject,
       Pass::DesugarMethod,
+      Pass::DesugarLoops,
       Pass::DefineModuleType,
       Pass::TrackModule,
       Pass::InsertImplicitImports,

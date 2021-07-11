@@ -1,34 +1,34 @@
 //! Functions for setting/getting environment and operating system data.
 use crate::directories;
-use crate::object_pointer::ObjectPointer;
-use crate::object_value;
+use crate::mem::allocator::{BumpAllocator, Pointer};
+use crate::mem::generator::GeneratorPointer;
+use crate::mem::objects::{Array, String as InkoString};
+use crate::mem::process::ServerPointer;
 use crate::platform;
-use crate::process::RcProcess;
 use crate::runtime_error::RuntimeError;
-use crate::vm::state::RcState;
+use crate::vm::state::State;
 use std::env;
 
 /// Gets the value of an environment variable.
 ///
 /// This function requires a single argument: the name of the variable to get.
 pub fn env_get(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let var_name = arguments[0].string_value()?;
-
-    if let Some(val) = env::var_os(var_name) {
+    state: &State,
+    alloc: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let var_name = unsafe { InkoString::read(&arguments[0]) };
+    let result = if let Some(val) = env::var_os(var_name) {
         let string = val.to_string_lossy().into_owned();
 
-        Ok(process
-            .allocate(object_value::string(string), state.string_prototype))
+        InkoString::alloc(alloc, state.permanent_space.string_class(), string)
     } else {
-        Err(RuntimeError::ErrorMessage(format!(
-            "The environment variable {:?} isn't set",
-            var_name
-        )))
-    }
+        state.permanent_space.undefined_singleton
+    };
+
+    Ok(result)
 }
 
 /// Sets the value of an environment variable.
@@ -38,76 +38,89 @@ pub fn env_get(
 /// 1. The name of the variable to set.
 /// 2. The value to set the variable to.
 pub fn env_set(
-    _: &RcState,
-    _: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let val_ptr = arguments[1];
+    state: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let name = unsafe { InkoString::read(&arguments[0]) };
+    let value = unsafe { InkoString::read(&arguments[1]) };
 
-    env::set_var(arguments[0].string_value()?, val_ptr.string_value()?);
-    Ok(val_ptr)
+    env::set_var(name, value);
+    Ok(state.permanent_space.nil_singleton)
 }
 
 /// Removes an environment variable.
 ///
 /// This function requires one argument: the name of the variable to remove.
 pub fn env_remove(
-    state: &RcState,
-    _: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    env::remove_var(arguments[0].string_value()?);
-    Ok(state.nil_object)
+    state: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let name = unsafe { InkoString::read(&arguments[0]) };
+
+    env::remove_var(name);
+    Ok(state.permanent_space.nil_singleton)
 }
 
 /// Returns an Array containing all environment variable names.
 ///
 /// This function doesn't take any arguments.
 pub fn env_variables(
-    state: &RcState,
-    process: &RcProcess,
-    _: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
+    state: &State,
+    alloc: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    _: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
     let names = env::vars_os()
         .map(|(key, _)| {
-            process.allocate(
-                object_value::string(key.to_string_lossy().into_owned()),
-                state.string_prototype,
-            )
+            let name = key.to_string_lossy().into_owned();
+
+            InkoString::alloc(alloc, state.permanent_space.string_class(), name)
         })
         .collect();
 
-    let array =
-        process.allocate(object_value::array(names), state.array_prototype);
-
-    Ok(array)
+    Ok(Array::alloc(
+        alloc,
+        state.permanent_space.array_class(),
+        names,
+    ))
 }
 
 /// Returns the user's home directory.
 pub fn env_home_directory(
-    state: &RcState,
-    process: &RcProcess,
-    _: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    if let Some(path) = directories::home() {
-        Ok(
-            process
-                .allocate(object_value::string(path), state.string_prototype),
-        )
+    state: &State,
+    alloc: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    _: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let result = if let Some(path) = directories::home() {
+        InkoString::alloc(alloc, state.permanent_space.string_class(), path)
     } else {
-        Err(RuntimeError::Error(state.nil_object))
-    }
+        state.permanent_space.undefined_singleton
+    };
+
+    Ok(result)
 }
 
 /// Returns the temporary directory.
 pub fn env_temp_directory(
-    state: &RcState,
-    process: &RcProcess,
-    _: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let res = process.allocate(
-        object_value::string(directories::temp()),
-        state.string_prototype,
+    state: &State,
+    alloc: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    _: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let res = InkoString::alloc(
+        alloc,
+        state.permanent_space.string_class(),
+        directories::temp(),
     );
 
     Ok(res)
@@ -115,64 +128,80 @@ pub fn env_temp_directory(
 
 /// Returns the current working directory.
 pub fn env_get_working_directory(
-    state: &RcState,
-    process: &RcProcess,
-    _: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
+    state: &State,
+    alloc: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    _: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
     let path = directories::working_directory()?;
+    let res =
+        InkoString::alloc(alloc, state.permanent_space.string_class(), path);
 
-    Ok(process.allocate(object_value::string(path), state.string_prototype))
+    Ok(res)
 }
 
 /// Sets the working directory.
 ///
 /// This function requires one argument: the path of the new directory.
 pub fn env_set_working_directory(
-    _: &RcState,
-    _: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let dir_ptr = arguments[0];
-    let dir = dir_ptr.string_value()?;
+    state: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let dir = unsafe { InkoString::read(&arguments[0]) };
 
     directories::set_working_directory(dir)?;
-    Ok(dir_ptr)
+    Ok(state.permanent_space.nil_singleton)
 }
 
 /// Returns the commandline arguments.
 pub fn env_arguments(
-    state: &RcState,
-    process: &RcProcess,
-    _: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let res = process.allocate(
-        object_value::array(state.arguments.clone()),
-        state.array_prototype,
+    state: &State,
+    alloc: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    _: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let res = Array::alloc(
+        alloc,
+        state.permanent_space.array_class(),
+        state.arguments.clone(),
     );
 
     Ok(res)
 }
 
-/// Returns the name of the underlying platform.
-pub fn env_platform_name(
-    state: &RcState,
-    _: &RcProcess,
-    _: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    Ok(state.intern_string(platform::operating_system().to_string()))
+/// Returns the identifier for the underlying platform.
+pub fn env_platform(
+    _: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    _: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    Ok(Pointer::int(platform::operating_system()))
 }
 
 /// Returns the full path to the current executable.
 ///
 /// This function takes no arguments.
 pub fn env_executable(
-    state: &RcState,
-    process: &RcProcess,
-    _: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
+    state: &State,
+    alloc: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    _: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
     let path = env::current_exe()?.to_string_lossy().to_string();
 
-    Ok(process.allocate(object_value::string(path), state.string_prototype))
+    Ok(InkoString::alloc(
+        alloc,
+        state.permanent_space.string_class(),
+        path,
+    ))
 }
 
 register!(
@@ -185,6 +214,6 @@ register!(
     env_get_working_directory,
     env_set_working_directory,
     env_arguments,
-    env_platform_name,
+    env_platform,
     env_executable
 );

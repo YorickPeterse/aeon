@@ -7,9 +7,9 @@ module Inkoc
       VERSION = 1
 
       INTEGER_LITERAL = 0
-      FLOAT_LITERAL = 1
-      STRING_LITERAL = 2
-      BIGINT_LITERAL = 3
+      UNSIGNED_INTEGER_LITERAL = 1
+      FLOAT_LITERAL = 2
+      STRING_LITERAL = 3
 
       U8_RANGE = 0..255
       U16_RANGE = 0..65535
@@ -70,7 +70,7 @@ module Inkoc
 
         size_before = output.length
 
-        array(mod.literals.to_a, :literal, output)
+        array(mod.literals.to_a, :literal, output, length: :u32)
         compiled_code(mod.body, output)
 
         size = output.length - size_before
@@ -165,8 +165,8 @@ module Inkoc
         u8(val ? 1 : 0, output)
       end
 
-      def array(values, encoder, output)
-        u64(values.length, output)
+      def array(values, encoder, output, length:)
+        public_send(length, values.length, output)
 
         values.each { |value| send(encoder, value, output) }
       end
@@ -185,17 +185,13 @@ module Inkoc
       end
 
       def integer_literal(value, output)
-        if INTEGER_RANGE.cover?(value)
-          u8(INTEGER_LITERAL, output)
-          i64(value, output)
-        else
-          bigint_literal(value, output)
-        end
+        u8(INTEGER_LITERAL, output)
+        i64(value, output)
       end
 
-      def bigint_literal(value, output)
-        u8(BIGINT_LITERAL, output)
-        string(value.to_s(16), output)
+      def integer_literal(value, output)
+        u8(UNSIGNED_INTEGER_LITERAL, output)
+        u64(value, output)
       end
 
       def float_literal(value, output)
@@ -212,6 +208,8 @@ module Inkoc
         case value
         when Integer
           integer_literal(value, output)
+        when UnsignedInteger
+          unsigned_integer_literal(value, output)
         when Float
           float_literal(value, output)
         when String, Symbol
@@ -226,14 +224,13 @@ module Inkoc
         u32(code.name, output)
         u32(code.file, output)
         u16(code.line, output)
-        array(code.arguments, :u32, output)
-        u8(code.required_arguments, output)
+        array(code.arguments, :u32, output, length: :u8)
         u16(code.locals, output)
         u16(code.registers, output)
         boolean(code.captures, output)
-        array(code.instructions, :instruction, output)
-        array(code.code_objects.to_a, :compiled_code, output)
-        array(code.catch_table.to_a, :catch_entry, output)
+        array(code.instructions, :instruction, output, length: :u32)
+        array(code.code_objects.to_a, :compiled_code, output, length: :u16)
+        array(code.catch_table.to_a, :catch_entry, output, length: :u16)
       end
 
       def validate_range!(value, range)

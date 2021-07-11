@@ -1,6 +1,6 @@
 # Networking types for Unix domain socket communication.
 import std::conversion::ToString
-import std::fs::path::(Path, ToPath)
+import std::fs::path::Path
 import std::io::(Close, Error, Read, Write)
 import std::net::bits::(
   self, MAXIMUM_LISTEN_BACKLOG, SOCK_DGRAM, SOCK_RAW, SOCK_SEQPACKET,
@@ -32,8 +32,8 @@ let SEQPACKET = SOCK_SEQPACKET
 # The socket type for Unix raw sockets.
 let RAW = SOCK_RAW
 
-extern def socket_allocate_unix(type: Integer) !! Integer -> Socket
-extern def socket_accept_unix(socket: Socket) !! Integer -> Socket
+extern def socket_allocate_unix(type: ref Int) !! Int -> Socket
+extern def socket_accept_unix(socket: ref Socket) !! Int -> Socket
 
 # A Unix domain socket address.
 class SocketAddress {
@@ -57,22 +57,22 @@ class SocketAddress {
   #
   #     import std::net::unix::SocketAddress
   #
-  #     SocketAddress.new
+  #     SocketAddress.new('')
   #
   # Creating a `SocketAddress` that uses an abstract address:
   #
   #     import std::net::unix::SocketAddress
   #
   #     SocketAddress.new("\0example")
-  static def new(address: ToString = '') -> Self {
-    Self { @address = address.to_string }
+  static def new(address: String) -> Self {
+    Self { @address = address }
   }
 
   # Returns the path of this address.
   #
   # If the address is unnamed or an abstract address, None is returned.
   def to_path -> ?Path {
-    unnamed?.or { abstract? }.if_true { return Option.none }
+    if unnamed? or abstract? { Option.none }
 
     Option.some(@address.to_path)
   }
@@ -100,7 +100,7 @@ class SocketAddress {
   #     import std::net::unix::SocketAddress
   #
   #     SocketAddress.new('/tmp/test.sock').unnamed? # => False
-  #     SocketAddress.new.unnamed?                   # => True
+  #     SocketAddress.new('').unnamed?               # => True
   def unnamed? -> Boolean {
     @address.empty?
   }
@@ -117,7 +117,7 @@ impl Equal for SocketAddress {
   #
   #     SocketAddress.new('a.sock') == SocketAddress.new('a.sock') # => True
   #     SocketAddress.new('a.sock') == SocketAddress.new('b.sock') # => False
-  def ==(other: Self) -> Boolean {
+  def ==(other: ref Self) -> Boolean {
     @address == other.to_string
   }
 }
@@ -134,7 +134,7 @@ impl ToString for SocketAddress {
   #     SocketAddress.new('/tmp/test.sock').to_string # => '/tmp/test.sock'
   #     SocketAddress.new("\0example").to_string      # => "\0example"
   def to_string -> String {
-    @address
+    @address.clone
   }
 }
 
@@ -148,7 +148,7 @@ impl Socket {
   #     import std::net::unix::(DGRAM, Socket)
   #
   #     try! Socket.new(DGRAM)
-  static def new(kind: Integer) !! Error -> Socket {
+  static def new(kind: Int) !! Error -> Socket {
     try socket_allocate_unix(kind) else (error) throw Error.new(error)
   }
 
@@ -163,7 +163,7 @@ impl Socket {
   #     let socket = try! Socket.new(DGRAM)
   #
   #     try! socket.bind('/tmp/test.sock')
-  def bind(path: ToString) !! Error {
+  def bind(path: ref ToString) !! Error {
     try bits.bind(self, path.to_string, 0)
   }
 
@@ -182,7 +182,7 @@ impl Socket {
   #     try! listener.listen
   #
   #     try! stream.connect('/tmp/test.sock')
-  def connect(path: ToString) !! Error {
+  def connect(path: ref ToString) !! Error {
     try bits.connect(self, path.to_string, 0)
   }
 
@@ -199,8 +199,8 @@ impl Socket {
   #
   #     try! socket.bind('/tmp/test.sock')
   #     try! socket.listen
-  def listen(backlog = MAXIMUM_LISTEN_BACKLOG) !! Error -> Integer {
-    try bits.listen(self, backlog)
+  def listen !! Error -> Int {
+    try bits.listen(self, MAXIMUM_LISTEN_BACKLOG)
   }
 
   # Accepts a new incoming connection from this socket.
@@ -241,8 +241,11 @@ impl Socket {
   #
   #     try! socket.bind('/tmp/test.sock')
   #     try! socket.send_string_to(string: 'hello', address: '/tmp/test.sock')
-  def send_string_to(string: String, address: ToString) !! Error -> Integer {
-    try bits.send_string_to(self, string, address.to_string, 0)
+  def send_string_to(
+    string: ref ToString,
+    address: ref ToString
+  ) !! Error -> Int {
+    try bits.send_string_to(self, string.to_string, address.to_string, 0)
   }
 
   # Sends a `ByteArray` to the given address.
@@ -258,7 +261,10 @@ impl Socket {
   #
   #     try! socket.bind('/tmp/test.sock')
   #     try! socket.send_bytes_to(bytes: bytes, address: '/tmp/test.sock')
-  def send_bytes_to(bytes: ByteArray, address: ToString) !! Error -> Integer {
+  def send_bytes_to(
+    bytes: ref ByteArray,
+    address: ref ToString
+  ) !! Error -> Int {
     try bits.send_bytes_to(self, bytes, address.to_string, 0)
   }
 
@@ -284,45 +290,46 @@ impl Socket {
   #     bytes.to_string         # => 'hello'
   #     received_from.to_string # => '/tmp/test.sock'
   def receive_from(
-    bytes: ByteArray,
-    size: Integer
+    bytes: ref ByteArray,
+    size: Int
   ) !! Error -> SocketAddress {
-    let addr = try bits.receive_from(socket: self, bytes: bytes, size: size)
+    let (addr: String) =
+      try bits.receive_from(socket: self, bytes: bytes, size: size)
 
-    SocketAddress.new(addr[0] as String)
+    SocketAddress.new(addr)
   }
 
   # Returns the local address of this socket.
   def local_address !! Error -> SocketAddress {
-    let addr = try bits.local_address(self)
+    let (addr: String) = try bits.local_address(self)
 
-    SocketAddress.new(addr[0] as String)
+    SocketAddress.new(addr)
   }
 
   # Returns the peer address of this socket.
   def peer_address !! Error -> SocketAddress {
-    let addr = try bits.peer_address(self)
+    let (addr: String) = try bits.peer_address(self)
 
-    SocketAddress.new(addr[0] as String)
+    SocketAddress.new(addr)
   }
 
   # Returns the value of the `SO_RCVBUF` option.
-  def receive_buffer_size !! Error -> Integer {
+  def receive_buffer_size !! Error -> Int {
     try bits.get_recv_size(self)
   }
 
   # Sets the value of the `SO_RCVBUF` option.
-  def receive_buffer_size=(value: Integer) !! Error -> Integer {
+  def receive_buffer_size=(value: Int) !! Error -> Int {
     try bits.set_recv_size(self, value)
   }
 
   # Returns the value of the `SO_SNDBUF` option.
-  def send_buffer_size !! Error -> Integer {
+  def send_buffer_size !! Error -> Int {
     try bits.get_send_size(self)
   }
 
   # Sets the value of the `SO_SNDBUF` option.
-  def send_buffer_size=(value: Integer) !! Error -> Integer {
+  def send_buffer_size=(value: Int) !! Error -> Int {
     try bits.set_send_size(self, value)
   }
 
@@ -345,18 +352,18 @@ impl Socket {
 impl RawSocket for Socket {}
 
 impl Read for Socket {
-  def read_bytes(bytes: ByteArray, size = 0) !! Error -> Integer {
-    try bits.read_bytes(self, bytes, size)
+  def read(into: ref ByteArray, size: Int) !! Error -> Int {
+    try bits.read_bytes(self, into, size)
   }
 }
 
 impl Write for Socket {
-  def write_bytes(bytes: ByteArray) !! Error -> Integer {
+  def write_bytes(bytes: ref ByteArray) !! Error -> Int {
     try bits.write_bytes(self, bytes)
   }
 
-  def write_string(string: String) !! Error -> Integer {
-    try bits.write_string(self, string)
+  def write_string(string: ref ToString) !! Error -> Int {
+    try bits.write_string(self, string.to_string)
   }
 
   def flush {
@@ -365,7 +372,7 @@ impl Write for Socket {
 }
 
 impl Close for Socket {
-  def close {
+  move def close {
     _INKOC.close(self)
   }
 }
@@ -384,7 +391,7 @@ class UnixDatagram {
   #     import std::net::unix::UnixDatagram
   #
   #     try! UnixDatagram.new('/tmp/test.sock')
-  static def new(address: ToString) !! Error -> Self {
+  static def new(address: ref ToString) !! Error -> Self {
     let socket = try Socket.new(DGRAM)
 
     try socket.bind(address)
@@ -408,8 +415,8 @@ class UnixDatagram {
   #     let socket2 = try! UnixDatagram.new('/tmp/test2.sock')
   #
   #     try! socket1.connect('/tmp/test2.sock')
-  def connect(address: ToString) !! Error {
-    try @socket.connect(address)
+  def connect(address: ref ToString) !! Error {
+    try @socket.connect(address.to_string)
   }
 
   # Sends a `String` to the given address.
@@ -423,8 +430,11 @@ class UnixDatagram {
   #     let socket = try! UnixDatagram.new('/tmp/test.sock')
   #
   #     try! socket.send_string_to(string: 'hello', address: '/tmp/test.sock')
-  def send_string_to(string: String, address: ToString) !! Error -> Integer {
-    try @socket.send_string_to(string, address)
+  def send_string_to(
+    string: ref ToString,
+    address: ref ToString
+  ) !! Error -> Int {
+    try @socket.send_string_to(string.to_string, address.to_string)
   }
 
   # Sends a `ByteArray` to the given address.
@@ -439,8 +449,11 @@ class UnixDatagram {
   #     let bytes = 'hello'.to_byte_array
   #
   #     try! socket.send_bytes_to(bytes: bytes, address: '/tmp/test.sock')
-  def send_bytes_to(bytes: ByteArray, address: ToString) !! Error -> Integer {
-    try @socket.send_bytes_to(bytes, address)
+  def send_bytes_to(
+    bytes: ref ByteArray,
+    address: ref ToString
+  ) !! Error -> Int {
+    try @socket.send_bytes_to(bytes, address.to_string)
   }
 
   # Receives a single datagram message on the socket, returning the address the
@@ -448,8 +461,8 @@ class UnixDatagram {
   #
   # See the documentation of `Socket.receive_from` for more information.
   def receive_from(
-    bytes: ByteArray,
-    size: Integer
+    bytes: ref ByteArray,
+    size: Int
   ) !! Error -> SocketAddress {
     try @socket.receive_from(bytes: bytes, size: size)
   }
@@ -465,24 +478,24 @@ class UnixDatagram {
   #
   # This method can be used to set additional low-level socket options, without
   # `UnixDatagram` having to re-define all these methods.
-  def socket -> Socket {
+  def socket -> ref Socket {
     @socket
   }
 }
 
 impl Read for UnixDatagram {
-  def read_bytes(bytes: ByteArray, size = 0) !! Error -> Integer {
-    try @socket.read_bytes(bytes: bytes, size: size)
+  def read(into: ref ByteArray, size: Int) !! Error -> Int {
+    try @socket.read(into, size)
   }
 }
 
 impl Write for UnixDatagram {
-  def write_bytes(bytes: ByteArray) !! Error -> Integer {
+  def write_bytes(bytes: ref ByteArray) !! Error -> Int {
     try @socket.write_bytes(bytes)
   }
 
-  def write_string(string: String) !! Error -> Integer {
-    try @socket.write_string(string)
+  def write_string(string: ref ToString) !! Error -> Int {
+    try @socket.write_string(string.to_string)
   }
 
   def flush {
@@ -491,7 +504,7 @@ impl Write for UnixDatagram {
 }
 
 impl Close for UnixDatagram {
-  def close {
+  move def close {
     @socket.close
   }
 }
@@ -512,10 +525,10 @@ class UnixStream {
   #     let listener = try! UnixListener.new('/tmp/test.sock')
   #
   #     try! UnixStream.new('/tmp/test.sock')
-  static def new(address: ToString) !! Error -> Self {
+  static def new(address: ref ToString) !! Error -> Self {
     let socket = try Socket.new(STREAM)
 
-    try socket.connect(address)
+    try socket.connect(address.to_string)
 
     Self { @socket = socket }
   }
@@ -538,7 +551,7 @@ class UnixStream {
   #
   # This method can be used to set additional low-level socket options, without
   # `UnixStream` having to re-define all these methods.
-  def socket -> Socket {
+  def socket -> ref Socket {
     @socket
   }
 
@@ -559,18 +572,18 @@ class UnixStream {
 }
 
 impl Read for UnixStream {
-  def read_bytes(bytes: ByteArray, size = 0) !! Error -> Integer {
-    try @socket.read_bytes(bytes: bytes, size: size)
+  def read(into: ref ByteArray, size: Int) !! Error -> Int {
+    try @socket.read(into, size)
   }
 }
 
 impl Write for UnixStream {
-  def write_bytes(bytes: ByteArray) !! Error -> Integer {
+  def write_bytes(bytes: ref ByteArray) !! Error -> Int {
     try @socket.write_bytes(bytes)
   }
 
-  def write_string(string: String) !! Error -> Integer {
-    try @socket.write_string(string)
+  def write_string(string: ref ToString) !! Error -> Int {
+    try @socket.write_string(string.to_string)
   }
 
   def flush {
@@ -579,7 +592,7 @@ impl Write for UnixStream {
 }
 
 impl Close for UnixStream {
-  def close {
+  move def close {
     @socket.close
   }
 }
@@ -600,20 +613,11 @@ class UnixListener {
   #     import std::net::unix::UnixListener
   #
   #     try! UnixListener.new('/tmp/test.sock')
-  #
-  # Creating a `UnixListener` with a custom `backlog`:
-  #
-  #     import std::net::unix::UnixListener
-  #
-  #     try! TcpListener.new('/tmp/test.sock')
-  static def new(
-    address: ToString,
-    backlog = MAXIMUM_LISTEN_BACKLOG
-  ) !! Error -> Self {
+  static def new(address: ref ToString) !! Error -> Self {
     let socket = try Socket.new(STREAM)
 
     try socket.bind(address)
-    try socket.listen(backlog)
+    try socket.listen
 
     Self { @socket = socket }
   }
@@ -651,13 +655,13 @@ class UnixListener {
   #
   # This method can be used to set additional low-level socket options, without
   # `UnixListener` having to re-define all these methods.
-  def socket -> Socket {
+  def socket -> ref Socket {
     @socket
   }
 }
 
 impl Close for UnixListener {
-  def close {
+  move def close {
     @socket.close
   }
 }

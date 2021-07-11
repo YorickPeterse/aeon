@@ -7,13 +7,13 @@ import std::os
 import std::process
 import std::test::*
 
-def tests(t: Tests) {
+def tests(t: ref Tests) {
   t.group('std::net::socket::SocketAddress.new') do (g) {
     g.test('Creating a SocketAddress') {
       let ip = Ipv4Address.new(127, 0, 0, 1)
-      let addr = SocketAddress.new(ip: ip, port: 1234)
+      let addr = SocketAddress.new(ip: ip.clone, port: 1234)
 
-      try assert_equal(addr.ip as Ipv4Address, ip)
+      try assert_equal(addr.ip, ip)
       try assert_equal(addr.port, 1234)
     }
   }
@@ -21,7 +21,7 @@ def tests(t: Tests) {
   t.group('std::net::socket::SocketAddress.==') do (g) {
     g.test('Comparing two identical SocketAddress objects') {
       let ip = Ipv4Address.new(127, 0, 0, 1)
-      let addr1 = SocketAddress.new(ip: ip, port: 1234)
+      let addr1 = SocketAddress.new(ip: ip.clone, port: 1234)
       let addr2 = SocketAddress.new(ip: ip, port: 1234)
 
       try assert_equal(addr1, addr2)
@@ -29,7 +29,7 @@ def tests(t: Tests) {
 
     g.test('Comparing two different SocketAddress objects') {
       let ip = Ipv4Address.new(127, 0, 0, 1)
-      let addr1 = SocketAddress.new(ip: ip, port: 1234)
+      let addr1 = SocketAddress.new(ip: ip.clone, port: 1234)
       let addr2 = SocketAddress.new(ip: ip, port: 12345)
 
       try assert_not_equal(addr1, addr2)
@@ -38,21 +38,21 @@ def tests(t: Tests) {
 
   t.group('std::net::socket::Socket.ipv4') do (g) {
     g.test('Creating an IPv4 stream socket') {
-      try assert_no_throw { local try Socket.ipv4(STREAM) }
+      try assert_no_throw { try Socket.ipv4(STREAM) }
     }
 
     g.test('Creating an IPv4 datagram socket') {
-      try assert_no_throw { local try Socket.ipv4(DGRAM) }
+      try assert_no_throw { try Socket.ipv4(DGRAM) }
     }
   }
 
   t.group('std::net::socket::Socket.ipv6') do (g) {
     g.test('Creating an IPv6 stream socket') {
-      try assert_no_throw { local try Socket.ipv6(STREAM) }
+      try assert_no_throw { try Socket.ipv6(STREAM) }
     }
 
     g.test('Creating an IPv6 datagram socket') {
-      try assert_no_throw { local try Socket.ipv6(DGRAM) }
+      try assert_no_throw { try Socket.ipv6(DGRAM) }
     }
   }
 
@@ -60,7 +60,7 @@ def tests(t: Tests) {
     g.test('Binding a socket') {
       let sock = try! Socket.ipv4(STREAM)
 
-      try assert_no_throw { local try sock.bind(ip: '0.0.0.0', port: 0) }
+      try assert_no_throw { try sock.bind(ip: '0.0.0.0', port: 0) }
     }
 
     g.test('Binding a socket to an invalid address') {
@@ -83,7 +83,7 @@ def tests(t: Tests) {
       let addr = try! listener.local_address
 
       try assert_no_throw {
-        local try stream.connect(ip: addr.ip, port: addr.port)
+        try stream.connect(ip: addr.ip.clone, port: addr.port)
       }
     }
 
@@ -97,22 +97,14 @@ def tests(t: Tests) {
         #
         # Since a connect() _might_ still raise the error right away, we have to
         # both connect and try to use the socket in some way.
-        local try stream.connect(ip: '0.0.0.0', port: 40_000)
-        local try stream.write_string('ping')
+        try stream.connect(ip: '0.0.0.0', port: 40_000)
+        try stream.write_string('ping')
       }
     }
   }
 
   t.group('std::net::socket::Socket.listen') do (g) {
-    g.test('Marking a Socket as listening with a custom backlog') {
-      let socket = try! Socket.ipv4(STREAM)
-
-      try! socket.bind(ip: '0.0.0.0', port: 0)
-
-      try assert_equal(try! socket.listen(4), 4)
-    }
-
-    g.test('Marking a Socket as listening using the default backlog') {
+    g.test('Marking a Socket as listening') {
       let socket = try! Socket.ipv4(STREAM)
 
       try! socket.bind(ip: '0.0.0.0', port: 0)
@@ -125,7 +117,7 @@ def tests(t: Tests) {
     g.test('Accepting a connection from an unbound socket') {
       let socket = try! Socket.ipv4(STREAM)
 
-      try assert_throw { local try socket.accept }
+      try assert_throw { try socket.accept }
     }
 
     g.test('Accepting a connection from a bound socket') {
@@ -135,7 +127,7 @@ def tests(t: Tests) {
         let address = process.receive as SocketAddress
         let stream = try! Socket.ipv4(STREAM)
 
-        try! stream.connect(ip: address.ip, port: address.port)
+        try! stream.connect(ip: address.ip.clone, port: address.port)
       }
 
       try! listener.bind(ip: '127.0.0.1', port: 0)
@@ -159,7 +151,7 @@ def tests(t: Tests) {
 
       let send_to = try! socket.local_address
 
-      try! socket.send_string_to('ping', send_to.ip, send_to.port)
+      try! socket.send_string_to('ping', send_to.ip.clone, send_to.port)
 
       try assert_equal(try! socket.read_string(size: 4), 'ping')
     }
@@ -176,7 +168,7 @@ def tests(t: Tests) {
       let send_to = try! socket.local_address
       let bytes = 'ping'.to_byte_array
 
-      try! socket.send_bytes_to(bytes, send_to.ip, send_to.port)
+      try! socket.send_bytes_to(bytes, send_to.ip.clone, send_to.port)
 
       try assert_equal(try! socket.read_string(size: 4), 'ping')
     }
@@ -192,7 +184,7 @@ def tests(t: Tests) {
 
       let send_to = try! listener.local_address
 
-      try! client.send_string_to('ping', send_to.ip, send_to.port)
+      try! client.send_string_to('ping', send_to.ip.clone, send_to.port)
 
       let bytes = ByteArray.new
       let sender = try! listener.receive_from(bytes: bytes, size: 4)
@@ -204,22 +196,19 @@ def tests(t: Tests) {
 
   t.group('std::net::socket::Socket.local_address') do (g) {
     g.test('Obtaining the local address of an unbound socket') {
-      os.windows?.if(
-        true: {
-          let socket = try! Socket.ipv4(DGRAM)
+      if os.windows? {
+        let socket = try! Socket.ipv4(DGRAM)
 
-          try assert_throw { local try socket.local_address }
-        },
-        false: {
-          let socket = try! Socket.ipv4(DGRAM)
-          let address = try! socket.local_address
+        try assert_throw { try socket.local_address }
+      } else {
+        let socket = try! Socket.ipv4(DGRAM)
+        let address = try! socket.local_address
 
-          try assert_equal(
-            address,
-            SocketAddress.new(ip: Ipv4Address.new(0, 0, 0, 0), port: 0)
-          )
-        }
-      )
+        try assert_equal(
+          address,
+          SocketAddress.new(ip: Ipv4Address.new(0, 0, 0, 0), port: 0)
+        )
+      }
     }
 
     g.test('Obtaining the local address of a bound socket') {
@@ -238,7 +227,7 @@ def tests(t: Tests) {
     g.test('Obtaining the peer address of a disconnected socket') {
       let socket = try! Socket.ipv4(DGRAM)
 
-      try assert_throw { local try socket.peer_address }
+      try assert_throw { try socket.peer_address }
     }
 
     g.test('Obtaining the peer address of a connected socket') {
@@ -250,7 +239,7 @@ def tests(t: Tests) {
 
       let listener_addr = try! listener.local_address
 
-      try! client.connect(ip: listener_addr.ip, port: listener_addr.port)
+      try! client.connect(ip: listener_addr.ip.clone, port: listener_addr.port)
 
       try assert_equal(try! client.peer_address, listener_addr)
     }
@@ -302,7 +291,7 @@ def tests(t: Tests) {
 
       try! socket.linger = 5
 
-      try assert_equal(try! { socket.linger }.to_seconds.to_integer, 5)
+      try assert_equal(try! { socket.linger }.to_seconds.to_int, 5)
     }
   }
 
@@ -328,14 +317,14 @@ def tests(t: Tests) {
 
   # Obtaining the TCP keepalive setting fails on Windows. See
   # https://github.com/alexcrichton/socket2-rs/issues/24 for more information.
-  os.windows?.if_false {
+  if not os.windows? {
     t.group('std::net::socket::Socket.keepalive') do (g) {
       g.test('Setting and obtaining the TCP keepalive timeout') {
         let socket = try! Socket.ipv4(STREAM)
 
         try! socket.keepalive = 5
 
-        try assert_equal(try! { socket.keepalive }.to_seconds.to_integer, 5)
+        try assert_equal(try! { socket.keepalive }.to_seconds.to_int, 5)
       }
     }
   }
@@ -403,7 +392,7 @@ def tests(t: Tests) {
       # cross-platform way of figuring out which interface is valid. To work
       # around this we just try the first 10 interfaces, and error if none could
       # be found.
-      while({ found.false?.and { interface < 10 } }) {
+      while not found and interface < 10 {
         found = True
 
         try {
@@ -445,12 +434,13 @@ def tests(t: Tests) {
 
       try! socket.reuse_port = True
 
-      os.windows?.if(
-        # Windows does not support SO_REUSEPORT, so the return value is always
-        # `False`.
-        true: { try assert_false(try! socket.reuse_port) },
-        false: { try assert_true(try! socket.reuse_port) }
-      )
+      # Windows does not support SO_REUSEPORT, so the return value is always
+      # `False`.
+      if os.windows? {
+        try assert_false(try! socket.reuse_port)
+      } else {
+        try assert_true(try! socket.reuse_port)
+      }
     }
   }
 
@@ -463,7 +453,7 @@ def tests(t: Tests) {
 
       let local_addr = try! socket.local_address
 
-      try! socket.send_string_to('ping', local_addr.ip, local_addr.port)
+      try! socket.send_string_to('ping', local_addr.ip.clone, local_addr.port)
 
       let read = try! socket.read_bytes(bytes: bytes, size: 4)
 
@@ -482,7 +472,7 @@ def tests(t: Tests) {
 
       let local_addr = try! listener.local_address
 
-      try! stream.connect(ip: local_addr.ip, port: local_addr.port)
+      try! stream.connect(ip: local_addr.ip.clone, port: local_addr.port)
 
       let written = try! stream.write_bytes('ping'.to_byte_array)
       let connection = try! listener.accept
@@ -521,7 +511,7 @@ def tests(t: Tests) {
 
       let local_addr = try! listener.local_address
 
-      try! stream.connect(ip: local_addr.ip, port: local_addr.port)
+      try! stream.connect(ip: local_addr.ip.clone, port: local_addr.port)
       try! stream.shutdown_read
 
       let message = try! stream.read_string(4)
@@ -540,10 +530,10 @@ def tests(t: Tests) {
 
       let local_addr = try! listener.local_address
 
-      try! stream.connect(ip: local_addr.ip, port: local_addr.port)
+      try! stream.connect(ip: local_addr.ip.clone, port: local_addr.port)
       try! stream.shutdown_write
 
-      try assert_throw { local try stream.write_string('ping') }
+      try assert_throw { try stream.write_string('ping') }
     }
   }
 
@@ -557,11 +547,11 @@ def tests(t: Tests) {
 
       let local_addr = try! listener.local_address
 
-      try! stream.connect(ip: local_addr.ip, port: local_addr.port)
+      try! stream.connect(ip: local_addr.ip.clone, port: local_addr.port)
 
       try assert_throw {
-        local try stream.shutdown
-        local try stream.write_string('ping')
+        try stream.shutdown
+        try stream.write_string('ping')
       }
     }
 
@@ -574,7 +564,7 @@ def tests(t: Tests) {
 
       let local_addr = try! listener.local_address
 
-      try! stream.connect(ip: local_addr.ip, port: local_addr.port)
+      try! stream.connect(ip: local_addr.ip.clone, port: local_addr.port)
       try! stream.shutdown
 
       let message = try! stream.read_string(4)
@@ -585,11 +575,11 @@ def tests(t: Tests) {
 
   t.group('std::net::socket::UdpSocket.new') do (g) {
     g.test('Creating a UdpSocket') {
-      try assert_no_throw { local try UdpSocket.new(ip: '0.0.0.0', port: 0) }
+      try assert_no_throw { try UdpSocket.new(ip: '0.0.0.0', port: 0) }
     }
 
     g.test('Creating a UdpSocket using an invalid IP address') {
-      try assert_throw { local try UdpSocket.new(ip: 'foo', port: 0) }
+      try assert_throw { try UdpSocket.new(ip: 'foo', port: 0) }
     }
   }
 
@@ -598,14 +588,12 @@ def tests(t: Tests) {
       let socket1 = try! UdpSocket.new(ip: '127.0.0.1', port: 40_000)
       let socket2 = try! UdpSocket.new(ip: '127.0.0.1', port: 41_000)
 
-      process.defer {
-        socket1.close
-        socket2.close
+      try assert_no_throw {
+        try socket1.connect(ip: '127.0.0.1', port: 41_000)
       }
 
-      try assert_no_throw {
-        local try socket1.connect(ip: '127.0.0.1', port: 41_000)
-      }
+      socket1.close
+      socket2.close
     }
 
     g.test('Reading and writing from a connected UdpSocket') {
@@ -625,7 +613,7 @@ def tests(t: Tests) {
       let socket = try! UdpSocket.new('127.0.0.1', port: 0)
       let send_to = try! socket.local_address
 
-      try! socket.send_string_to('ping', send_to.ip, send_to.port)
+      try! socket.send_string_to('ping', send_to.ip.clone, send_to.port)
 
       try assert_equal(try! socket.read_string(size: 4), 'ping')
     }
@@ -637,7 +625,7 @@ def tests(t: Tests) {
       let send_to = try! socket.local_address
       let bytes = 'ping'.to_byte_array
 
-      try! socket.send_bytes_to(bytes, send_to.ip, send_to.port)
+      try! socket.send_bytes_to(bytes, send_to.ip.clone, send_to.port)
 
       try assert_equal(try! socket.read_string(size: 4), 'ping')
     }
@@ -649,7 +637,7 @@ def tests(t: Tests) {
       let client = try! UdpSocket.new(ip: '127.0.0.1', port: 0)
       let send_to = try! listener.local_address
 
-      try! client.send_string_to('ping', send_to.ip, send_to.port)
+      try! client.send_string_to('ping', send_to.ip.clone, send_to.port)
 
       let bytes = ByteArray.new
       let sender = try! listener.receive_from(bytes: bytes, size: 4)
@@ -675,7 +663,7 @@ def tests(t: Tests) {
       let bytes = ByteArray.new
       let local_addr = try! socket.local_address
 
-      try! socket.send_string_to('ping', local_addr.ip, local_addr.port)
+      try! socket.send_string_to('ping', local_addr.ip.clone, local_addr.port)
 
       let read = try! socket.read_bytes(bytes: bytes, size: 4)
 
@@ -690,7 +678,7 @@ def tests(t: Tests) {
       let client_socket = try! UdpSocket.new(ip: '127.0.0.1', port: 0)
       let local_addr = try! server_socket.local_address
 
-      try! client_socket.connect(ip: local_addr.ip, port: local_addr.port)
+      try! client_socket.connect(ip: local_addr.ip.clone, port: local_addr.port)
 
       let written = try! client_socket.write_bytes('ping'.to_byte_array)
       let message = try! server_socket.read_string(size: 4)
@@ -702,7 +690,7 @@ def tests(t: Tests) {
     g.test('Writing bytes to a disconnected UdpSocket') {
       let socket = try! UdpSocket.new(ip: '127.0.0.1', port: 0)
 
-      try assert_throw { local try socket.write_bytes('ping'.to_byte_array) }
+      try assert_throw { try socket.write_bytes('ping'.to_byte_array) }
     }
   }
 
@@ -732,7 +720,9 @@ def tests(t: Tests) {
       let listener_addr = try! listener.local_address
 
       try assert_no_throw {
-        local try TcpStream.new(ip: listener_addr.ip, port: listener_addr.port)
+        let ip = listener_addr.ip.clone
+
+        try TcpStream.new(ip: ip, port: listener_addr.port)
       }
     }
   }
@@ -746,7 +736,7 @@ def tests(t: Tests) {
 
       let listener_addr = try! listener.local_address
       let stream =
-        try! TcpStream.new(ip: listener_addr.ip, port: listener_addr.port)
+        try! TcpStream.new(ip: listener_addr.ip.clone, port: listener_addr.port)
 
       let local_addr = try! stream.local_address
 
@@ -764,11 +754,11 @@ def tests(t: Tests) {
 
       let listener_addr = try! listener.local_address
       let stream =
-        try! TcpStream.new(ip: listener_addr.ip, port: listener_addr.port)
+        try! TcpStream.new(ip: listener_addr.ip.clone, port: listener_addr.port)
 
       let peer_addr = try! stream.peer_address
 
-      try assert_equal(peer_addr.ip as Ipv4Address, listener_addr.ip as Ipv4Address)
+      try assert_equal(peer_addr.ip, listener_addr.ip)
       try assert_equal(peer_addr.port, listener_addr.port)
     }
   }
@@ -781,11 +771,10 @@ def tests(t: Tests) {
       try! listener.listen
 
       let addr = try! listener.local_address
-      let stream = try! TcpStream.new(ip: addr.ip, port: addr.port)
+      let stream = try! TcpStream.new(ip: addr.ip.clone, port: addr.port)
       let bytes = ByteArray.new
 
       try! listener.accept.write_string('ping')
-
       try! stream.read_bytes(bytes: bytes, size: 4)
 
       try assert_equal(bytes.to_string, 'ping')
@@ -801,7 +790,7 @@ def tests(t: Tests) {
       try! listener.listen
 
       let addr = try! listener.local_address
-      let stream = try! TcpStream.new(ip: addr.ip, port: addr.port)
+      let stream = try! TcpStream.new(ip: addr.ip.clone, port: addr.port)
       let connection = try! listener.accept
 
       try! stream.write_bytes('ping'.to_byte_array)
@@ -818,7 +807,7 @@ def tests(t: Tests) {
       try! listener.listen
 
       let addr = try! listener.local_address
-      let stream = try! TcpStream.new(ip: addr.ip, port: addr.port)
+      let stream = try! TcpStream.new(ip: addr.ip.clone, port: addr.port)
       let connection = try! listener.accept
 
       try! stream.write_string('ping')
@@ -835,7 +824,7 @@ def tests(t: Tests) {
       try! listener.listen
 
       let addr = try! listener.local_address
-      let stream = try! TcpStream.new(ip: addr.ip, port: addr.port)
+      let stream = try! TcpStream.new(ip: addr.ip.clone, port: addr.port)
 
       stream.close
     }
@@ -849,7 +838,7 @@ def tests(t: Tests) {
       try! listener.listen
 
       let addr = try! listener.local_address
-      let stream = try! TcpStream.new(ip: addr.ip, port: addr.port)
+      let stream = try! TcpStream.new(ip: addr.ip.clone, port: addr.port)
 
       try assert_equal(stream.flush, Nil)
     }
@@ -863,7 +852,7 @@ def tests(t: Tests) {
       try! listener.listen
 
       let addr = try! listener.local_address
-      let stream = try! TcpStream.new(ip: addr.ip, port: addr.port)
+      let stream = try! TcpStream.new(ip: addr.ip.clone, port: addr.port)
 
       try! stream.shutdown_read
 
@@ -881,11 +870,11 @@ def tests(t: Tests) {
       try! listener.listen
 
       let addr = try! listener.local_address
-      let stream = try! TcpStream.new(ip: addr.ip, port: addr.port)
+      let stream = try! TcpStream.new(ip: addr.ip.clone, port: addr.port)
 
       try! stream.shutdown_write
 
-      try assert_throw { local try stream.write_string('ping') }
+      try assert_throw { try stream.write_string('ping') }
     }
   }
 
@@ -897,11 +886,11 @@ def tests(t: Tests) {
       try! listener.listen
 
       let addr = try! listener.local_address
-      let stream = try! TcpStream.new(ip: addr.ip, port: addr.port)
+      let stream = try! TcpStream.new(ip: addr.ip.clone, port: addr.port)
 
       try! stream.shutdown
 
-      try assert_throw { local try stream.write_string('ping') }
+      try assert_throw { try stream.write_string('ping') }
     }
 
     g.test('Shutting down the reading half of a Socket') {
@@ -911,7 +900,7 @@ def tests(t: Tests) {
       try! listener.listen
 
       let addr = try! listener.local_address
-      let stream = try! TcpStream.new(ip: addr.ip, port: addr.port)
+      let stream = try! TcpStream.new(ip: addr.ip.clone, port: addr.port)
 
       try! stream.shutdown
 
@@ -923,7 +912,7 @@ def tests(t: Tests) {
 
   t.group('std::net::socket::TcpListener.new') do (g) {
     g.test('Creating a TcpListener') {
-      try assert_no_throw { local try TcpListener.new(ip: '0.0.0.0', port: 0) }
+      try assert_no_throw { try TcpListener.new(ip: '0.0.0.0', port: 0) }
     }
 
     g.test('Creating a TcpListener with an in-use address and port') {
@@ -931,14 +920,8 @@ def tests(t: Tests) {
       let address = try! listener1.local_address
 
       try assert_no_throw {
-        local try TcpListener.new(ip: address.ip, port: address.port)
+        try TcpListener.new(ip: address.ip.clone, port: address.port)
       }
-    }
-
-    g.test('Creating a TcpListener that only uses IPv6 packets') {
-      let listener = try! TcpListener.new(ip: '::1', port: 0, only_ipv6: True)
-
-      try assert_true(try! listener.socket.only_ipv6?)
     }
   }
 
@@ -946,7 +929,7 @@ def tests(t: Tests) {
     g.test('Accepting an incoming connection') {
       let listener = try! TcpListener.new(ip: '127.0.0.1', port: 0)
       let addr = try! listener.local_address
-      let stream = try! TcpStream.new(ip: addr.ip, port: addr.port)
+      let stream = try! TcpStream.new(ip: addr.ip.clone, port: addr.port)
       let connection = try! listener.accept
 
       try assert_equal(try! connection.local_address, try! stream.peer_address)

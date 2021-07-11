@@ -1,25 +1,41 @@
 //! Functions for working with Inko strings.
-use crate::object_pointer::ObjectPointer;
-use crate::object_value;
-use crate::process::RcProcess;
+use crate::mem::allocator::{BumpAllocator, Pointer};
+use crate::mem::generator::GeneratorPointer;
+use crate::mem::objects::{
+    Array, ByteArray, Float, Int, String as InkoString, UnsignedInt,
+};
+use crate::mem::process::ServerPointer;
 use crate::runtime_error::RuntimeError;
 use crate::slicing;
-use crate::vm::state::RcState;
-use num_bigint::BigInt;
+use crate::vm::state::State;
+
+macro_rules! verify_radix {
+    ($radix: expr) => {{
+        if !(2..=36).contains(&$radix) {
+            return Err(RuntimeError::Panic(format!(
+                "radix must be between 2 and 32, not {}",
+                $radix
+            )));
+        }
+    }};
+}
 
 /// Converts a String to lowercase.
 ///
 /// This function requires a single argument: the string to convert.
 pub fn string_to_lower(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let lower = arguments[0].string_value()?.to_lowercase();
+    state: &State,
+    alloc: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let lower = unsafe { InkoString::read(&arguments[0]).to_lowercase() };
 
-    Ok(process.allocate(
-        object_value::immutable_string(lower),
-        state.string_prototype,
+    Ok(InkoString::alloc(
+        alloc,
+        state.permanent_space.string_class(),
+        lower,
     ))
 }
 
@@ -27,15 +43,18 @@ pub fn string_to_lower(
 ///
 /// This function requires a single argument: the string to convert.
 pub fn string_to_upper(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let upper = arguments[0].string_value()?.to_uppercase();
+    state: &State,
+    alloc: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let upper = unsafe { InkoString::read(&arguments[0]).to_uppercase() };
 
-    Ok(process.allocate(
-        object_value::immutable_string(upper),
-        state.string_prototype,
+    Ok(InkoString::alloc(
+        alloc,
+        state.permanent_space.string_class(),
+        upper,
     ))
 }
 
@@ -43,14 +62,19 @@ pub fn string_to_upper(
 ///
 /// This function requires a single argument: the string to convert.
 pub fn string_to_byte_array(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let bytes = arguments[0].string_value()?.as_bytes().to_vec();
-    let value = object_value::byte_array(bytes);
+    state: &State,
+    alloc: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let bytes = unsafe { InkoString::read(&arguments[0]).as_bytes().to_vec() };
 
-    Ok(process.allocate(value, state.byte_array_prototype))
+    Ok(ByteArray::alloc(
+        alloc,
+        state.permanent_space.byte_array_class(),
+        bytes,
+    ))
 }
 
 /// Concatenates multiple Strings together.
@@ -58,31 +82,43 @@ pub fn string_to_byte_array(
 /// This function requires a single argument: an array of strings to
 /// concatenate.
 pub fn string_concat_array(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let array = arguments[0].array_value()?;
+    state: &State,
+    alloc: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let array = unsafe { arguments[0].get::<Array>() }.value();
     let mut buffer = String::new();
 
     for str_ptr in array.iter() {
-        buffer.push_str(str_ptr.string_value()?.as_slice());
+        buffer.push_str(unsafe { InkoString::read(&*str_ptr) });
     }
 
-    Ok(process.allocate(object_value::string(buffer), state.string_prototype))
+    Ok(InkoString::alloc(
+        alloc,
+        state.permanent_space.string_class(),
+        buffer,
+    ))
 }
 
 /// Formats a String for debugging purposes.
 ///
 /// This function requires a single argument: the string to format.
 pub fn string_format_debug(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let new_str = format!("{:?}", arguments[0].string_value()?);
+    state: &State,
+    alloc: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let value = format!("{:?}", unsafe { InkoString::read(&arguments[0]) });
 
-    Ok(process.allocate(object_value::string(new_str), state.string_prototype))
+    Ok(InkoString::alloc(
+        alloc,
+        state.permanent_space.string_class(),
+        value,
+    ))
 }
 
 /// Slices a String into a new String.
@@ -93,22 +129,25 @@ pub fn string_format_debug(
 /// 2. The start position of the slice.
 /// 3. The number of characters to include in the new slice.
 pub fn string_slice(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let string = arguments[0].string_value()?;
+    state: &State,
+    alloc: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let string = unsafe { InkoString::read(&arguments[0]) };
     let start =
-        slicing::slice_index_to_usize(arguments[1], string.chars().count())?;
+        slicing::slice_index_to_usize(arguments[1], string.chars().count());
 
-    let amount = arguments[2].usize_value()?;
+    let amount = unsafe { UnsignedInt::read(arguments[2]) } as usize;
     let new_string =
         string.chars().skip(start).take(amount).collect::<String>();
 
-    let new_string_ptr = process
-        .allocate(object_value::string(new_string), state.string_prototype);
-
-    Ok(new_string_ptr)
+    Ok(InkoString::alloc(
+        alloc,
+        state.permanent_space.string_class(),
+        new_string,
+    ))
 }
 
 /// Converts a String to an integer.
@@ -117,55 +156,124 @@ pub fn string_slice(
 ///
 /// 1. The String to convert.
 /// 2. The radix to use for converting the String to an Integer.
-pub fn string_to_integer(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let string = arguments[0].string_value()?;
-    let radix = arguments[1].integer_value()?;
+pub fn string_to_int(
+    state: &State,
+    alloc: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let string = unsafe { InkoString::read(&arguments[0]) };
+    let radix = unsafe { UnsignedInt::read(arguments[1]) };
 
-    if !(2..=36).contains(&radix) {
-        return Err(RuntimeError::Panic(
-            "radix must be between 2 and 32, not {}".to_string(),
-        ));
-    }
+    verify_radix!(radix);
 
-    let int_ptr = if let Ok(value) = i64::from_str_radix(string, radix as u32) {
-        process.allocate_i64(value, state.integer_prototype)
-    } else if let Ok(val) = string.parse::<BigInt>() {
-        process.allocate(object_value::bigint(val), state.integer_prototype)
-    } else {
-        return Err(RuntimeError::ErrorMessage(format!(
-            "{:?} can not be converted to an Integer",
-            string
-        )));
-    };
+    i64::from_str_radix(string, radix as u32)
+        .map(|val| Int::alloc(alloc, state.permanent_space.int_class(), val))
+        .map_err(|_| {
+            RuntimeError::Error(state.permanent_space.undefined_singleton)
+        })
+}
 
-    Ok(int_ptr)
+/// Converts a String to an unsigned integer.
+///
+/// This function requires the following arguments:
+///
+/// 1. The String to convert.
+/// 2. The radix to use for converting the String to an Integer.
+pub fn string_to_unsigned_int(
+    state: &State,
+    alloc: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let string = unsafe { InkoString::read(&arguments[0]) };
+    let radix = unsafe { Int::read(arguments[1]) };
+
+    verify_radix!(radix);
+
+    u64::from_str_radix(string, radix as u32)
+        .map(|val| {
+            UnsignedInt::alloc(
+                alloc,
+                state.permanent_space.unsigned_int_class(),
+                val,
+            )
+        })
+        .map_err(|_| {
+            RuntimeError::Error(state.permanent_space.undefined_singleton)
+        })
 }
 
 /// Converts a String to a Float.
 ///
 /// This function requires a single argument: the string to convert.
 pub fn string_to_float(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let string = arguments[0].string_value()?;
+    state: &State,
+    alloc: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let string = unsafe { InkoString::read(&arguments[0]) };
 
-    if let Ok(value) = string.parse::<f64>() {
-        let pointer =
-            process.allocate(object_value::float(value), state.float_prototype);
+    string
+        .parse::<f64>()
+        .map(|val| {
+            Float::alloc(alloc, state.permanent_space.float_class(), val)
+        })
+        .map_err(|_| {
+            RuntimeError::Error(state.permanent_space.undefined_singleton)
+        })
+}
 
-        Ok(pointer)
-    } else {
-        Err(RuntimeError::ErrorMessage(format!(
-            "{:?} can not be converted to a Float",
-            string
-        )))
+/// Copies a String.
+///
+/// This function requires a single argument: the String to copy.
+pub fn string_clone(
+    state: &State,
+    alloc: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let src = arguments[0];
+
+    if src.is_permanent() {
+        return Ok(src);
     }
+
+    let val = unsafe { src.get::<InkoString>().value().clone() };
+
+    Ok(InkoString::from_immutable_string(
+        alloc,
+        state.permanent_space.string_class(),
+        val,
+    ))
+}
+
+/// Drops a String.
+///
+/// This function requires a single argument: the String to drop.
+pub fn string_drop(
+    state: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let value = arguments[0];
+
+    // Permanent Strings can be used as if they were regular owned Strings, so
+    // we must make sure not to drop these.
+    if !value.is_permanent() {
+        unsafe {
+            InkoString::drop(value);
+        }
+    }
+
+    Ok(state.permanent_space.nil_singleton)
 }
 
 register!(
@@ -175,6 +283,9 @@ register!(
     string_concat_array,
     string_format_debug,
     string_slice,
-    string_to_integer,
-    string_to_float
+    string_to_int,
+    string_to_unsigned_int,
+    string_to_float,
+    string_clone,
+    string_drop
 );

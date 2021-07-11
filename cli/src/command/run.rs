@@ -90,16 +90,14 @@ fn run_file(
     format: Option<String>,
     arguments: &[String],
 ) -> Result<i32, Error> {
-    let status = if input.ends_with(BYTECODE_IMAGE_EXT) {
+    if input.ends_with(BYTECODE_IMAGE_EXT) {
         vm::start(input, arguments)
     } else {
         let image = Tempfile::new(BYTECODE_IMAGE_EXT)?;
 
         compile(input, image.path(), include, format)?;
         vm::start(image.path(), arguments)
-    };
-
-    Ok(status)
+    }
 }
 
 /// Runs Inko source code that is provided directly, instead of through a file.
@@ -118,7 +116,7 @@ pub fn run_eval(
     input.flush();
 
     compile(input.path(), image.path(), include, format)?;
-    Ok(vm::start(image.path(), arguments))
+    vm::start(image.path(), arguments)
 }
 
 /// Compiles the source code in the given input path, producing a bytecode image

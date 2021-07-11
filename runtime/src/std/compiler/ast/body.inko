@@ -56,8 +56,8 @@ class Body {
   def imports -> Array!(Import) {
     let imports = Array.new
 
-    @children.each do (node) {
-      match(let matched = node) {
+    for node in @children {
+      match let matched = node {
         as Import -> { imports.push(matched) }
         else -> {}
       }
@@ -71,7 +71,7 @@ class Body {
   }
 
   def location_of_last_expression -> SourceLocation {
-    @children.get(-1).map do (node) { node.location }.get_or(@location)
+    try @children.get(-1).map do (node) { node.location }.get else @location
   }
 }
 

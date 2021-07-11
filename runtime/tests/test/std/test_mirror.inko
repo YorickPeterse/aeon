@@ -21,7 +21,7 @@ trait Trait2 {}
 
 class Dummy {
   @name: String
-  @age: Integer
+  @age: Int
 
   static def new -> Self {
     Self { @name = 'Alice', @age = 28 }
@@ -40,7 +40,7 @@ class EmptyObject {
 }
 
 class OneAttribute {
-  @number: Integer
+  @number: Int
 
   static def new -> Self {
     Self { @number = 10 }
@@ -49,7 +49,7 @@ class OneAttribute {
 
 class TwoAttributes {
   @first: String
-  @second: Integer
+  @second: Int
 
   static def new -> Self {
     Self { @first = 'first', @second = 10 }
@@ -71,22 +71,21 @@ class Foo {
 }
 
 class FooMirror {
-  @subject: Foo
+  @subject: ref Foo
 
-  static def new(subject: Foo) -> Self {
+  static def new(subject: ref Foo) -> Self {
     Self { @subject = subject }
   }
 }
 
 impl Format for FooMirror {
-  def format!(F: Formatter)(formatter: F) -> F {
+  def format(formatter: ref Formatter) {
     formatter.push('Foo')
-    formatter
   }
 }
 
 impl Mirror for FooMirror {
-  def subject -> Foo {
+  def subject -> ref Foo {
     @subject
   }
 }
@@ -98,15 +97,18 @@ impl Mirrored for Foo {
 }
 
 def format(mirror: Mirror) -> String {
-  mirror.format(DefaultFormatter.new).to_string
+  let fmt = DefaultFormatter.new
+
+  mirror.format(fmt)
+  fmt.to_string
 }
 
-def tests(t: Tests) {
+def tests(t: ref Tests) {
   t.group('std::mirror::Mirror.subject') do (g) {
     g.test('Obtaining the subject of a mirror') {
       let obj = Dummy.new
 
-      try assert_equal(ObjectMirror.new(obj).subject as Dummy, obj)
+      try assert_equal(ObjectMirror.new(obj).subject, obj)
     }
   }
 
@@ -227,7 +229,7 @@ def tests(t: Tests) {
 
       mirror.set_attribute('foo', 10)
 
-      try assert_equal(mirror.get_attribute('foo') as Integer, 10)
+      try assert_equal(mirror.get_attribute('foo') as Int, 10)
     }
 
     g.test('Setting the value of an existing attribute') {
@@ -334,14 +336,6 @@ def tests(t: Tests) {
     }
   }
 
-  t.group('std::mirror::BlockMirror.required_arguments') do (g) {
-    g.test('Obtaining the number of required arguments') {
-      let mirror = BlockMirror.new(do (foo: Object, bar: Object, baz = 10) {})
-
-      try assert_equal(mirror.required_arguments, 2)
-    }
-  }
-
   t.group('std::mirror::ModuleMirror.name') do (g) {
     g.test('Obtaining the name of a module') {
       let mirror = ModuleMirror.new(ThisModule)
@@ -392,9 +386,8 @@ def tests(t: Tests) {
       map['bar'] = 20
 
       let output = format(MapMirror.new(map))
-      let valid =
-        (output == 'Map { "foo": 10, "bar": 20 }')
-          .or { output == 'Map { "bar": 20, "foo": 10 }' }
+      let valid = output == 'Map { "foo": 10, "bar": 20 }'
+        or output == 'Map { "bar": 20, "foo": 10 }'
 
       try assert_true(valid)
     }
@@ -422,7 +415,7 @@ def tests(t: Tests) {
       set.insert(2)
 
       let output = format(SetMirror.new(set))
-      let valid = (output == 'Set { 1, 2 }').or { output == 'Set { 2, 1 }' }
+      let valid = output == 'Set { 1, 2 }' or output == 'Set { 2, 1 }'
 
       try assert_true(valid)
     }
@@ -445,7 +438,7 @@ def tests(t: Tests) {
   }
 
   t.group('std::mirror::IntegerMirror.format') do (g) {
-    g.test('Formatting an Integer') {
+    g.test('Formatting an Int') {
       try assert_equal(format(IntegerMirror.new(10)), '10')
       try assert_equal(format(IntegerMirror.new(-10)), '-10')
     }

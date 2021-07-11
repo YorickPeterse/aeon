@@ -16,12 +16,12 @@ import std::pair::Pair
 # Adds implicit implementations of the `Object` trait for any object
 # definitions.
 def add_object_implementation(name: ModuleName, body: Body) {
-  name.bootstrap?.if_true { return }
+  if name.bootstrap? { return }
 
   let impls = Array.new
 
-  body.children.each do (node) {
-    match(let matched = node) {
+  for node in body.children {
+    match let matched = node {
       as DefineClass -> {
         let loc = matched.location
         let obj_impl = ImplementTrait.new(
@@ -65,15 +65,15 @@ def add_object_implementation(name: ModuleName, body: Body) {
 # first.
 def hoist_imports(body: Body) {
   let pair = body.children.iter.partition do (node) {
-    match(node) {
+    match node {
       as Import -> { True }
       else -> { False }
     }
   }
 
-  pair.first.append(pair.second)
+  pair.0.append(pair.1)
 
-  body.children = pair.first
+  body.children = pair.0
 }
 
 # Inserts implicit imports in the AST node, if needed.
@@ -85,7 +85,7 @@ def add_implicit_imports(name: ModuleName, body: Body) {
   import_init(name: name, nodes: nodes, location: location)
   import_prelude(name: name, nodes: nodes, location: location)
 
-  nodes.empty?.if_true { return }
+  if nodes.empty? { return }
   nodes.append(body.children)
 
   body.children = nodes
@@ -101,8 +101,8 @@ def add_implicit_imports(name: ModuleName, body: Body) {
 #
 #     import std::stdio::stdout::(self)
 def add_implicit_symbols(body: Body) {
-  body.imports.each do (node) {
-    node.symbols.empty?.if_true {
+  for node in body.imports {
+    if node.symbols.empty? {
       let mod = node.path[-1]
 
       node.symbols.push(ImportSymbol.new(name: 'self', location: mod.location))
@@ -115,7 +115,7 @@ def import_bootstrap(
   nodes: Array!(Import),
   location: SourceLocation
 ) {
-  name.bootstrap?.if_true { return }
+  if name.bootstrap? { return }
   nodes.push(import_all(module: STD_BOOTSTRAP, location: location))
 }
 
@@ -124,7 +124,7 @@ def import_init(
   nodes: Array!(Import),
   location: SourceLocation
 ) {
-  name.bootstrap?.or { name.init? }.if_true { return }
+  if name.bootstrap? or name.init? { return }
 
   let node = Import.new(
     path: import_path_for_module(module: STD_INIT, location: location),
@@ -141,14 +141,14 @@ def import_prelude(
   nodes: Array!(Import),
   location: SourceLocation
 ) {
-  name.std?.if_true { return }
+  if name.std? { return }
 
-  prelude.each do (pair) {
-    let mod_name = ModuleName.new(Array.new(STD_NAMESPACE, pair.first))
+  for pair in prelude {
+    let mod_name = ModuleName.new(Array.new(STD_NAMESPACE, pair.0))
     let imp = Import.new(
       path: import_path_for_module(module: mod_name, location: location),
       symbols: Array.new(
-        ImportSymbol.new(name: pair.second, location: location)
+        ImportSymbol.new(name: pair.1, location: location)
       ),
       import_all: False,
       location: location

@@ -43,7 +43,7 @@ module Inkoc
 
         impl_scope.define_receiver_type
 
-        trait = define_type(node.trait_name, impl_scope)
+        trait = define_type_instance(node.trait_name, impl_scope)
 
         return trait if trait.error?
 

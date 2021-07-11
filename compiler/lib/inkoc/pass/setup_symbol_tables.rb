@@ -28,6 +28,10 @@ module Inkoc
         process_nodes(node.expressions, outer)
       end
 
+      def on_group(node, outer)
+        process_nodes(node.expressions, outer)
+      end
+
       def on_block(node, outer)
         node.body.locals = SymbolTable.new(outer.locals)
 
@@ -61,6 +65,33 @@ module Inkoc
         process_nodes(node.body.expressions, outer)
         process_nodes(node.patterns, outer)
         process_node(node.guard, outer) if node.guard
+      end
+
+      def on_if(node, outer)
+        node.conditions.each do |cond|
+          process_node(cond.condition, outer)
+          process_node(cond.body, outer)
+        end
+
+        process_node(node.else_body, outer) if node.else_body
+      end
+
+      def on_and(node, outer)
+        process_node(node.left, outer)
+        process_node(node.right, outer)
+      end
+
+      def on_or(node, outer)
+        process_node(node.left, outer)
+        process_node(node.right, outer)
+      end
+
+      def on_not(node, outer)
+        process_node(node.expression, outer)
+      end
+
+      def on_loop(node, outer)
+        process_node(node.body, outer)
       end
 
       def on_method(node, _)
@@ -109,27 +140,21 @@ module Inkoc
       alias on_define_variable_with_explicit_type on_node_with_value
       alias on_reassign_variable on_node_with_value
       alias on_keyword_argument on_node_with_value
-
-      def on_define_argument(node, outer)
-        process_node(node.default, outer) if node.default
-      end
+      alias on_destructure_array on_node_with_value
 
       def on_type_cast(node, outer)
         process_node(node.expression, outer)
       end
 
-      def on_dereference(node, outer)
-        process_node(node.expression, outer)
-      end
-
-      def on_coalesce_option(node, outer)
-        process_node(node.expression, outer)
-        process_node(node.default, outer)
-      end
-
       def on_new_instance(node, outer)
         node.attributes.each do |attr|
           process_node(attr.value, outer)
+        end
+      end
+
+      def on_template_string(node, outer)
+        node.members.each do |node|
+          process_node(node, outer)
         end
       end
     end

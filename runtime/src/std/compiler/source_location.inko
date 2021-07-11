@@ -1,6 +1,6 @@
 # Source location information for tokens and AST trees produced by the
 # compiler.
-import std::fs::path::(Path, ToPath)
+import std::fs::path::(IntoPath, Path)
 import std::range::Range
 
 # The location of a single Inko expression.
@@ -9,31 +9,31 @@ class SourceLocation {
   @file: Path
 
   # The line range of the expression.
-  @line_range: Range!(Integer)
+  @line_range: Range!(Int)
 
   # The start column of the expression.
-  @column: Integer
+  @column: Int
 
   static def new(
-    file: ToPath,
-    line_range: Range!(Integer),
-    column: Integer
+    file: IntoPath,
+    line_range: Range!(Int),
+    column: Int
   ) -> Self {
-    Self { @file = file.to_path, @line_range = line_range, @column = column }
+    Self { @file = file.into_path, @line_range = line_range, @column = column }
   }
 
   # Returns the file path of the expression.
-  def file -> Path {
+  def file -> ref Path {
     @file
   }
 
   # Returns the line range of the expression.
-  def line_range -> Range!(Integer) {
+  def line_range -> ref Range!(Int) {
     @line_range
   }
 
   # Returns the start column of the expression.
-  def column -> Integer {
-    @column
+  def column -> Int {
+    @column.clone
   }
 }

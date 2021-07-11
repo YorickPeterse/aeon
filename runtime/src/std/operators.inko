@@ -4,46 +4,46 @@
 trait Add!(T) {
   # Adds the given object to `self`, producing a new instance of the same type
   # as `self`.
-  def +(other: T) -> Self
+  def +(other: ref T) -> Self
 }
 
 # The binary `/` operator.
 trait Divide {
   # Divides `self` by the given object, producing a new one of the same type.
-  def /(other: Self) -> Self
+  def /(other: ref Self) -> Self
 }
 
 # The binary `*` operator.
 trait Multiply {
   # Multiplies `self` with the given object, producing a new one of the same
   # type.
-  def *(other: Self) -> Self
+  def *(other: ref Self) -> Self
 }
 
 # The binary `-` operator.
 trait Subtract!(T) {
   # Subtracts the given object from `self`, producing a new instance of the
   # same type as `self`.
-  def -(other: T) -> Self
+  def -(other: ref T) -> Self
 }
 
 # The binary `%` operator.
 trait Modulo {
   # Gets the remainder after dividing `self` by the given object, producing a
   # new one of the same type.
-  def %(other: Self) -> Self
+  def %(other: ref Self) -> Self
 }
 
 # The binary `<` operator.
 trait Smaller {
   # Returns `True` if `self` is smaller than the given object.
-  def <(other: Self) -> Boolean
+  def <(other: ref Self) -> Boolean
 }
 
 # The binary `>` operator.
 trait Greater {
   # Returns `True` if `self` is greater than the given object.
-  def >(other: Self) -> Boolean
+  def >(other: ref Self) -> Boolean
 }
 
 # The binary `==` operator.
@@ -59,12 +59,12 @@ trait Equal {
   # The default implementation of this method is to perform referential
   # equality, but objects implementing this trait are free to redefine this
   # method to change this behaviour.
-  def ==(other: Self) -> Boolean {
+  def ==(other: ref Self) -> Boolean {
     _INKOC.object_equals(self, other)
   }
 
   # Returns `True` if `self` and the given object are not equal to each other.
-  def !=(other: Self) -> Boolean {
+  def !=(other: ref Self) -> Boolean {
     _INKOC.object_equals(self == other, False)
   }
 }
@@ -72,45 +72,45 @@ trait Equal {
 # The binary `>=` operator.
 trait GreaterOrEqual {
   # Returns `True` if `self` is greater than or equal to the given object.
-  def >=(other: Self) -> Boolean
+  def >=(other: ref Self) -> Boolean
 }
 
 # The binary `<=` operator.
 trait SmallerOrEqual {
   # Returns `True` if `self` is smaller than or equal to the given object.
-  def <=(other: Self) -> Boolean
+  def <=(other: ref Self) -> Boolean
 }
 
 # The binary `&` (bitwise AND) operator.
 trait BitwiseAnd {
   # Returns the result of a bitwise AND with `self` and the given object.
-  def &(other: Self) -> Self
+  def &(other: ref Self) -> Self
 }
 
 # The binary `|` (bitwise OR) operator.
 trait BitwiseOr {
   # Returns the result of a bitwise OR with `self` and the given object.
-  def |(other: Self) -> Self
+  def |(other: ref Self) -> Self
 }
 
 # The binary `^` operator.
 trait BitwiseXor {
   # Returns the result of a bitwise XOR with `self` and the given object.
-  def ^(other: Self) -> Self
+  def ^(other: ref Self) -> Self
 }
 
 # The binary `<<` operator.
 trait ShiftLeft {
   # Returns the result of a bitwise shift to the left with `self` and the given
   # object.
-  def <<(other: Self) -> Self
+  def <<(other: ref Self) -> Self
 }
 
 # The binary `>>` operator.
 trait ShiftRight {
   # Returns the result of a bitwise shift to the right with `self` and the
   # given object.
-  def >>(other: Self) -> Self
+  def >>(other: ref Self) -> Self
 }
 
 # The binary `=~` operator.
@@ -121,5 +121,5 @@ trait Match!(T) {
   #
   # If matched successfully, `True` must be returned; otherwise `False` is to be
   # returned.
-  def =~(other: T) -> Boolean
+  def =~(other: ref T) -> Boolean
 }

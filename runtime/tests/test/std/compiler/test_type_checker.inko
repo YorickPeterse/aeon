@@ -29,7 +29,7 @@ def location -> SourceLocation {
 }
 
 def parse(input: String) -> Body {
-  try! Parser.new(input: input, file: 'test.inko').parse
+  try! Parser.new(input: input, file: 'test.inko', parse_comments: False).parse
 }
 
 def parse_type(type: String) -> Node {
@@ -46,12 +46,16 @@ def new_std_module(name: String) -> ModuleType {
   ModuleType.new(ModuleName.new(Array.new('std', name)))
 }
 
+def new_type_checker -> TypeChecker {
+  TypeChecker.new(diagnostics: Diagnostics.new, dependencies: Array.new)
+}
+
 def assert_instance_of(type: Type, instance_of: Type) !! Failure {
   try assert_true(mirror.reflect(type).instance_of?(instance_of))
 }
 
 def assert_object_instance(type: Type, instance_of: ClassType) !! Failure {
-  match(let matched = type) {
+  match let matched = type {
     as ClassInstance when matched.instance_of.same_object?(instance_of) -> {}
     else -> {
       throw Failure.new(
@@ -75,7 +79,7 @@ def setup_match_types(type_checker: TypeChecker, module: ModuleType) {
 
   op_mod.define_constant(name: 'Boolean', type: builtins.boolean_type)
   module.define_constant(name: 'Boolean', type: builtins.boolean_type)
-  module.define_constant(name: 'Integer', type: builtins.integer_type)
+  module.define_constant(name: 'Int', type: builtins.integer_type)
   module.define_constant(name: 'True', type: builtins.true_singleton)
   module.define_constant(name: 'Nil', type: builtins.nil_singleton)
 
@@ -90,8 +94,8 @@ def setup_match_types(type_checker: TypeChecker, module: ModuleType) {
       '
       import std::operators::Match
 
-      impl Match!(Integer) for Integer {
-        def =~(other: Integer) -> Boolean { True }
+      impl Match!(Int) for Int {
+        def =~(other: Int) -> Boolean { True }
       }
       '
     )
@@ -103,7 +107,7 @@ class DummyPass {
   @module: ModuleType
 
   static def new -> Self {
-    Self { @type_checker = TypeChecker.new, @module = new_module('foo') }
+    Self { @type_checker = new_type_checker, @module = new_module('foo') }
   }
 }
 
@@ -643,7 +647,7 @@ def tests(t: Tests) {
   t.group('std::compiler::type_checker::TypeChecker.add_module') do (g) {
     g.test('Adding a module') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
 
       type_checker.add_module(module)
 
@@ -653,7 +657,7 @@ def tests(t: Tests) {
 
   t.group('std::compiler::type_checker::TypeChecker.diagnostics') do (g) {
     g.test('Obtaining the diagnostics that have been produced') {
-      try assert_true(TypeChecker.new.diagnostics.empty?)
+      try assert_true(new_type_checker.diagnostics.empty?)
     }
   }
 
@@ -664,7 +668,7 @@ def tests(t: Tests) {
       let foo_parsed = ParsedModule
         .new(name: ModuleName.new(Array.new('foo')), ast: parse('class A {}'))
 
-      let type_checker = TypeChecker.new(dependencies: Array.new(foo_parsed))
+      let type_checker = new_type_checker(dependencies: Array.new(foo_parsed))
 
       type_checker.check(name: name, ast: ast)
 
@@ -681,7 +685,7 @@ def tests(t: Tests) {
     g.test('Importing a single symbol') {
       let foo_mod = new_module('foo')
       let bar_mod = new_module('bar')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let bar_type = ClassType.new('Bar')
       let node = parse('import foo::(Bar)')
 
@@ -698,7 +702,7 @@ def tests(t: Tests) {
     g.test('Importing a non-existing symbol') {
       let foo_mod = new_module('foo')
       let bar_mod = new_module('bar')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let node = parse('import foo::(Bar)')
 
       type_checker.add_module(foo_mod)
@@ -713,7 +717,7 @@ def tests(t: Tests) {
     g.test('Importing the same symbol twice') {
       let foo_mod = new_module('foo')
       let bar_mod = new_module('bar')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let bar_type = ClassType.new('Bar')
       let node = parse('import foo::(Bar, Bar)')
 
@@ -730,7 +734,7 @@ def tests(t: Tests) {
     g.test('Importing two different symbols') {
       let foo_mod = new_module('foo')
       let bar_mod = new_module('bar')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let node = parse('import foo::(Bar, Baz)')
       let bar_type = ClassType.new('Bar')
       let baz_type = ClassType.new('Baz')
@@ -751,7 +755,7 @@ def tests(t: Tests) {
     g.test('Importing a symbol with an alias') {
       let foo_mod = new_module('foo')
       let bar_mod = new_module('bar')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let node = parse('import foo::(Bar as Baz)')
       let bar_type = ClassType.new('Bar')
 
@@ -767,7 +771,7 @@ def tests(t: Tests) {
       let foo_mod = new_module('foo')
       let bar_mod = new_module('bar')
       let node = parse('import foo::(self)')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
 
       type_checker.add_module(foo_mod)
       type_checker.check_module(module: bar_mod, ast: node)
@@ -780,7 +784,7 @@ def tests(t: Tests) {
     g.test('Importing a module using an alias') {
       let foo_mod = new_module('foo')
       let bar_mod = new_module('bar')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let node = parse('import foo::(self as bar)')
 
       type_checker.add_module(foo_mod)
@@ -793,7 +797,7 @@ def tests(t: Tests) {
     g.test('Importing all symbols of a module') {
       let foo_mod = new_module('foo')
       let bar_mod = new_module('bar')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let node = parse('import foo::*')
       let bar_type = ClassType.new('Bar')
       let baz_type = ClassType.new('Baz')
@@ -814,7 +818,7 @@ def tests(t: Tests) {
     g.test('Importing an external function') {
       let foo_mod = new_module('foo')
       let bar_mod = new_module('bar')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let bar_type = MethodType
         .new(name: 'bar', layout: BlockLayout.new(AnyType.new), external: True)
 
@@ -831,7 +835,7 @@ def tests(t: Tests) {
   t.group('Type-checking class definitions') do (g) {
     g.test('Defining an empty class') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let node = parse('class A {}')
 
       type_checker.check_module(module: module, ast: node)
@@ -845,7 +849,7 @@ def tests(t: Tests) {
 
     g.test('Defining an empty generic class') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let foo_type = TraitType.new('Foo')
       let node = parse('class A!(T: Foo) {}')
 
@@ -865,7 +869,7 @@ def tests(t: Tests) {
 
     g.test('Defining a generic class with an invalid type parameter') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let node = parse('class A!(T: Foo) {}')
 
       type_checker.check_module(module: module, ast: node)
@@ -880,7 +884,7 @@ def tests(t: Tests) {
 
     g.test('Redefining an existing class') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let a_type = ClassType.new('A')
       let node = parse('class A {}')
 
@@ -896,7 +900,7 @@ def tests(t: Tests) {
   t.group('Type-checking trait definitions') do (g) {
     g.test('Defining a trait') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let node = parse('trait A {}')
 
       type_checker.check_module(module: module, ast: node)
@@ -910,7 +914,7 @@ def tests(t: Tests) {
 
     g.test('Defining a generic trait') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let foo_type = TraitType.new('Foo')
       let node = parse('trait A!(T: Foo) {}')
 
@@ -930,7 +934,7 @@ def tests(t: Tests) {
 
     g.test('Defining a generic trait with an invalid type parameter') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let node = parse('trait A!(T: Foo) {}')
 
       type_checker.check_module(module: module, ast: node)
@@ -945,7 +949,7 @@ def tests(t: Tests) {
 
     g.test('Redefining an existing trait') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let a_type = TraitType.new('A')
       let node = parse('trait A {}')
 
@@ -961,7 +965,7 @@ def tests(t: Tests) {
   t.group('Type-checking attribute definitions') do (g) {
     g.test('Defining an attribute') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let foo_type = ClassType.new('Foo')
       let node = parse('class A { @foo: Foo }')
       let attr_node =
@@ -984,7 +988,7 @@ def tests(t: Tests) {
 
     g.test('Defining an attribute as a type parameter') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let node = parse('class A!(T) { @foo: T }')
       let attr_node =
         (node.children[0] as DefineClass).body.children[0] as DefineAttribute
@@ -1002,7 +1006,7 @@ def tests(t: Tests) {
 
     g.test('Defining an attribute as a generic type containing a type parameter') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let node = parse('class A!(T) { @foo: List!(T) }')
       let list_type = ClassType.new('List')
       let list_param = TypeParameterType.new('A')
@@ -1029,7 +1033,7 @@ def tests(t: Tests) {
 
     g.test('Defining an attribute with an invalid type') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let node = parse('class A { @foo: Foo }')
       let attr_node =
         (node.children[0] as DefineClass).body.children[0] as DefineAttribute
@@ -1049,7 +1053,7 @@ def tests(t: Tests) {
   t.group('Type-checking local variable definitions') do (g) {
     g.test('Defining a local variable') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('let a = 10')
 
       type_checker.check_module(module: module, ast: body)
@@ -1071,7 +1075,7 @@ def tests(t: Tests) {
 
     g.test('Defining a local variable with an invalid value') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('let a = Foo')
 
       type_checker.check_module(module: module, ast: body)
@@ -1093,7 +1097,7 @@ def tests(t: Tests) {
 
     g.test('Defining a local variable with an explicit type') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('let a: Any = 10')
 
       type_checker.check_module(module: module, ast: body)
@@ -1116,7 +1120,7 @@ def tests(t: Tests) {
 
     g.test('Defining a local variable with an incompatible value') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('let a: String = 10')
 
       module
@@ -1146,7 +1150,7 @@ def tests(t: Tests) {
 
     g.test('Defining a local variable with an undefined explicit type') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('let a: Object = 10')
 
       type_checker.check_module(module: module, ast: body)
@@ -1168,7 +1172,7 @@ def tests(t: Tests) {
 
     g.test('Defining a local variable with Self as the explicit type') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('let a: Self = 10')
 
       type_checker.check_module(module: module, ast: body)
@@ -1187,7 +1191,7 @@ def tests(t: Tests) {
 
     g.test('Defining an already existing local variable') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('let a = 10')
       let a_type = type_checker.builtins.float_type.new_instance
 
@@ -1212,7 +1216,7 @@ def tests(t: Tests) {
   t.group('Type-checking literals') do (g) {
     g.test('Type-checking an integer literal') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('10')
 
       type_checker.check_module(module: module, ast: body)
@@ -1225,7 +1229,7 @@ def tests(t: Tests) {
 
     g.test('Type-checking a float literal') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('10.5')
 
       type_checker.check_module(module: module, ast: body)
@@ -1238,7 +1242,7 @@ def tests(t: Tests) {
 
     g.test('Type-checking a string literal') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('"foo"')
 
       type_checker.check_module(module: module, ast: body)
@@ -1253,7 +1257,7 @@ def tests(t: Tests) {
   t.group('Type-checking constant references') do (g) {
     g.test('Referring to an undefined constant') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('Foo')
       let node = body.children[0] as Constant
 
@@ -1266,7 +1270,7 @@ def tests(t: Tests) {
 
     g.test('Referring to a defined constant') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('Foo')
       let node = body.children[0] as Constant
       let foo_type = type_checker.builtins.string_type.new_instance
@@ -1283,7 +1287,7 @@ def tests(t: Tests) {
   t.group('Type-checking method definitions') do (g) {
     g.test('Defining a method without arguments') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('def foo {}')
 
       type_checker.check_module(module: module, ast: body)
@@ -1299,7 +1303,7 @@ def tests(t: Tests) {
 
     g.test('Defining a method with invalid statically typed arguments') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('def foo(a: A, b: B) {}')
 
       type_checker.check_module(module: module, ast: body)
@@ -1314,14 +1318,14 @@ def tests(t: Tests) {
 
     g.test('Defining a method with valid statically typed arguments') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
-      let body = parse('def foo(a: String, b: Integer) {}')
+      let type_checker = new_type_checker
+      let body = parse('def foo(a: String, b: Int) {}')
 
       module
         .define_constant(name: 'String', type: type_checker.builtins.string_type)
 
       module
-        .define_constant(name: 'Integer', type: type_checker.builtins.integer_type)
+        .define_constant(name: 'Int', type: type_checker.builtins.integer_type)
 
       type_checker.check_module(module: module, ast: body)
 
@@ -1336,7 +1340,7 @@ def tests(t: Tests) {
 
     g.test('Defining a method with a default argument value') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('def foo(a = 10) {}')
 
       type_checker.check_module(module: module, ast: body)
@@ -1350,7 +1354,7 @@ def tests(t: Tests) {
 
     g.test('Defining a method with a default argument value and a compatible explicit type') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('def foo(a: Any = 10) {}')
 
       type_checker.check_module(module: module, ast: body)
@@ -1364,7 +1368,7 @@ def tests(t: Tests) {
 
     g.test('Defining a method with a default argument value and an incompatible explicit type') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('def foo(a: Float = 10) {}')
 
       module.define_constant(name: 'Float', type_checker.builtins.float_type)
@@ -1380,11 +1384,11 @@ def tests(t: Tests) {
 
     g.test('Defining a method with a statically typed rest argument') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
-      let body = parse('def foo(*a: Integer) {}')
+      let type_checker = new_type_checker
+      let body = parse('def foo(*a: Int) {}')
 
       module
-        .define_constant(name: 'Integer', type: type_checker.builtins.integer_type)
+        .define_constant(name: 'Int', type: type_checker.builtins.integer_type)
 
       type_checker.check_module(module: module, ast: body)
 
@@ -1398,8 +1402,8 @@ def tests(t: Tests) {
 
     g.test('Defining a method with an invalid throw type') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
-      let body = parse('def foo !! Integer {}')
+      let type_checker = new_type_checker
+      let body = parse('def foo !! Int {}')
 
       type_checker.check_module(module: module, ast: body)
 
@@ -1411,11 +1415,11 @@ def tests(t: Tests) {
 
     g.test('Defining a method with a valid throw type that never throws') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
-      let body = parse('def foo !! Integer {}')
+      let type_checker = new_type_checker
+      let body = parse('def foo !! Int {}')
 
       module
-        .define_constant(name: 'Integer', type: type_checker.builtins.integer_type)
+        .define_constant(name: 'Int', type: type_checker.builtins.integer_type)
 
       type_checker.check_module(module: module, ast: body)
 
@@ -1430,11 +1434,11 @@ def tests(t: Tests) {
 
     g.test('Defining a method with a valid throw type that throws') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
-      let body = parse('def foo !! Integer { throw 10 }')
+      let type_checker = new_type_checker
+      let body = parse('def foo !! Int { throw 10 }')
 
       module
-        .define_constant(name: 'Integer', type: type_checker.builtins.integer_type)
+        .define_constant(name: 'Int', type: type_checker.builtins.integer_type)
 
       type_checker.check_module(module: module, ast: body)
 
@@ -1449,8 +1453,8 @@ def tests(t: Tests) {
 
     g.test('Defining a method with an invalid return type') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
-      let body = parse('def foo -> Integer {}')
+      let type_checker = new_type_checker
+      let body = parse('def foo -> Int {}')
 
       type_checker.check_module(module: module, ast: body)
 
@@ -1462,11 +1466,11 @@ def tests(t: Tests) {
 
     g.test('Defining a method with a return value that does not return') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
-      let body = parse('def foo -> Integer {}')
+      let type_checker = new_type_checker
+      let body = parse('def foo -> Int {}')
 
       module
-        .define_constant(name: 'Integer', type: type_checker.builtins.integer_type)
+        .define_constant(name: 'Int', type: type_checker.builtins.integer_type)
 
       type_checker.check_module(module: module, ast: body)
 
@@ -1481,7 +1485,7 @@ def tests(t: Tests) {
 
     g.test('Defining a method without an explicit return type that returns') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('def foo { 10 }')
 
       type_checker.check_module(module: module, ast: body)
@@ -1494,11 +1498,11 @@ def tests(t: Tests) {
 
     g.test('Defining a method with a valid explicit return type') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
-      let body = parse('def foo -> Integer { return 10 }')
+      let type_checker = new_type_checker
+      let body = parse('def foo -> Int { return 10 }')
 
       module
-        .define_constant(name: 'Integer', type: type_checker.builtins.integer_type)
+        .define_constant(name: 'Int', type: type_checker.builtins.integer_type)
 
       type_checker.check_module(module: module, ast: body)
 
@@ -1513,11 +1517,11 @@ def tests(t: Tests) {
 
     g.test('Defining a method with an invalid explicit return type') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
-      let body = parse('def foo -> Integer { return 10.5 }')
+      let type_checker = new_type_checker
+      let body = parse('def foo -> Int { return 10.5 }')
 
       module
-        .define_constant(name: 'Integer', type: type_checker.builtins.integer_type)
+        .define_constant(name: 'Int', type: type_checker.builtins.integer_type)
 
       type_checker.check_module(module: module, ast: body)
 
@@ -1527,11 +1531,11 @@ def tests(t: Tests) {
 
     g.test('Defining a method with a valid implicit return type') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
-      let body = parse('def foo -> Integer { 10 }')
+      let type_checker = new_type_checker
+      let body = parse('def foo -> Int { 10 }')
 
       module
-        .define_constant(name: 'Integer', type: type_checker.builtins.integer_type)
+        .define_constant(name: 'Int', type: type_checker.builtins.integer_type)
 
       type_checker.check_module(module: module, ast: body)
 
@@ -1540,11 +1544,11 @@ def tests(t: Tests) {
 
     g.test('Defining a method with an invalid implicit return type') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
-      let body = parse('def foo -> Integer { 10.5 }')
+      let type_checker = new_type_checker
+      let body = parse('def foo -> Int { 10.5 }')
 
       module
-        .define_constant(name: 'Integer', type: type_checker.builtins.integer_type)
+        .define_constant(name: 'Int', type: type_checker.builtins.integer_type)
 
       type_checker.check_module(module: module, ast: body)
 
@@ -1553,12 +1557,12 @@ def tests(t: Tests) {
 
     g.test('Defining a method with valid type parameters') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
-      let body = parse('def foo!(A, B: ToInteger) {}')
-      let trait_type = TraitType.new('ToInteger')
+      let type_checker = new_type_checker
+      let body = parse('def foo!(A, B: ToInt) {}')
+      let trait_type = TraitType.new('ToInt')
 
       module
-        .define_constant(name: 'ToInteger', type: TraitInstance.new(trait_type))
+        .define_constant(name: 'ToInt', type: TraitInstance.new(trait_type))
 
       type_checker.check_module(module: module, ast: body)
 
@@ -1577,8 +1581,8 @@ def tests(t: Tests) {
 
     g.test('Defining a method with invalid type parameters') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
-      let body = parse('def foo!(A, B: ToInteger) {}')
+      let type_checker = new_type_checker
+      let body = parse('def foo!(A, B: ToInt) {}')
 
       type_checker.check_module(module: module, ast: body)
 
@@ -1593,7 +1597,7 @@ def tests(t: Tests) {
 
     g.test('Defining a method with its type arguments used as method bounds') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('def foo!(T) when T: ToString {}')
       let trait_type = TraitType.new('ToString')
 
@@ -1609,14 +1613,14 @@ def tests(t: Tests) {
 
     g.test('Defining a method with duplicate type parameter bounds') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let trait1 = TraitType.new('ToString')
-      let trait2 = TraitType.new('ToInteger')
+      let trait2 = TraitType.new('ToInt')
       let body =
-        parse('class A!(T) { def foo when T: ToString, T: ToInteger {} }')
+        parse('class A!(T) { def foo when T: ToString, T: ToInt {} }')
 
       module.define_constant(name: 'ToString', trait1)
-      module.define_constant(name: 'ToInteger', trait2)
+      module.define_constant(name: 'ToInt', trait2)
 
       type_checker.check_module(module: module, ast: body)
 
@@ -1632,7 +1636,7 @@ def tests(t: Tests) {
 
     g.test('Defining a method with an argument type used in a method bound') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('class A!(T) { def foo(a: T) when T: ToString {} }')
       let trait_type = TraitType.new('ToString')
 
@@ -1653,7 +1657,7 @@ def tests(t: Tests) {
 
     g.test('Defining a method with a throw type used in a method bound') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body =
         parse('class A!(T) { def foo(a: T) !! T when T: ToString { throw a } }')
 
@@ -1676,7 +1680,7 @@ def tests(t: Tests) {
 
     g.test('Defining a method with a return type used in a method bound') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('class A!(T) { def foo -> T when T: ToString {} }')
       let trait_type = TraitType.new('ToString')
 
@@ -1697,7 +1701,7 @@ def tests(t: Tests) {
 
     g.test('Defining a module method') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('def foo(a: Self) {} def foo {}')
 
       type_checker.check_module(module: module, ast: body)
@@ -1710,7 +1714,7 @@ def tests(t: Tests) {
 
     g.test('Defining a module method that already exists') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('def foo(a: Self) {}')
       let method_type =
         MethodType.new(name: 'foo', layout: BlockLayout.new(NeverType.new))
@@ -1724,7 +1728,7 @@ def tests(t: Tests) {
 
     g.test('Defining a module method with the same name as an imported constant') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('def foo(a: Self) {}')
 
       module.globals.define(name: 'foo', type: ClassType.new('Foo'))
@@ -1736,7 +1740,7 @@ def tests(t: Tests) {
 
     g.test('Defining a default method with the same name as a required method') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('trait Foo { def foo def foo {} }')
 
       type_checker.check_module(module: module, ast: body)
@@ -1749,7 +1753,7 @@ def tests(t: Tests) {
 
     g.test('Defining a required method with the same name as a default method') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('trait Foo { def foo {} def foo }')
 
       type_checker.check_module(module: module, ast: body)
@@ -1762,7 +1766,7 @@ def tests(t: Tests) {
 
     g.test('Defining a required method with a default argument value') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('trait Foo { def foo(a = 10) }')
 
       type_checker.check_module(module: module, ast: body)
@@ -1780,14 +1784,14 @@ def tests(t: Tests) {
 
     g.test('Defining a method in an object') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let int_type = type_checker.builtins.integer_type
-      let body = parse('class A { def foo -> Integer { 10 } }')
+      let body = parse('class A { def foo -> Int { 10 } }')
       let object_node = body.children[0] as DefineClass
       let method_node = object_node.body.children[0] as DefineMethod
       let int_node = method_node.body.children[0] as IntegerLiteral
 
-      module.define_constant(name: 'Integer', type: int_type)
+      module.define_constant(name: 'Int', type: int_type)
 
       type_checker.check_module(module: module, ast: body)
 
@@ -1797,14 +1801,14 @@ def tests(t: Tests) {
 
     g.test('Defining a method in a trait') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let int_type = type_checker.builtins.integer_type
-      let body = parse('trait A { def foo -> Integer { 10 } }')
+      let body = parse('trait A { def foo -> Int { 10 } }')
       let object_node = body.children[0] as DefineTrait
       let method_node = object_node.body.children[0] as DefineMethod
       let int_node = method_node.body.children[0] as IntegerLiteral
 
-      module.define_constant(name: 'Integer', type: int_type)
+      module.define_constant(name: 'Int', type: int_type)
 
       type_checker.check_module(module: module, ast: body)
 
@@ -1814,14 +1818,14 @@ def tests(t: Tests) {
 
     g.test('Defining a method in a trait implementation') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let int_type = type_checker.builtins.integer_type
-      let body = parse('impl A for B { def foo -> Integer { 10 } }')
+      let body = parse('impl A for B { def foo -> Int { 10 } }')
       let object_node = body.children[0] as ImplementTrait
       let method_node = object_node.body.children[0] as DefineMethod
       let int_node = method_node.body.children[0] as IntegerLiteral
 
-      module.define_constant(name: 'Integer', type: int_type)
+      module.define_constant(name: 'Int', type: int_type)
       module.define_constant(name: 'A', type: TraitType.new('A'))
       module.define_constant(name: 'B', type: ClassType.new('B'))
 
@@ -1833,14 +1837,14 @@ def tests(t: Tests) {
 
     g.test('Defining a method when reopening an object') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let int_type = type_checker.builtins.integer_type
-      let body = parse('impl Integer { def foo -> Integer { 10 } }')
+      let body = parse('impl Int { def foo -> Int { 10 } }')
       let object_node = body.children[0] as ImplementTrait
       let method_node = object_node.body.children[0] as DefineMethod
       let int_node = method_node.body.children[0] as IntegerLiteral
 
-      module.define_constant(name: 'Integer', type: int_type)
+      module.define_constant(name: 'Int', type: int_type)
 
       type_checker.check_module(module: module, ast: body)
 
@@ -1850,7 +1854,7 @@ def tests(t: Tests) {
 
     g.test('Defining a method in an object') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('class Foo { def foo {} }')
 
       type_checker.check_module(module: module, ast: body)
@@ -1865,7 +1869,7 @@ def tests(t: Tests) {
 
     g.test('Redefining a method in an object') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('class Foo { def foo(a: Self) {} def foo {} }')
 
       type_checker.check_module(module: module, ast: body)
@@ -1879,7 +1883,7 @@ def tests(t: Tests) {
 
     g.test('Defining an instance method with the same name as a static method') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('class Foo { static def foo {} def foo {} }')
 
       type_checker.check_module(module: module, ast: body)
@@ -1893,7 +1897,7 @@ def tests(t: Tests) {
 
     g.test('Defining a static method with the same name as an instance method') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('class Foo { def foo {} static def foo {} }')
 
       type_checker.check_module(module: module, ast: body)
@@ -1907,7 +1911,7 @@ def tests(t: Tests) {
 
     g.test('Defining an instance method with an argument depending on the "self" type') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('class Foo { def foo(a = self) {} }')
 
       type_checker.check_module(module: module, ast: body)
@@ -1921,7 +1925,7 @@ def tests(t: Tests) {
 
     g.test('Defining a static method with an argument depending on the "self" type') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('class Foo { static def foo(a = self) {} }')
 
       type_checker.check_module(module: module, ast: body)
@@ -1935,7 +1939,7 @@ def tests(t: Tests) {
 
     g.test('Defining a method inside a trait') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('trait Foo { def foo {} }')
 
       type_checker.check_module(module: module, ast: body)
@@ -1950,7 +1954,7 @@ def tests(t: Tests) {
 
     g.test('Defining a default method with an argument depending on the "self" type') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('trait Foo { def foo(a = self) {} }')
 
       type_checker.check_module(module: module, ast: body)
@@ -1964,11 +1968,11 @@ def tests(t: Tests) {
 
     g.test('Referring to a method argument in its body') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let int_type = type_checker.builtins.integer_type
-      let body = parse('def foo(a: Integer) { a }')
+      let body = parse('def foo(a: Int) { a }')
 
-      module.define_constant(name: 'Integer', type: int_type)
+      module.define_constant(name: 'Int', type: int_type)
       type_checker.check_module(module: module, ast: body)
 
       let method = body.children[0] as DefineMethod
@@ -1980,12 +1984,12 @@ def tests(t: Tests) {
 
     g.test('Referring to a method rest argument in its body') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let int_type = type_checker.builtins.integer_type
       let ary_type = type_checker.builtins.array_type
-      let body = parse('def foo(*a: Integer) { a }')
+      let body = parse('def foo(*a: Int) { a }')
 
-      module.define_constant(name: 'Integer', type: int_type)
+      module.define_constant(name: 'Int', type: int_type)
       type_checker.check_module(module: module, ast: body)
 
       let method = body.children[0] as DefineMethod
@@ -2007,25 +2011,25 @@ def tests(t: Tests) {
 
     g.test('Defining a static method that returns self when the return type is Self') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let int_type = type_checker.builtins.integer_type
-      let body = parse('impl Integer { static def foo -> Self { self } }')
+      let body = parse('impl Int { static def foo -> Self { self } }')
 
-      module.define_constant(name: 'Integer', type: int_type)
+      module.define_constant(name: 'Int', type: int_type)
       type_checker.check_module(module: module, ast: body)
 
-      # Here `self` is `Integer` itself, but `-> Self` means "returns an
-      # _instance_ of Integer".
+      # Here `self` is `Int` itself, but `-> Self` means "returns an
+      # _instance_ of Int".
       try assert_true(type_checker.diagnostics.errors?)
     }
 
     g.test('Defining a method that returns self when the return type is Self') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let int_type = type_checker.builtins.integer_type
-      let body = parse('impl Integer { def foo -> Self { self } }')
+      let body = parse('impl Int { def foo -> Self { self } }')
 
-      module.define_constant(name: 'Integer', type: int_type)
+      module.define_constant(name: 'Int', type: int_type)
       type_checker.check_module(module: module, ast: body)
 
       try assert_false(type_checker.diagnostics.errors?)
@@ -2033,12 +2037,12 @@ def tests(t: Tests) {
 
     g.test('Defining a method that yields') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let int_type = type_checker.builtins.integer_type
-      let body = parse('def foo => Integer { yield 10 }')
+      let body = parse('def foo => Int { yield 10 }')
       let node = body.children[0] as DefineMethod
 
-      module.define_constant(name: 'Integer', type: int_type)
+      module.define_constant(name: 'Int', type: int_type)
       type_checker.check_module(module: module, ast: body)
 
       let method = module.methods['foo'].type as MethodType
@@ -2050,11 +2054,11 @@ def tests(t: Tests) {
 
     g.test('Defining a required method with a yield type') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let int_type = type_checker.builtins.integer_type
-      let body = parse('trait A { def foo => Integer }')
+      let body = parse('trait A { def foo => Int }')
 
-      module.define_constant(name: 'Integer', type: int_type)
+      module.define_constant(name: 'Int', type: int_type)
       type_checker.check_module(module: module, ast: body)
 
       let ttype = module.constants['A'].type as TraitType
@@ -2066,11 +2070,11 @@ def tests(t: Tests) {
 
     g.test('Defining a method with a yield type that never yields') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let int_type = type_checker.builtins.integer_type
-      let body = parse('def foo => Integer {}')
+      let body = parse('def foo => Int {}')
 
-      module.define_constant(name: 'Integer', type: int_type)
+      module.define_constant(name: 'Int', type: int_type)
       type_checker.check_module(module: module, ast: body)
 
       try assert_true(type_checker.diagnostics.errors?)
@@ -2078,7 +2082,7 @@ def tests(t: Tests) {
 
     g.test('Defining a method that yields without a yield type') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('def foo { yield 10 }')
 
       type_checker.check_module(module: module, ast: body)
@@ -2088,11 +2092,11 @@ def tests(t: Tests) {
 
     g.test('Defining a method that yields an invalid type') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let int_type = type_checker.builtins.integer_type
-      let body = parse('def foo => Integer { yield 10.5 }')
+      let body = parse('def foo => Int { yield 10.5 }')
 
-      module.define_constant(name: 'Integer', type: int_type)
+      module.define_constant(name: 'Int', type: int_type)
       type_checker.check_module(module: module, ast: body)
 
       try assert_true(type_checker.diagnostics.errors?)
@@ -2100,16 +2104,16 @@ def tests(t: Tests) {
 
     g.test('Defining a method with a yield type that returns a value') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let int_type = type_checker.builtins.integer_type
       let body = parse(
-        'def foo => Integer {
+        'def foo => Int {
           yield 10
           return 10
         }'
       )
 
-      module.define_constant(name: 'Integer', type: int_type)
+      module.define_constant(name: 'Int', type: int_type)
       type_checker.check_module(module: module, ast: body)
 
       try assert_true(type_checker.diagnostics.errors?)
@@ -2117,11 +2121,11 @@ def tests(t: Tests) {
 
     g.test('Defining a method with a yield type that returns without a value') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let int_type = type_checker.builtins.integer_type
-      let body = parse('def foo => Integer { yield 10 return }')
+      let body = parse('def foo => Int { yield 10 return }')
 
-      module.define_constant(name: 'Integer', type: int_type)
+      module.define_constant(name: 'Int', type: int_type)
       type_checker.check_module(module: module, ast: body)
 
       try assert_false(type_checker.diagnostics.errors?)
@@ -2129,11 +2133,11 @@ def tests(t: Tests) {
 
     g.test('Defining a method with both a return and yield type') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let int_type = type_checker.builtins.integer_type
-      let body = parse('def foo -> Integer => Integer { yield 10 }')
+      let body = parse('def foo -> Int => Int { yield 10 }')
 
-      module.define_constant(name: 'Integer', type: int_type)
+      module.define_constant(name: 'Int', type: int_type)
       type_checker.check_module(module: module, ast: body)
 
       try assert_true(type_checker.diagnostics.errors?)
@@ -2141,7 +2145,7 @@ def tests(t: Tests) {
 
     g.test('Defining a method using a required class type parameter argument') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('class A!(T) { def foo(arg: T) {} }')
       let obj_node = body.children[0] as DefineClass
       let meth_node = obj_node.body.children[0] as DefineMethod
@@ -2161,7 +2165,7 @@ def tests(t: Tests) {
 
     g.test('Defining a method using a required method type parameter argument') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('def foo!(T)(arg: T) {}')
       let meth_node = body.children[0] as DefineMethod
       let arg_node = meth_node.arguments[0] as DefineRequiredArgument
@@ -2180,7 +2184,7 @@ def tests(t: Tests) {
 
     g.test('Defining a method using an optional method type parameter argument') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('def foo!(T)(arg: T = 10) {}')
       let meth_node = body.children[0] as DefineMethod
       let arg_node = meth_node.arguments[0] as DefineOptionalArgument
@@ -2199,7 +2203,7 @@ def tests(t: Tests) {
 
     g.test('Defining a method using a rest method type parameter argument') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('def foo!(T)(*arg: T) {}')
       let meth_node = body.children[0] as DefineMethod
       let arg_node = meth_node.arguments[0] as DefineRestArgument
@@ -2229,7 +2233,7 @@ def tests(t: Tests) {
 
     g.test('Referring to an class type parameter in a method body') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('class A!(T) { def foo { T } }')
 
       type_checker.check_module(module: module, ast: body)
@@ -2239,7 +2243,7 @@ def tests(t: Tests) {
 
     g.test('Referring to a trait type parameter in a method body') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('trait A!(T) { def foo { T } }')
 
       type_checker.check_module(module: module, ast: body)
@@ -2249,7 +2253,7 @@ def tests(t: Tests) {
 
     g.test('Referring to a method type parameter in a method body') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('def foo!(T) { T }')
 
       type_checker.check_module(module: module, ast: body)
@@ -2259,7 +2263,7 @@ def tests(t: Tests) {
 
     g.test('Referring to a type in a method body') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let ary_type = ClassType.new('Array')
       let body = parse('def foo { Array }')
       let meth_node = body.children[0] as DefineMethod
@@ -2274,7 +2278,7 @@ def tests(t: Tests) {
 
     g.test('Referring to a generic type using type arguments in a method body') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let foo_type = ClassType.new('Foo')
       let ary_type = ClassType.new('Array')
       let ary_param = TypeParameterType.new('T')
@@ -2303,7 +2307,7 @@ def tests(t: Tests) {
   t.group('Type-checking constant definitions') do (g) {
     g.test('Defining a constant') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('let A = 10')
 
       type_checker.check_module(module: module, ast: body)
@@ -2316,7 +2320,7 @@ def tests(t: Tests) {
 
     g.test('Defining an already defined constant') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('let A = 10')
 
       module.define_constant(
@@ -2334,7 +2338,7 @@ def tests(t: Tests) {
 
     g.test('Defining a constant with the same name as an imported constant') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('let A = 10')
 
       module.globals.define(
@@ -2357,7 +2361,7 @@ def tests(t: Tests) {
   t.group('Type-checking trait implementations') do (g) {
     g.test('Implementing a trait') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let trait_type = TraitType.new('ToString')
       let obj_type = ClassType.new('Number')
 
@@ -2387,7 +2391,7 @@ def tests(t: Tests) {
 
     g.test('Implementing a trait with type parameter bounds') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let trait_type = TraitType.new('ToString')
       let obj_type = ClassType.new('Number')
       let type_param = TypeParameterType.new('A')
@@ -2410,7 +2414,7 @@ def tests(t: Tests) {
 
     g.test('Implementing a trait with duplicate type parameter bounds') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let trait_type = TraitType.new('ToString')
       let obj_type = ClassType.new('Number')
       let type_param = TypeParameterType.new('A')
@@ -2431,7 +2435,7 @@ def tests(t: Tests) {
 
     g.test('Implementing a trait with type parameter bounds and a custom method') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let trait_type = TraitType.new('ToString')
       let obj_type = ClassType.new('Number')
       let type_param = TypeParameterType.new('A')
@@ -2454,7 +2458,7 @@ def tests(t: Tests) {
 
     g.test('Implementing a trait with type parameter bounds and a default method') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let trait_type = TraitType.new('ToString')
       let obj_type = ClassType.new('Number')
       let type_param = TypeParameterType.new('A')
@@ -2477,7 +2481,7 @@ def tests(t: Tests) {
 
     g.test('Implementing a non-existing trait') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let obj_type = ClassType.new('Number')
 
       module.define_constant(name: obj_type.name, type: obj_type)
@@ -2494,7 +2498,7 @@ def tests(t: Tests) {
 
     g.test('Implementing a trait for a non-existing object') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let trait_type = TraitType.new('ToString')
 
       module.define_constant(name: trait_type.name, type: trait_type)
@@ -2511,7 +2515,7 @@ def tests(t: Tests) {
 
     g.test('Implementing a trait with type parameter bounds for a non-generic object') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let trait_type = TraitType.new('ToString')
       let obj_type = ClassType.new('Number')
 
@@ -2528,7 +2532,7 @@ def tests(t: Tests) {
 
     g.test('Implementing a trait with invalid bounds requirements') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let trait_type = TraitType.new('ToString')
       let obj_type = ClassType.new('Number')
       let type_param = TypeParameterType.new('A')
@@ -2548,9 +2552,9 @@ def tests(t: Tests) {
 
     g.test('Defining a method with bounds that overwrite the bounds of a trait implementation') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let trait1 = TraitType.new('ToString')
-      let trait2 = TraitType.new('ToInteger')
+      let trait2 = TraitType.new('ToInt')
       let obj_type = ClassType.new('A')
       let type_param = TypeParameterType.new('T')
 
@@ -2561,7 +2565,7 @@ def tests(t: Tests) {
       module.define_constant(name: obj_type.name, type: obj_type)
 
       let node = parse(
-        'impl ToString for A when T: ToString { def foo when T: ToInteger {} }'
+        'impl ToString for A when T: ToString { def foo when T: ToInt {} }'
       )
 
       type_checker.check_module(module: module, ast: node)
@@ -2576,9 +2580,9 @@ def tests(t: Tests) {
 
     g.test('Implementing a generic trait without the required type arguments') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let trait_type = TraitType.new('Add')
-      let obj_type = ClassType.new('Integer')
+      let obj_type = ClassType.new('Int')
       let type_param = TypeParameterType.new('A')
 
       trait_type.type_parameters.define(name: type_param.name, type: type_param)
@@ -2586,7 +2590,7 @@ def tests(t: Tests) {
       module.define_constant(name: trait_type.name, type: trait_type)
       module.define_constant(name: obj_type.name, type: obj_type)
 
-      let node = parse('impl Add for Integer {}')
+      let node = parse('impl Add for Int {}')
 
       type_checker.check_module(module: module, ast: node)
 
@@ -2596,9 +2600,9 @@ def tests(t: Tests) {
 
     g.test('Implementing a trait with unmet requirements') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let trait_type = TraitType.new('Add')
-      let obj_type = ClassType.new('Integer')
+      let obj_type = ClassType.new('Int')
       let method_type =
         MethodType.new(name: '+', layout: BlockLayout.new(NeverType.new))
 
@@ -2607,7 +2611,7 @@ def tests(t: Tests) {
       module.define_constant(name: trait_type.name, type: trait_type)
       module.define_constant(name: obj_type.name, type: obj_type)
 
-      let node = parse('impl Add for Integer {}')
+      let node = parse('impl Add for Int {}')
 
       type_checker.check_module(module: module, ast: node)
 
@@ -2617,8 +2621,8 @@ def tests(t: Tests) {
 
     g.test('Implementing a trait with an unimplemented dependency') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
-      let obj_type = ClassType.new('Integer')
+      let type_checker = new_type_checker
+      let obj_type = ClassType.new('Int')
       let trait1 = TraitType.new('Sub')
       let trait2 = TraitType
         .new(name: 'Add', required_traits: Array.new(TraitInstance.new(trait1)))
@@ -2627,7 +2631,7 @@ def tests(t: Tests) {
       module.define_constant(name: trait2.name, type: trait2)
       module.define_constant(name: obj_type.name, type: obj_type)
 
-      let node = parse('impl Add for Integer {}')
+      let node = parse('impl Add for Int {}')
 
       type_checker.check_module(module: module, ast: node)
 
@@ -2637,9 +2641,9 @@ def tests(t: Tests) {
 
     g.test('Implementing a trait with all requirements met') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let trait_type = TraitType.new('Add')
-      let obj_type = ClassType.new('Integer')
+      let obj_type = ClassType.new('Int')
       let method_type = MethodType.new(
         name: '+',
         layout: BlockLayout.new(type_checker.builtins.nil_type.new_instance)
@@ -2650,7 +2654,7 @@ def tests(t: Tests) {
       module.define_constant(name: trait_type.name, type: trait_type)
       module.define_constant(name: obj_type.name, type: obj_type)
 
-      let node = parse('impl Add for Integer { def + {} }')
+      let node = parse('impl Add for Int { def + {} }')
 
       type_checker.check_module(module: module, ast: node)
 
@@ -2663,8 +2667,8 @@ def tests(t: Tests) {
 
     g.test('Implementing a trait with all dependencies implemented') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
-      let obj_type = ClassType.new('Integer')
+      let type_checker = new_type_checker
+      let obj_type = ClassType.new('Int')
       let trait1 = TraitType.new('Sub')
       let trait2 = TraitType
         .new(name: 'Add', required_traits: Array.new(TraitInstance.new(trait1)))
@@ -2673,7 +2677,7 @@ def tests(t: Tests) {
       module.define_constant(name: trait2.name, type: trait2)
       module.define_constant(name: obj_type.name, type: obj_type)
 
-      let node = parse('impl Sub for Integer {} impl Add for Integer {}')
+      let node = parse('impl Sub for Int {} impl Add for Int {}')
 
       type_checker.check_module(module: module, ast: node)
 
@@ -2686,9 +2690,9 @@ def tests(t: Tests) {
 
     g.test('Implementing a trait that implements a required method incorrectly') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let trait_type = TraitType.new('Add')
-      let obj_type = ClassType.new('Integer')
+      let obj_type = ClassType.new('Int')
       let plus = MethodType.new(
         name: '+',
         layout: BlockLayout.new(type_checker.builtins.nil_type.new_instance)
@@ -2704,7 +2708,7 @@ def tests(t: Tests) {
       module.define_constant(name: trait_type.name, type: trait_type)
       module.define_constant(name: obj_type.name, type: obj_type)
 
-      let node = parse('impl Add for Integer { def + {} }')
+      let node = parse('impl Add for Int { def + {} }')
 
       type_checker.check_module(module: module, ast: node)
 
@@ -2714,9 +2718,9 @@ def tests(t: Tests) {
 
     g.test('Implementing a trait that provides default methods') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let trait_type = TraitType.new('Add')
-      let obj_type = ClassType.new('Integer')
+      let obj_type = ClassType.new('Int')
       let plus = MethodType.new(name: '+', layout: BlockLayout.new(NeverType.new))
 
       trait_type.default_methods.define(name: '+', type: plus)
@@ -2724,7 +2728,7 @@ def tests(t: Tests) {
       module.define_constant(name: trait_type.name, type: trait_type)
       module.define_constant(name: obj_type.name, type: obj_type)
 
-      let node = parse('impl Add for Integer {}')
+      let node = parse('impl Add for Int {}')
 
       type_checker.check_module(module: module, ast: node)
 
@@ -2733,9 +2737,9 @@ def tests(t: Tests) {
 
     g.test('Redefining a default method') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let trait_type = TraitType.new('Add')
-      let obj_type = ClassType.new('Integer')
+      let obj_type = ClassType.new('Int')
       let plus = MethodType.new(
         name: '+',
         layout: BlockLayout.new(type_checker.builtins.nil_type.new_instance)
@@ -2746,7 +2750,7 @@ def tests(t: Tests) {
       module.define_constant(name: trait_type.name, type: trait_type)
       module.define_constant(name: obj_type.name, type: obj_type)
 
-      let node = parse('impl Add for Integer { def + {} }')
+      let node = parse('impl Add for Int { def + {} }')
 
       type_checker.check_module(module: module, ast: node)
 
@@ -2758,9 +2762,9 @@ def tests(t: Tests) {
 
     g.test('Incorrectly redefining a default method') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let trait_type = TraitType.new('Add')
-      let obj_type = ClassType.new('Integer')
+      let obj_type = ClassType.new('Int')
       let plus = MethodType.new(
         name: '+',
         layout: BlockLayout.new(type_checker.builtins.integer_type.new_instance)
@@ -2773,7 +2777,7 @@ def tests(t: Tests) {
       module
         .define_constant(name: 'NilType', type: type_checker.builtins.nil_type)
 
-      let node = parse('impl Add for Integer { def +(a: Integer) {} }')
+      let node = parse('impl Add for Int { def +(a: Int) {} }')
 
       type_checker.check_module(module: module, ast: node)
 
@@ -2783,9 +2787,9 @@ def tests(t: Tests) {
 
     g.test('Implementing a trait that requires a method that is already implemented') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let trait_type = TraitType.new('Add')
-      let obj_type = ClassType.new('Integer')
+      let obj_type = ClassType.new('Int')
       let trait_plus = MethodType.new(
         name: '+',
         layout: BlockLayout.new(type_checker.builtins.nil_type.new_instance)
@@ -2802,7 +2806,7 @@ def tests(t: Tests) {
       module.define_constant(name: trait_type.name, type: trait_type)
       module.define_constant(name: obj_type.name, type: obj_type)
 
-      let node = parse('impl Add for Integer { def + {} }')
+      let node = parse('impl Add for Int { def + {} }')
 
       type_checker.check_module(module: module, ast: node)
 
@@ -2813,9 +2817,9 @@ def tests(t: Tests) {
 
     g.test('Implementing a trait with a default method compatible with an existing method') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let trait_type = TraitType.new('Add')
-      let obj_type = ClassType.new('Integer')
+      let obj_type = ClassType.new('Int')
       let trait_plus =
         MethodType.new(name: '+', layout: BlockLayout.new(AnyType.new))
 
@@ -2828,7 +2832,7 @@ def tests(t: Tests) {
       module.define_constant(name: trait_type.name, type: trait_type)
       module.define_constant(name: obj_type.name, type: obj_type)
 
-      let node = parse('impl Add for Integer {}')
+      let node = parse('impl Add for Int {}')
 
       type_checker.check_module(module: module, ast: node)
 
@@ -2839,9 +2843,9 @@ def tests(t: Tests) {
 
     g.test('Implementing a trait with a default method incompatible with an existing method') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let trait_type = TraitType.new('Add')
-      let obj_type = ClassType.new('Integer')
+      let obj_type = ClassType.new('Int')
       let trait_plus =
         MethodType.new(name: '+', layout: BlockLayout.new(NeverType.new))
 
@@ -2854,7 +2858,7 @@ def tests(t: Tests) {
       module.define_constant(name: trait_type.name, type: trait_type)
       module.define_constant(name: obj_type.name, type: obj_type)
 
-      let node = parse('impl Add for Integer {}')
+      let node = parse('impl Add for Int {}')
 
       type_checker.check_module(module: module, ast: node)
 
@@ -2865,7 +2869,7 @@ def tests(t: Tests) {
 
     g.test('Defining a method with an argument depending on a required method') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let trait_type = TraitType.new('Add')
       let obj_type = ClassType.new('Bla')
       let foo = MethodType.new(
@@ -2878,10 +2882,10 @@ def tests(t: Tests) {
       module.define_constant(name: trait_type.name, type: trait_type)
       module.define_constant(name: obj_type.name, type: obj_type)
       module
-        .define_constant(name: 'Integer', type: type_checker.builtins.integer_type)
+        .define_constant(name: 'Int', type: type_checker.builtins.integer_type)
 
       let node = parse(
-        'impl Add for Bla { def foo -> Integer { 10 } def bar(a = foo) {} }'
+        'impl Add for Bla { def foo -> Int { 10 } def bar(a = foo) {} }'
       )
 
       type_checker.check_module(module: module, ast: node)
@@ -2897,9 +2901,9 @@ def tests(t: Tests) {
 
     g.test('Defining a method with an argument depending on a default method') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let trait_type = TraitType.new('Add')
-      let obj_type = ClassType.new('Integer')
+      let obj_type = ClassType.new('Int')
       let foo = MethodType.new(
         name: 'foo',
         layout: BlockLayout.new(type_checker.builtins.nil_singleton)
@@ -2912,7 +2916,7 @@ def tests(t: Tests) {
       module.define_constant(name: trait_type.name, type: trait_type)
       module.define_constant(name: obj_type.name, type: obj_type)
 
-      let node = parse('impl Add for Integer { def bar(a = foo) {} }')
+      let node = parse('impl Add for Int { def bar(a = foo) {} }')
 
       type_checker.check_module(module: module, ast: node)
 
@@ -2928,9 +2932,9 @@ def tests(t: Tests) {
 
     g.test('Defining a method with an argument depending on the "self" type') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let trait_type = TraitType.new('Add')
-      let obj_type = ClassType.new('Integer')
+      let obj_type = ClassType.new('Int')
       let foo = MethodType.new(
         name: 'foo',
         layout: BlockLayout.new(type_checker.builtins.nil_singleton)
@@ -2943,7 +2947,7 @@ def tests(t: Tests) {
       module.define_constant(name: trait_type.name, type: trait_type)
       module.define_constant(name: obj_type.name, type: obj_type)
 
-      let node = parse('impl Add for Integer { def bar(a = self) {} }')
+      let node = parse('impl Add for Int { def bar(a = self) {} }')
 
       type_checker.check_module(module: module, ast: node)
 
@@ -2956,9 +2960,9 @@ def tests(t: Tests) {
 
     g.test('Redefining a static method') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let trait_type = TraitType.new('Add')
-      let obj_type = ClassType.new('Integer')
+      let obj_type = ClassType.new('Int')
       let foo = MethodType.new(name: 'foo', static_method: True)
 
       obj_type.static_methods.define(name: 'foo', type: foo)
@@ -2966,7 +2970,7 @@ def tests(t: Tests) {
       module.define_constant(name: trait_type.name, type: trait_type)
       module.define_constant(name: obj_type.name, type: obj_type)
 
-      let node = parse('impl Add for Integer { def foo {} }')
+      let node = parse('impl Add for Int { def foo {} }')
 
       type_checker.check_module(module: module, ast: node)
 
@@ -2980,7 +2984,7 @@ def tests(t: Tests) {
   t.group('Type-checking reopened types') do (g) {
     g.test('Reopening a non-existing type') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let node = parse('impl A {}')
 
       type_checker.check_module(module: module, ast: node)
@@ -2990,7 +2994,7 @@ def tests(t: Tests) {
 
     g.test('Reopening a trait') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let trait_type = TraitType.new('Add')
       let node = parse('impl A {}')
 
@@ -3003,7 +3007,7 @@ def tests(t: Tests) {
 
     g.test('Reopening the instance of an object') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let obj_type = ClassType.new('String')
       let node = parse('impl A {}')
 
@@ -3016,7 +3020,7 @@ def tests(t: Tests) {
 
     g.test('Reopening a module') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let node = parse('impl A {}')
 
       module.define_constant(name: 'A', type: module)
@@ -3028,7 +3032,7 @@ def tests(t: Tests) {
 
     g.test('Defining an instance method when reopening an object') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let a_type = ClassType.new('A')
       let node = parse('impl A { def foo {} }')
 
@@ -3042,7 +3046,7 @@ def tests(t: Tests) {
 
     g.test('Defining a static method when reopening an object') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let a_type = ClassType.new('A')
       let node = parse('impl A { static def foo {} }')
 
@@ -3056,7 +3060,7 @@ def tests(t: Tests) {
 
     g.test('Defining an existing instance method when reopening an object') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let a_type = ClassType.new('A')
       let foo_method = MethodType.new(
         name: 'foo',
@@ -3076,7 +3080,7 @@ def tests(t: Tests) {
 
     g.test('Defining an existing static method when reopening an object') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let a_type = ClassType.new('A')
       let foo_method =
         MethodType.new(name: 'foo', layout: BlockLayout.new(NeverType.new))
@@ -3096,7 +3100,7 @@ def tests(t: Tests) {
   t.group('Type-checking identifier references') do (g) {
     g.test('Referring to an undefined identifier') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('foo')
       let node = body.children[0] as Identifier
 
@@ -3109,7 +3113,7 @@ def tests(t: Tests) {
 
     g.test('Referring to a defined local variable') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('foo')
       let node = body.children[0] as Identifier
 
@@ -3132,7 +3136,7 @@ def tests(t: Tests) {
 
     g.test('Referring to an imported module') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('foo')
       let node = body.children[0] as Identifier
 
@@ -3156,7 +3160,7 @@ def tests(t: Tests) {
   t.group('Type-checking method calls without explicit receivers') do (g) {
     g.test('Sending a message to "self"') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('foo')
       let node = body.children[0] as Identifier
       let type = MethodType.new(
@@ -3178,7 +3182,7 @@ def tests(t: Tests) {
 
     g.test('Sending a message to "self" that throws an unhandled error') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('foo')
       let node = body.children[0] as Identifier
       let int_type = type_checker.builtins.integer_type
@@ -3200,7 +3204,7 @@ def tests(t: Tests) {
 
     g.test('Sending a message to "self" with parentheses that throws an unhandled error') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('foo()')
       let node = body.children[0] as Identifier
       let int_type = type_checker.builtins.integer_type
@@ -3222,7 +3226,7 @@ def tests(t: Tests) {
 
     g.test('Calling a defined module method') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('foo')
       let node = body.children[0] as Identifier
       let type = MethodType.new(
@@ -3242,7 +3246,7 @@ def tests(t: Tests) {
 
     g.test('Calling an imported module method') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('foo')
       let node = body.children[0] as Identifier
       let type = MethodType.new(
@@ -3262,7 +3266,7 @@ def tests(t: Tests) {
 
     g.test('Calling a module method that returns Self in a generic type') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('foo')
       let node = body.children[0] as Identifier
       let rtype =
@@ -3291,7 +3295,7 @@ def tests(t: Tests) {
   t.group('Type-checking global references using ::') do (g) {
     g.test('Referring to a global variable') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('::Foo')
       let node = body.children[0] as Global
 
@@ -3314,7 +3318,7 @@ def tests(t: Tests) {
 
     g.test('Referring to an imported global variable') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('::foo')
       let node = body.children[0] as Global
 
@@ -3336,7 +3340,7 @@ def tests(t: Tests) {
 
     g.test('Calling a module method with no arguments using ::') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('::foo')
       let node = body.children[0] as Global
       let type = MethodType.new(
@@ -3356,7 +3360,7 @@ def tests(t: Tests) {
 
     g.test('Calling an imported module method with no arguments using ::') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('::foo')
       let node = body.children[0] as Global
       let type = MethodType.new(
@@ -3376,7 +3380,7 @@ def tests(t: Tests) {
 
     g.test('Calling an imported module method that throws an unhandled error') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let int_type = type_checker.builtins.integer_type
       let body = parse('::foo')
       let layout = BlockLayout.new(
@@ -3396,7 +3400,7 @@ def tests(t: Tests) {
   t.group('Type-checking constants defined by the compiler') do (g) {
     g.test('Referencing the ThisModule global') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('ThisModule')
       let node = body.children[0]
 
@@ -3410,7 +3414,7 @@ def tests(t: Tests) {
   t.group('Type-checking variable reassignments') do (g) {
     g.test('Reassigning an existing local variable with the same type') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('foo = 10')
       let node = body.children[0] as AssignLocal
       let int_type = type_checker.builtins.integer_type
@@ -3428,7 +3432,7 @@ def tests(t: Tests) {
 
     g.test('Reassigning an existing attribute with the same type') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('impl A { def foo(arg = @a = 10) {} }')
 
       let impl_node = body.children[0] as ReopenObject
@@ -3454,7 +3458,7 @@ def tests(t: Tests) {
 
     g.test('Reassigning an existing local variable with a different compatible type') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('foo = 10')
       let node = body.children[0] as AssignLocal
       let int_type = type_checker.builtins.integer_type
@@ -3475,7 +3479,7 @@ def tests(t: Tests) {
 
     g.test('Reassigning an existing local variable with an incompatible type') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('foo = 10.5')
       let node = body.children[0] as AssignLocal
       let int_type = type_checker.builtins.integer_type
@@ -3498,7 +3502,7 @@ def tests(t: Tests) {
 
     g.test('Reassigning an immutable local variable') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('foo = 10')
       let node = body.children[0] as AssignLocal
 
@@ -3518,7 +3522,7 @@ def tests(t: Tests) {
 
     g.test('Reassigning an undefined local variable') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('foo = 10')
       let node = body.children[0] as AssignLocal
 
@@ -3535,7 +3539,7 @@ def tests(t: Tests) {
 
     g.test('Reassigning an undefined attribute') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('impl A { def foo(arg = @a = 10) {} }')
 
       let impl_node = body.children[0] as ReopenObject
@@ -3561,7 +3565,7 @@ def tests(t: Tests) {
   t.group('Type-checking attribute references') do (g) {
     g.test('Referring to a defined attribute') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('impl A { def foo(arg = @a) {} }')
 
       let impl_node = body.children[0] as ReopenObject
@@ -3586,7 +3590,7 @@ def tests(t: Tests) {
 
     g.test('Referring to an undefined attribute') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('impl A { def foo(arg = @a) {} }')
 
       let impl_node = body.children[0] as ReopenObject
@@ -3606,7 +3610,7 @@ def tests(t: Tests) {
 
     g.test('Referring to a type parameter attribute') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('impl A { def foo { @a } }')
       let impl_node = body.children[0] as ReopenObject
       let meth_node = impl_node.body.children[0] as DefineMethod
@@ -3631,7 +3635,7 @@ def tests(t: Tests) {
   t.group('Type-checking method returns') do (g) {
     g.test('Returning at the module-level, without a value') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('return')
 
       type_checker.check_module(module: module, ast: body)
@@ -3641,7 +3645,7 @@ def tests(t: Tests) {
 
     g.test('Returning at the module-level, with a value') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('return 10')
 
       type_checker.check_module(module: module, ast: body)
@@ -3651,7 +3655,7 @@ def tests(t: Tests) {
 
     g.test('Defining an argument with a return as the default value') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('def foo(arg = return) {}')
 
       type_checker.check_module(module: module, ast: body)
@@ -3665,7 +3669,7 @@ def tests(t: Tests) {
 
     g.test('Returning from a method without a value') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('def foo { return }')
       let method_node = body.children[0] as DefineMethod
       let return_node = method_node.body.children[0] as Return
@@ -3678,13 +3682,13 @@ def tests(t: Tests) {
 
     g.test('Returning from a method with a valid value') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let int_type = type_checker.builtins.integer_type
-      let body = parse('def foo -> Integer { return 10 }')
+      let body = parse('def foo -> Int { return 10 }')
       let method_node = body.children[0] as DefineMethod
       let return_node = method_node.body.children[0] as Return
 
-      module.define_constant(name: 'Integer', type: int_type)
+      module.define_constant(name: 'Int', type: int_type)
       type_checker.check_module(module: module, ast: body)
 
       try assert_false(type_checker.diagnostics.errors?)
@@ -3697,7 +3701,7 @@ def tests(t: Tests) {
 
     g.test('Returning from a method with an invalid value') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let int_type = type_checker.builtins.integer_type
       let body = parse('def foo { return 10 }')
       let method_node = body.children[0] as DefineMethod
@@ -3721,7 +3725,7 @@ def tests(t: Tests) {
 
     g.test('Returning from a closure') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('do { return }')
 
       type_checker.check_module(module: module, ast: body)
@@ -3734,7 +3738,7 @@ def tests(t: Tests) {
 
     g.test('Returning from a lambda') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let int_type = type_checker.builtins.integer_type
       let body = parse('fn { return 10 }')
 
@@ -3750,7 +3754,7 @@ def tests(t: Tests) {
   t.group('Type-checking pattern-matching expressions') do (g) {
     g.test('Defining an empty match expression') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('match {}')
       let node = body.children[0] as Match
 
@@ -3763,8 +3767,8 @@ def tests(t: Tests) {
 
     g.test('Defining a match without any patterns') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
-      let body = parse('match(10) {}')
+      let type_checker = new_type_checker
+      let body = parse('match 10 {}')
       let node = body.children[0] as Match
 
       setup_match_types(type_checker: type_checker, module: module)
@@ -3776,8 +3780,8 @@ def tests(t: Tests) {
 
     g.test('Defining a match with only an "else" branch') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
-      let body = parse('match(10) { else -> { 10 } }')
+      let type_checker = new_type_checker
+      let body = parse('match 10 { else -> { 10 } }')
       let node = body.children[0] as Match
 
       setup_match_types(type_checker: type_checker, module: module)
@@ -3789,8 +3793,8 @@ def tests(t: Tests) {
 
     g.test('Defining a non-exhaustive match') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
-      let body = parse('match(10) { 10 -> { 10 } }')
+      let type_checker = new_type_checker
+      let body = parse('match 10 { 10 -> { 10 } }')
       let node = body.children[0] as Match
 
       setup_match_types(type_checker: type_checker, module: module)
@@ -3802,8 +3806,8 @@ def tests(t: Tests) {
 
     g.test('Defining a match when the Match trait does not exist') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
-      let body = parse('match(10) { 10 -> { 10 } else -> { 20 } }')
+      let type_checker = new_type_checker
+      let body = parse('match 10 { 10 -> { 10 } else -> { 20 } }')
       let node = body.children[0] as Match
 
       type_checker.check_module(module: module, ast: body)
@@ -3814,14 +3818,14 @@ def tests(t: Tests) {
 
     g.test('Defining a match with an invalid expression case') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
-      let body = parse('match(10.5) { 10.5 -> { 10 } else -> { 20 } }')
+      let type_checker = new_type_checker
+      let body = parse('match 10.5 { 10.5 -> { 10 } else -> { 20 } }')
       let node = body.children[0] as Match
 
       setup_match_types(type_checker: type_checker, module: module)
       type_checker.check_module(module: module, ast: body)
 
-      # In this test, Integer does not implement std::operators::Match, and thus
+      # In this test, Int does not implement std::operators::Match, and thus
       # can't be used in an expression case.
       try assert_true(type_checker.diagnostics.errors?)
       try assert_object_instance(
@@ -3831,10 +3835,10 @@ def tests(t: Tests) {
     }
 
     g.test('Defining a match with a valid expression case') {
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let int_type = type_checker.builtins.integer_type
       let module = new_module('foo')
-      let body = parse('match(10) { 10 -> { 10 } else -> { 20 } }')
+      let body = parse('match 10 { 10 -> { 10 } else -> { 20 } }')
       let node = body.children[0] as Match
       let case = node.cases[0] as MatchExpressions
 
@@ -3852,10 +3856,10 @@ def tests(t: Tests) {
     }
 
     g.test('Defining a match with an expression case with two patterns') {
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let int_type = type_checker.builtins.integer_type
       let module = new_module('foo')
-      let body = parse('match(10) { 10, 20 -> { 10 } else -> { 20 } }')
+      let body = parse('match 10 { 10, 20 -> { 10 } else -> { 20 } }')
       let node = body.children[0] as Match
       let case = node.cases[0] as MatchExpressions
 
@@ -3870,10 +3874,10 @@ def tests(t: Tests) {
     }
 
     g.test('Defining a match with an expression guard') {
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let builtins = type_checker.builtins
       let module = new_module('foo')
-      let body = parse('match(10) { 10 when True -> { 10 } else -> { 20 } }')
+      let body = parse('match 10 { 10 when True -> { 10 } else -> { 20 } }')
 
       setup_match_types(type_checker: type_checker, module: module)
       type_checker.check_module(module: module, ast: body)
@@ -3892,10 +3896,10 @@ def tests(t: Tests) {
     }
 
     g.test('Defining a match with an invalid expression guard') {
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let builtins = type_checker.builtins
       let module = new_module('foo')
-      let body = parse('match(10) { 10 when 20 -> { 10 } else -> { 20 } }')
+      let body = parse('match 10 { 10 when 20 -> { 10 } else -> { 20 } }')
 
       setup_match_types(type_checker: type_checker, module: module)
       type_checker.check_module(module: module, ast: body)
@@ -3912,10 +3916,10 @@ def tests(t: Tests) {
     }
 
     g.test('Defining a match with a type case') {
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let module = new_module('foo')
       let int_type = type_checker.builtins.integer_type
-      let body = parse('match(x) { as Integer -> { 10 } else -> { 20 } }')
+      let body = parse('match x { as Int -> { 10 } else -> { 20 } }')
 
       body
         .variable_scope
@@ -3938,12 +3942,12 @@ def tests(t: Tests) {
     }
 
     g.test('Defining a match with a type case and a valid guard') {
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let module = new_module('foo')
       let builtins = type_checker.builtins
       let int_type = builtins.integer_type
       let body =
-        parse('match(x) { as Integer when True -> { 10 } else -> { 20 } }')
+        parse('match x { as Int when True -> { 10 } else -> { 20 } }')
 
       body
         .variable_scope
@@ -3967,11 +3971,11 @@ def tests(t: Tests) {
     }
 
     g.test('Defining a match with a type case and an invalid guard') {
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let module = new_module('foo')
       let builtins = type_checker.builtins
       let int_type = builtins.integer_type
-      let body = parse('match(x) { as Integer when 10 -> { 10 } else -> { 20 } }')
+      let body = parse('match x { as Int when 10 -> { 10 } else -> { 20 } }')
 
       body
         .variable_scope
@@ -3993,10 +3997,10 @@ def tests(t: Tests) {
     }
 
     g.test('Defining a match where cases return different types') {
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let builtins = type_checker.builtins
       let module = new_module('foo')
-      let body = parse('match(10) { 10 -> { 10.5 } else -> { 20 } }')
+      let body = parse('match 10 { 10 -> { 10.5 } else -> { 20 } }')
 
       setup_match_types(type_checker: type_checker, module: module)
       type_checker.check_module(module: module, ast: body)
@@ -4013,7 +4017,7 @@ def tests(t: Tests) {
     }
 
     g.test('Defining a match without an argument with a Boolean expression case') {
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let builtins = type_checker.builtins
       let module = new_module('foo')
       let body = parse('match { True -> { 10 } else -> { 20 } }')
@@ -4035,7 +4039,7 @@ def tests(t: Tests) {
     }
 
     g.test('Defining a match without an argument with a non-Boolean expression case') {
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let builtins = type_checker.builtins
       let module = new_module('foo')
       let body = parse('match { 10 -> { 10 } else -> { 20 } }')
@@ -4055,10 +4059,10 @@ def tests(t: Tests) {
     }
 
     g.test('Defining a match without an argument with a type case') {
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let builtins = type_checker.builtins
       let module = new_module('foo')
-      let body = parse('match { as Integer -> { 10 } else -> { 20 } }')
+      let body = parse('match { as Int -> { 10 } else -> { 20 } }')
 
       setup_match_types(type_checker: type_checker, module: module)
       type_checker.check_module(module: module, ast: body)
@@ -4070,14 +4074,14 @@ def tests(t: Tests) {
     }
 
     g.test('Defining a match with a binding') {
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let module = new_module('foo')
       let int_type = type_checker.builtins.integer_type
       let body = parse(
         '
-        match(let x = 10) {
+        match let x = 10 {
           10 -> { x }
-          as Integer -> { x }
+          as Int -> { x }
           else -> { x }
         }
         '
@@ -4095,11 +4099,11 @@ def tests(t: Tests) {
     }
 
     g.test('Defining a match with a type case matching a generic type') {
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let module = new_module('foo')
       let ary_type = type_checker.builtins.array_type
       let trait_type = TraitType.new('Foo')
-      let body = parse('match(x) { as Array -> {} else -> {} }')
+      let body = parse('match x { as Array -> {} else -> {} }')
 
       setup_match_types(type_checker: type_checker, module: module)
       module.define_constant(name: 'Array', type: ary_type)
@@ -4116,7 +4120,7 @@ def tests(t: Tests) {
 
   t.group('Type-checking type casts') do (g) {
     g.test('Casting a type to an implemented trait') {
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let int_type = type_checker.builtins.integer_type
       let to_foo = TraitType.new('ToFoo')
       let module = new_module('foo')
@@ -4135,7 +4139,7 @@ def tests(t: Tests) {
     }
 
     g.test('Casting a type to an unimplemented trait') {
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let int_type = type_checker.builtins.integer_type
       let to_foo = TraitType.new('ToFoo')
       let module = new_module('foo')
@@ -4151,7 +4155,7 @@ def tests(t: Tests) {
     }
 
     g.test('Casting a type to a non-existing type') {
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let int_type = type_checker.builtins.integer_type
       let module = new_module('foo')
       let body = parse('x as ToFoo')
@@ -4165,17 +4169,17 @@ def tests(t: Tests) {
     }
 
     g.test('Casting a trait to an object that implements the trait') {
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let int_type = type_checker.builtins.integer_type
       let to_foo = TraitType.new('ToFoo')
       let module = new_module('foo')
-      let body = parse('x as Integer')
+      let body = parse('x as Int')
       let node = body.children[0] as TypeCast
 
       int_type
         .add_trait_implementation(TraitImplementation.new(to_foo.new_instance))
 
-      module.define_constant(name: 'Integer', type: int_type)
+      module.define_constant(name: 'Int', type: int_type)
       body.variable_scope.symbols.define(name: 'x', type: to_foo.new_instance)
       type_checker.check_module(module: module, ast: body)
 
@@ -4184,14 +4188,14 @@ def tests(t: Tests) {
     }
 
     g.test("Casting a trait to an object that doesn't implement the trait") {
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let int_type = type_checker.builtins.integer_type
       let to_foo = TraitType.new('ToFoo')
       let module = new_module('foo')
-      let body = parse('x as Integer')
+      let body = parse('x as Int')
       let node = body.children[0] as TypeCast
 
-      module.define_constant(name: 'Integer', type: int_type)
+      module.define_constant(name: 'Int', type: int_type)
       body.variable_scope.symbols.define(name: 'x', type: to_foo.new_instance)
       type_checker.check_module(module: module, ast: body)
 
@@ -4200,13 +4204,13 @@ def tests(t: Tests) {
     }
 
     g.test('Casting an error type to an object') {
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let int_type = type_checker.builtins.integer_type
       let module = new_module('foo')
-      let body = parse('x as Integer')
+      let body = parse('x as Int')
       let node = body.children[0]
 
-      module.define_constant(name: 'Integer', type: int_type)
+      module.define_constant(name: 'Int', type: int_type)
       body.variable_scope.symbols.define(name: 'x', type: ErrorType.new)
       type_checker.check_module(module: module, ast: body)
 
@@ -4215,14 +4219,14 @@ def tests(t: Tests) {
     }
 
     g.test('Casting one object to another object') {
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let int_type = type_checker.builtins.integer_type
       let float_type = type_checker.builtins.float_type
       let module = new_module('foo')
-      let body = parse('x as Integer')
+      let body = parse('x as Int')
       let node = body.children[0]
 
-      module.define_constant(name: 'Integer', type: int_type)
+      module.define_constant(name: 'Int', type: int_type)
       body.variable_scope.symbols.define(name: 'x', type: float_type.new_instance)
       type_checker.check_module(module: module, ast: body)
 
@@ -4231,7 +4235,7 @@ def tests(t: Tests) {
     }
 
     g.test('Casting a type to a method type parameter') {
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let module = new_module('foo')
       let body = parse('def foo!(A) { 10 as A }')
       let meth_node = body.children[0] as DefineMethod
@@ -4249,7 +4253,7 @@ def tests(t: Tests) {
     }
 
     g.test('Casting a type to an class type parameter') {
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let module = new_module('foo')
       let body = parse('class Foo!(A) { def foo { 10 as A } }')
       let obj_node = body.children[0] as DefineClass
@@ -4270,7 +4274,7 @@ def tests(t: Tests) {
 
   t.group('Type-checking closures') do (g) {
     g.test('Defining an empty basic closure') {
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let module = new_module('foo')
       let body = parse('{}')
       let node = body.children[0] as BasicClosure
@@ -4290,7 +4294,7 @@ def tests(t: Tests) {
     }
 
     g.test('Defining a basic closure that captures a local variable') {
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let int_type = type_checker.builtins.integer_type
       let module = new_module('foo')
       let body = parse('{ x }')
@@ -4311,7 +4315,7 @@ def tests(t: Tests) {
     }
 
     g.test('Defining an empty closure without explicit types') {
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let module = new_module('foo')
       let body = parse('do {}')
       let node = body.children[0] as Closure
@@ -4330,7 +4334,7 @@ def tests(t: Tests) {
     }
 
     g.test('Defining a closure without explicit types that captures a local variable') {
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let int_type = type_checker.builtins.integer_type
       let module = new_module('foo')
       let body = parse('do { x }')
@@ -4351,14 +4355,14 @@ def tests(t: Tests) {
     }
 
     g.test('Defining a closure with typed arguments') {
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let module = new_module('foo')
       let int_type = type_checker.builtins.integer_type
       let float_type = type_checker.builtins.float_type
-      let body = parse("do (a: Float, b: Integer) { a \n b }")
+      let body = parse("do (a: Float, b: Int) { a \n b }")
       let node = body.children[0] as Closure
 
-      module.define_constant(name: 'Integer', type: int_type)
+      module.define_constant(name: 'Int', type: int_type)
       module.define_constant(name: 'Float', type: float_type)
       type_checker.check_module(module: module, ast: body)
 
@@ -4378,13 +4382,13 @@ def tests(t: Tests) {
     }
 
     g.test('Defining a closure with an explicit return type and a valid return value') {
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let module = new_module('foo')
       let int_type = type_checker.builtins.integer_type
-      let body = parse('do -> Integer { 10 }')
+      let body = parse('do -> Int { 10 }')
       let node = body.children[0] as Closure
 
-      module.define_constant(name: 'Integer', type: int_type)
+      module.define_constant(name: 'Int', type: int_type)
       type_checker.check_module(module: module, ast: body)
 
       let type = node.resolved_type.get
@@ -4394,13 +4398,13 @@ def tests(t: Tests) {
     }
 
     g.test('Defining a closure with an explicit return type and an invalid return value') {
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let module = new_module('foo')
       let int_type = type_checker.builtins.integer_type
-      let body = parse('do -> Integer { 10.5 }')
+      let body = parse('do -> Int { 10.5 }')
       let node = body.children[0] as Closure
 
-      module.define_constant(name: 'Integer', type: int_type)
+      module.define_constant(name: 'Int', type: int_type)
       type_checker.check_module(module: module, ast: body)
 
       let type = node.resolved_type.get
@@ -4410,13 +4414,13 @@ def tests(t: Tests) {
     }
 
     g.test('Defining a closure with an explicit throw type and a valid thrown type') {
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let module = new_module('foo')
       let int_type = type_checker.builtins.integer_type
-      let body = parse('do !! Integer { local throw 10 }')
+      let body = parse('do !! Int { throw 10 }')
       let node = body.children[0] as Closure
 
-      module.define_constant(name: 'Integer', type: int_type)
+      module.define_constant(name: 'Int', type: int_type)
       type_checker.check_module(module: module, ast: body)
 
       let type = node.resolved_type.get
@@ -4426,13 +4430,13 @@ def tests(t: Tests) {
     }
 
     g.test('Defining a closure with an explicit throw type and an invalid thrown type') {
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let module = new_module('foo')
       let int_type = type_checker.builtins.integer_type
-      let body = parse('do !! Integer { local throw 10.5 }')
+      let body = parse('do !! Int { throw 10.5 }')
       let node = body.children[0] as Closure
 
-      module.define_constant(name: 'Integer', type: int_type)
+      module.define_constant(name: 'Int', type: int_type)
       type_checker.check_module(module: module, ast: body)
 
       let type = node.resolved_type.get
@@ -4442,22 +4446,22 @@ def tests(t: Tests) {
     }
 
     g.test('Defining a closure with an explicit throw type that never throws') {
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let module = new_module('foo')
       let int_type = type_checker.builtins.integer_type
-      let body = parse('do !! Integer {}')
+      let body = parse('do !! Int {}')
 
-      module.define_constant(name: 'Integer', type: int_type)
+      module.define_constant(name: 'Int', type: int_type)
       type_checker.check_module(module: module, ast: body)
 
       try assert_true(type_checker.diagnostics.errors?)
     }
 
     g.test('Defining a closure that throws without an explicit throw type') {
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let module = new_module('foo')
       let int_type = type_checker.builtins.integer_type
-      let body = parse('do { local throw 10 }')
+      let body = parse('do { throw 10 }')
       let node = body.children[0] as Closure
 
       type_checker.check_module(module: module, ast: body)
@@ -4469,7 +4473,7 @@ def tests(t: Tests) {
     }
 
     g.test('Defining a closure with a type parameter') {
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let module = new_module('foo')
       let body = parse('do !(T)(a: T) { a }')
       let node = body.children[0] as Closure
@@ -4485,7 +4489,7 @@ def tests(t: Tests) {
     }
 
     g.test('Defining a closure with a type parameter and explicit return type') {
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let module = new_module('foo')
       let body = parse('do !(T)(a: T) -> T { a }')
       let node = body.children[0] as Closure
@@ -4500,9 +4504,9 @@ def tests(t: Tests) {
     }
 
     g.test('Defining a closure with a type parameter and explicit throw type') {
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let module = new_module('foo')
-      let body = parse('do !(T)(a: T) !! T { local throw a }')
+      let body = parse('do !(T)(a: T) !! T { throw a }')
       let node = body.children[0] as Closure
 
       type_checker.check_module(module: module, ast: body)
@@ -4515,7 +4519,7 @@ def tests(t: Tests) {
     }
 
     g.test('Defining a closure with immutable untyped arguments') {
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let module = new_module('foo')
       let body = parse('do (a, b) {}')
       let node = body.children[0] as Closure
@@ -4530,7 +4534,7 @@ def tests(t: Tests) {
     }
 
     g.test('Defining a closure with an optional argument') {
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let int_type = type_checker.builtins.integer_type
       let module = new_module('foo')
       let body = parse('do (a = 10) {}')
@@ -4546,11 +4550,11 @@ def tests(t: Tests) {
 
     g.test('Defining a closure with a statically typed rest argument') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
-      let body = parse('do(*a: Integer) {}')
+      let type_checker = new_type_checker
+      let body = parse('do(*a: Int) {}')
 
       module
-        .define_constant(name: 'Integer', type: type_checker.builtins.integer_type)
+        .define_constant(name: 'Int', type: type_checker.builtins.integer_type)
 
       type_checker.check_module(module: module, ast: body)
 
@@ -4564,11 +4568,11 @@ def tests(t: Tests) {
 
     g.test('Referring to closure method argument in its body') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let int_type = type_checker.builtins.integer_type
-      let body = parse('do(a: Integer) { a }')
+      let body = parse('do(a: Int) { a }')
 
-      module.define_constant(name: 'Integer', type: int_type)
+      module.define_constant(name: 'Int', type: int_type)
       type_checker.check_module(module: module, ast: body)
 
       let method = body.children[0] as Closure
@@ -4580,12 +4584,12 @@ def tests(t: Tests) {
 
     g.test('Referring to a closure rest argument in its body') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let int_type = type_checker.builtins.integer_type
       let ary_type = type_checker.builtins.array_type
-      let body = parse('do(*a: Integer) { a }')
+      let body = parse('do(*a: Int) { a }')
 
-      module.define_constant(name: 'Integer', type: int_type)
+      module.define_constant(name: 'Int', type: int_type)
       type_checker.check_module(module: module, ast: body)
 
       let method = body.children[0] as Closure
@@ -4608,7 +4612,7 @@ def tests(t: Tests) {
 
   t.group('Type-checking lambdas') do (g) {
     g.test('Defining an empty lambda without explicit types') {
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let module = new_module('foo')
       let body = parse('fn {}')
       let node = body.children[0] as Lambda
@@ -4628,7 +4632,7 @@ def tests(t: Tests) {
     }
 
     g.test('Defining a lambda that refers to a local variarble') {
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let int_type = type_checker.builtins.integer_type
       let module = new_module('foo')
       let body = parse('fn { x }')
@@ -4646,14 +4650,14 @@ def tests(t: Tests) {
     }
 
     g.test('Defining a lambda with typed arguments') {
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let module = new_module('foo')
       let int_type = type_checker.builtins.integer_type
       let float_type = type_checker.builtins.float_type
-      let body = parse("fn (a: Float, b: Integer) { a \n b }")
+      let body = parse("fn (a: Float, b: Int) { a \n b }")
       let node = body.children[0] as Lambda
 
-      module.define_constant(name: 'Integer', type: int_type)
+      module.define_constant(name: 'Int', type: int_type)
       module.define_constant(name: 'Float', type: float_type)
       type_checker.check_module(module: module, ast: body)
 
@@ -4673,13 +4677,13 @@ def tests(t: Tests) {
     }
 
     g.test('Defining a lambda with an explicit return type and a valid return value') {
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let module = new_module('foo')
       let int_type = type_checker.builtins.integer_type
-      let body = parse('fn -> Integer { 10 }')
+      let body = parse('fn -> Int { 10 }')
       let node = body.children[0] as Lambda
 
-      module.define_constant(name: 'Integer', type: int_type)
+      module.define_constant(name: 'Int', type: int_type)
       type_checker.check_module(module: module, ast: body)
 
       let type = node.resolved_type.get
@@ -4689,13 +4693,13 @@ def tests(t: Tests) {
     }
 
     g.test('Defining a lambda with an explicit return type and an invalid return value') {
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let module = new_module('foo')
       let int_type = type_checker.builtins.integer_type
-      let body = parse('fn -> Integer { 10.5 }')
+      let body = parse('fn -> Int { 10.5 }')
       let node = body.children[0] as Lambda
 
-      module.define_constant(name: 'Integer', type: int_type)
+      module.define_constant(name: 'Int', type: int_type)
       type_checker.check_module(module: module, ast: body)
 
       let type = node.resolved_type.get
@@ -4705,13 +4709,13 @@ def tests(t: Tests) {
     }
 
     g.test('Defining a lambda with an explicit throw type and a valid thrown type') {
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let module = new_module('foo')
       let int_type = type_checker.builtins.integer_type
-      let body = parse('fn !! Integer { local throw 10 }')
+      let body = parse('fn !! Int { throw 10 }')
       let node = body.children[0] as Lambda
 
-      module.define_constant(name: 'Integer', type: int_type)
+      module.define_constant(name: 'Int', type: int_type)
       type_checker.check_module(module: module, ast: body)
 
       let type = node.resolved_type.get
@@ -4721,13 +4725,13 @@ def tests(t: Tests) {
     }
 
     g.test('Defining a lambda with an explicit throw type and an invalid thrown type') {
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let module = new_module('foo')
       let int_type = type_checker.builtins.integer_type
-      let body = parse('fn !! Integer { local throw 10.5 }')
+      let body = parse('fn !! Int { throw 10.5 }')
       let node = body.children[0] as Lambda
 
-      module.define_constant(name: 'Integer', type: int_type)
+      module.define_constant(name: 'Int', type: int_type)
       type_checker.check_module(module: module, ast: body)
 
       let type = node.resolved_type.get
@@ -4737,34 +4741,19 @@ def tests(t: Tests) {
     }
 
     g.test('Defining a lambda with an explicit throw type that never throws') {
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let module = new_module('foo')
       let int_type = type_checker.builtins.integer_type
-      let body = parse('fn !! Integer {}')
+      let body = parse('fn !! Int {}')
 
-      module.define_constant(name: 'Integer', type: int_type)
+      module.define_constant(name: 'Int', type: int_type)
       type_checker.check_module(module: module, ast: body)
 
       try assert_true(type_checker.diagnostics.errors?)
     }
 
-    g.test('Defining a lambda that throws using `local throw` without an explicit throw type') {
-      let type_checker = TypeChecker.new
-      let module = new_module('foo')
-      let int_type = type_checker.builtins.integer_type
-      let body = parse('fn { local throw 10 }')
-      let node = body.children[0] as Lambda
-
-      type_checker.check_module(module: module, ast: body)
-
-      let type = node.resolved_type.get
-
-      try assert_false(type_checker.diagnostics.errors?)
-      try assert_object_instance(type.throw_type.get, int_type)
-    }
-
     g.test('Defining a lambda that throws without an explicit throw type') {
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let module = new_module('foo')
       let int_type = type_checker.builtins.integer_type
       let body = parse('fn { throw 10 }')
@@ -4779,7 +4768,7 @@ def tests(t: Tests) {
     }
 
     g.test('Defining a lambda with a type parameter') {
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let module = new_module('foo')
       let body = parse('fn !(T)(a: T) { a }')
       let node = body.children[0] as Lambda
@@ -4795,7 +4784,7 @@ def tests(t: Tests) {
     }
 
     g.test('Defining a lambda with a type parameter and explicit return type') {
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let module = new_module('foo')
       let body = parse('fn !(T)(a: T) -> T { a }')
       let node = body.children[0] as Lambda
@@ -4810,9 +4799,9 @@ def tests(t: Tests) {
     }
 
     g.test('Defining a lambda with a type parameter and explicit throw type') {
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let module = new_module('foo')
-      let body = parse('fn !(T)(a: T) !! T { local throw a }')
+      let body = parse('fn !(T)(a: T) !! T { throw a }')
       let node = body.children[0] as Lambda
 
       type_checker.check_module(module: module, ast: body)
@@ -4825,7 +4814,7 @@ def tests(t: Tests) {
     }
 
     g.test('Defining a lambda with immutable untyped arguments') {
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let module = new_module('foo')
       let body = parse('fn (a, b) {}')
       let node = body.children[0] as Lambda
@@ -4840,7 +4829,7 @@ def tests(t: Tests) {
     }
 
     g.test('Defining a lambda with an optional argument') {
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let int_type = type_checker.builtins.integer_type
       let module = new_module('foo')
       let body = parse('fn (a = 10) {}')
@@ -4856,11 +4845,11 @@ def tests(t: Tests) {
 
     g.test('Defining a lambda with a statically typed rest argument') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
-      let body = parse('fn(*a: Integer) {}')
+      let type_checker = new_type_checker
+      let body = parse('fn(*a: Int) {}')
 
       module
-        .define_constant(name: 'Integer', type: type_checker.builtins.integer_type)
+        .define_constant(name: 'Int', type: type_checker.builtins.integer_type)
 
       type_checker.check_module(module: module, ast: body)
 
@@ -4874,11 +4863,11 @@ def tests(t: Tests) {
 
     g.test('Referring to lambda method argument in its body') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let int_type = type_checker.builtins.integer_type
-      let body = parse('fn(a: Integer) { a }')
+      let body = parse('fn(a: Int) { a }')
 
-      module.define_constant(name: 'Integer', type: int_type)
+      module.define_constant(name: 'Int', type: int_type)
       type_checker.check_module(module: module, ast: body)
 
       let method = body.children[0] as Lambda
@@ -4890,12 +4879,12 @@ def tests(t: Tests) {
 
     g.test('Referring to a lambda rest argument in its body') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let int_type = type_checker.builtins.integer_type
       let ary_type = type_checker.builtins.array_type
-      let body = parse('fn(*a: Integer) { a }')
+      let body = parse('fn(*a: Int) { a }')
 
-      module.define_constant(name: 'Integer', type: int_type)
+      module.define_constant(name: 'Int', type: int_type)
       type_checker.check_module(module: module, ast: body)
 
       let method = body.children[0] as Lambda
@@ -4919,20 +4908,8 @@ def tests(t: Tests) {
   t.group('Type-checking method throws') do (g) {
     g.test('Throwing at the module-level') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('throw 10')
-
-      type_checker.check_module(module: module, ast: body)
-
-      try assert_true(type_checker.diagnostics.errors?)
-    }
-  }
-
-  t.group('Type-checking local throws') do (g) {
-    g.test('Throwing at the module-level') {
-      let module = new_module('foo')
-      let type_checker = TypeChecker.new
-      let body = parse('local throw 10')
 
       type_checker.check_module(module: module, ast: body)
 
@@ -4943,7 +4920,7 @@ def tests(t: Tests) {
   t.group('Type-checking yields') do (g) {
     g.test('Yielding at the module-level') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('yield 10')
 
       type_checker.check_module(module: module, ast: body)
@@ -4955,7 +4932,7 @@ def tests(t: Tests) {
   t.group('Type-checking sending messages') do (g) {
     g.test('Not passing any arguments when none are required') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('foo()')
       let node = body.children[0] as Send
       let int_type = type_checker.builtins.integer_type
@@ -4971,7 +4948,7 @@ def tests(t: Tests) {
 
     g.test('Not passing enough arguments') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('foo(10)')
       let node = body.children[0] as Send
       let int_type = type_checker.builtins.integer_type
@@ -4990,7 +4967,7 @@ def tests(t: Tests) {
 
     g.test('Passing too many arguments') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('foo(10)')
       let node = body.children[0] as Send
       let int_type = type_checker.builtins.integer_type
@@ -5006,7 +4983,7 @@ def tests(t: Tests) {
 
     g.test('Passing the correct number of arguments') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('foo(10)')
       let node = body.children[0] as Send
       let int_type = type_checker.builtins.integer_type
@@ -5024,7 +5001,7 @@ def tests(t: Tests) {
 
     g.test('Passing a keyword argument when no arguments are expected') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('foo(foo: 10)')
       let node = body.children[0] as Send
       let int_type = type_checker.builtins.integer_type
@@ -5040,7 +5017,7 @@ def tests(t: Tests) {
 
     g.test('Passing an undefined keyword argument') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('foo(foo: 10)')
       let node = body.children[0] as Send
       let int_type = type_checker.builtins.integer_type
@@ -5058,7 +5035,7 @@ def tests(t: Tests) {
 
     g.test('Passing duplicate keyword arguments') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('foo(a: 10, a: 20)')
       let node = body.children[0] as Send
       let int_type = type_checker.builtins.integer_type
@@ -5077,7 +5054,7 @@ def tests(t: Tests) {
 
     g.test('Passing duplicate undefined keyword arguments') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('foo(b: 10, b: 20)')
       let node = body.children[0] as Send
       let int_type = type_checker.builtins.integer_type
@@ -5099,7 +5076,7 @@ def tests(t: Tests) {
 
     g.test('Passing a keyword argument and leaving out a required argument') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('foo(10, c: 20)')
       let node = body.children[0] as Send
       let int_type = type_checker.builtins.integer_type
@@ -5119,7 +5096,7 @@ def tests(t: Tests) {
 
     g.test('Passing a valid keyword argument') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('foo(a: 10)')
       let node = body.children[0] as Send
       let int_type = type_checker.builtins.integer_type
@@ -5137,7 +5114,7 @@ def tests(t: Tests) {
 
     g.test('Not passing an optional argument') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('foo')
       let node = body.children[0] as Send
       let int_type = type_checker.builtins.integer_type
@@ -5155,7 +5132,7 @@ def tests(t: Tests) {
 
     g.test('Passing an optional argument') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('foo(10)')
       let node = body.children[0] as Send
       let int_type = type_checker.builtins.integer_type
@@ -5173,7 +5150,7 @@ def tests(t: Tests) {
 
     g.test('Passing one optional argument when two are defined') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('foo(10)')
       let node = body.children[0] as Send
       let int_type = type_checker.builtins.integer_type
@@ -5192,7 +5169,7 @@ def tests(t: Tests) {
 
     g.test('Passing an optional argument as a keyword argument') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('foo(a: 10)')
       let node = body.children[0] as Send
       let int_type = type_checker.builtins.integer_type
@@ -5210,7 +5187,7 @@ def tests(t: Tests) {
 
     g.test('Passing an optional keyword argument with a missing required argument') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('foo(b: 10)')
       let node = body.children[0] as Send
       let int_type = type_checker.builtins.integer_type
@@ -5229,7 +5206,7 @@ def tests(t: Tests) {
 
     g.test('Passing two required out of order keyword arguments') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('foo(a: 10, c: 10)')
       let node = body.children[0] as Send
       let int_type = type_checker.builtins.integer_type
@@ -5249,7 +5226,7 @@ def tests(t: Tests) {
 
     g.test('Passing too many undefined keyword arguments') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('foo(a: 10, b: 10)')
       let node = body.children[0] as Send
       let int_type = type_checker.builtins.integer_type
@@ -5265,7 +5242,7 @@ def tests(t: Tests) {
 
     g.test('Passing an argument of the wrong type') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('foo(10.5)')
       let node = body.children[0] as Send
       let int_type = type_checker.builtins.integer_type
@@ -5283,7 +5260,7 @@ def tests(t: Tests) {
 
     g.test('Passing a keyword argument of the wrong type') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('foo(a: 10.5)')
       let node = body.children[0] as Send
       let int_type = type_checker.builtins.integer_type
@@ -5301,7 +5278,7 @@ def tests(t: Tests) {
 
     g.test('Passing too many arguments to a rest argument') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('foo(10, 20, 30)')
       let node = body.children[0] as Send
       let int_type = type_checker.builtins.integer_type
@@ -5318,7 +5295,7 @@ def tests(t: Tests) {
 
     g.test('Passing too many incorrectly typed arguments to a rest argument') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('foo(10.5, 20.5, 30.5)')
       let node = body.children[0] as Send
       let int_type = type_checker.builtins.integer_type
@@ -5335,7 +5312,7 @@ def tests(t: Tests) {
 
     g.test('Passing a keyword argument to a rest argument') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('foo(a: 10)')
       let node = body.children[0] as Send
       let int_type = type_checker.builtins.integer_type
@@ -5353,7 +5330,7 @@ def tests(t: Tests) {
 
     g.test('Passing a keyword argument with an incorrect type to a rest argument') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('foo(a: 10.5)')
       let node = body.children[0] as Send
       let int_type = type_checker.builtins.integer_type
@@ -5371,7 +5348,7 @@ def tests(t: Tests) {
 
     g.test('Assigning a method type parameter using a positional argument') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('foo(10)')
       let node = body.children[0] as Send
       let int_type = type_checker.builtins.integer_type
@@ -5390,7 +5367,7 @@ def tests(t: Tests) {
 
     g.test('Assigning a method type parameter using a keyword argument') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('foo(a: 10)')
       let node = body.children[0] as Send
       let int_type = type_checker.builtins.integer_type
@@ -5409,7 +5386,7 @@ def tests(t: Tests) {
 
     g.test('Assigning a receiver type parameter using a positional argument') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('rec.push(10)')
       let node = body.children[0] as Send
       let int_type = type_checker.builtins.integer_type
@@ -5442,7 +5419,7 @@ def tests(t: Tests) {
 
     g.test('Assigning a receiver type parameter using a keyword argument') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('rec.push(val: 10)')
       let node = body.children[0] as Send
       let int_type = type_checker.builtins.integer_type
@@ -5475,7 +5452,7 @@ def tests(t: Tests) {
 
     g.test('Returning a generic type containing a method type parameter') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('foo(10)')
       let node = body.children[0] as Send
       let int_type = type_checker.builtins.integer_type
@@ -5510,7 +5487,7 @@ def tests(t: Tests) {
 
     g.test('Returning a Self type') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('self.foo')
       let node = body.children[0] as Send
       let foo = MethodType.new(name: 'foo', layout: BlockLayout.new(SelfType.new))
@@ -5524,7 +5501,7 @@ def tests(t: Tests) {
 
     g.test('Returning a generic type containing a Self type') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('self.foo')
       let node = body.children[0] as Send
       let ary_type = type_checker.builtins.array_type
@@ -5549,7 +5526,7 @@ def tests(t: Tests) {
 
     g.test('Method type parameters are not assigned in the receiver type') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('rec.push(10, 20)')
       let node = body.children[0] as Send
       let int_type = type_checker.builtins.integer_type
@@ -5586,7 +5563,7 @@ def tests(t: Tests) {
 
     g.test('Assigning a method type parameter using a closure') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let builtins = type_checker.builtins
       let body = parse('foo { 10 }')
       let node = body.children[0] as Send
@@ -5606,7 +5583,7 @@ def tests(t: Tests) {
 
     g.test('Assigning a method type parameter using a lambda') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let builtins = type_checker.builtins
       let body = parse('foo fn { 10 }')
       let node = body.children[0] as Send
@@ -5626,7 +5603,7 @@ def tests(t: Tests) {
 
     g.test('Assigning a method type parameter using an object') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let int_type = type_checker.builtins.integer_type
       let body = parse('foo(a)')
       let node = body.children[0] as Send
@@ -5658,7 +5635,7 @@ def tests(t: Tests) {
 
     g.test('Assigning a method type parameter using a trait') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let int_type = type_checker.builtins.integer_type
       let body = parse('foo(a)')
       let node = body.children[0] as Send
@@ -5693,7 +5670,7 @@ def tests(t: Tests) {
 
     g.test('Sending an identifier message of which the error type is Never') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let int_type = type_checker.builtins.integer_type
       let body = parse('foo')
       let node = body.children[0]
@@ -5713,7 +5690,7 @@ def tests(t: Tests) {
 
     g.test('Sending a message of which the error type is Never') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let int_type = type_checker.builtins.integer_type
       let body = parse('foo()')
       let node = body.children[0]
@@ -5733,7 +5710,7 @@ def tests(t: Tests) {
 
     g.test('Sending a message defined in the Object trait while in a trait instance') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('trait A { def foo { bar } }')
 
       let bootstrap = ModuleType.new(BOOTSTRAP_MODULE)
@@ -5750,7 +5727,7 @@ def tests(t: Tests) {
 
     g.test('Sending a message to a type parameter that responds to the message') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let str_type = type_checker.builtins.string_type
       let to_string_trait = TraitType.new('ToString')
       let to_string = MethodType
@@ -5775,7 +5752,7 @@ def tests(t: Tests) {
 
     g.test('Sending an undefined message to a type parameter') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let param = TypeParameterType.new('T')
       let body = parse('a.test')
       let node = body.children[0]
@@ -5791,7 +5768,7 @@ def tests(t: Tests) {
   t.group('Type-checking sending messages with method bounds') do (g) {
     g.test('Sending a message that is not available') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('rec.push(10)')
       let node = body.children[0] as Send
       let bla_type = TraitType.new('Bla')
@@ -5827,7 +5804,7 @@ def tests(t: Tests) {
 
     g.test('Sending a message that is available') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('rec.push(10)')
       let node = body.children[0] as Send
       let bla_type = TraitType.new('Bla')
@@ -5869,7 +5846,7 @@ def tests(t: Tests) {
   t.group('Type-checking sending "call" to blocks') do (g) {
     g.test('Sending the "call" message to a closure') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('foo.call(10)')
       let node = body.children[0] as Send
       let int_type = type_checker.builtins.integer_type
@@ -5886,7 +5863,7 @@ def tests(t: Tests) {
 
     g.test('Sending the "call" message to a lambda') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('foo.call(10)')
       let node = body.children[0] as Send
       let int_type = type_checker.builtins.integer_type
@@ -5903,7 +5880,7 @@ def tests(t: Tests) {
 
     g.test('Sending the "call" message to a method') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('foo.call(10)')
       let node = body.children[0] as Send
       let int_type = type_checker.builtins.integer_type
@@ -5921,7 +5898,7 @@ def tests(t: Tests) {
 
     g.test('Sending the "call" message when it may throw an unhandled error') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('foo.call')
       let int_type = type_checker.builtins.integer_type
       let foo = ClosureType.new(
@@ -5941,7 +5918,7 @@ def tests(t: Tests) {
   t.group('Type-checking imported methods') do (g) {
     g.test('Calling an imported method without arguments') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let int_type = type_checker.builtins.integer_type
       let body = parse('foo')
       let node = body.children[0]
@@ -5957,7 +5934,7 @@ def tests(t: Tests) {
 
     g.test('Calling an imported method with arguments') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let int_type = type_checker.builtins.integer_type
       let body = parse('foo(10)')
       let node = body.children[0]
@@ -5973,401 +5950,10 @@ def tests(t: Tests) {
     }
   }
 
-  t.group('Type-checking the `local try` keyword') do (g) {
-    g.test('Re-throwing outside of a block using an identifier') {
-      let module = new_module('foo')
-      let type_checker = TypeChecker.new
-      let body = parse('local try foo')
-      let node = body.children[0] as Try
-      let ident = node.expression as Identifier
-      let int_type = type_checker.builtins.integer_type
-      let float_type = type_checker.builtins.float_type
-      let foo = MethodType.new(
-        name: 'foo',
-        layout: BlockLayout.new(
-          return_type: int_type.new_instance,
-          throw_type: Option.some(float_type.new_instance)
-        )
-      )
-
-      module.define_method(name: foo.name, type: foo)
-
-      type_checker.check_module(module: module, ast: body)
-
-      try assert_true(type_checker.diagnostics.errors?)
-      try assert_object_instance(node.resolved_throw_type.get, float_type)
-      try assert_object_instance(node.resolved_type.get, int_type)
-      try assert_object_instance(ident.resolved_throw_type.get, float_type)
-    }
-
-    g.test('Re-throwing outside of a block using a message send') {
-      let module = new_module('foo')
-      let type_checker = TypeChecker.new
-      let body = parse('local try foo()')
-      let node = body.children[0] as Try
-      let send = node.expression as Send
-      let int_type = type_checker.builtins.integer_type
-      let float_type = type_checker.builtins.float_type
-      let foo = MethodType.new(
-        name: 'foo',
-        layout: BlockLayout.new(
-          return_type: int_type.new_instance,
-          throw_type: Option.some(float_type.new_instance)
-        )
-      )
-
-      module.define_method(name: foo.name, type: foo)
-
-      type_checker.check_module(module: module, ast: body)
-
-      try assert_true(type_checker.diagnostics.errors?)
-      try assert_object_instance(node.resolved_type.get, int_type)
-      try assert_object_instance(send.resolved_throw_type.get, float_type)
-    }
-
-    g.test("Re-throwing an error with an expression that doesn't throw") {
-      let module = new_module('foo')
-      let type_checker = TypeChecker.new
-      let body = parse('{ local try 10 }')
-      let block = body.children[0] as BasicClosure
-      let node = block.body.children[0] as Try
-
-      type_checker.check_module(module: module, ast: body)
-
-      try assert_true(type_checker.diagnostics.errors?)
-      try assert_true(node.resolved_throw_type.get.error?)
-      try assert_object_instance(
-        node.resolved_type.get,
-        type_checker.builtins.integer_type
-      )
-    }
-
-    g.test("Handling an error with an expression that doesn't throw") {
-      let module = new_module('foo')
-      let type_checker = TypeChecker.new
-      let body = parse('{ local try 10 else 20 }')
-      let block = body.children[0] as BasicClosure
-      let node = block.body.children[0] as Try
-
-      type_checker.check_module(module: module, ast: body)
-
-      try assert_true(type_checker.diagnostics.errors?)
-      try assert_object_instance(
-        node.resolved_type.get,
-        type_checker.builtins.integer_type
-      )
-    }
-
-    g.test('Re-throwing an incompatible error type') {
-      let module = new_module('foo')
-      let type_checker = TypeChecker.new
-      let body = parse('do !! Integer { local try foo }')
-      let block = body.children[0] as Closure
-      let node = block.body.children[0] as Try
-      let int_type = type_checker.builtins.integer_type
-      let float_type = type_checker.builtins.float_type
-      let foo = MethodType.new(
-        name: 'foo',
-        layout: BlockLayout.new(
-          return_type: int_type.new_instance,
-          throw_type: Option.some(float_type.new_instance)
-        )
-      )
-
-      module.define_method(name: foo.name, type: foo)
-      module.define_constant(name: int_type.name, type: int_type)
-
-      type_checker.check_module(module: module, ast: body)
-
-      try assert_true(type_checker.diagnostics.errors?)
-      try assert_object_instance(node.resolved_type.get, int_type)
-    }
-
-    g.test('Handling an error thrown by a method') {
-      let module = new_module('foo')
-      let type_checker = TypeChecker.new
-      let body = parse('{ local try foo else 10 }')
-      let block = body.children[0] as BasicClosure
-      let node = block.body.children[0] as Try
-
-      let int_type = type_checker.builtins.integer_type
-      let float_type = type_checker.builtins.float_type
-      let foo = MethodType.new(
-        name: 'foo',
-        layout: BlockLayout.new(
-          return_type: int_type.new_instance,
-          throw_type: Option.some(float_type.new_instance)
-        )
-      )
-
-      module.define_method(name: foo.name, type: foo)
-      module.define_constant(name: int_type.name, type: int_type)
-
-      type_checker.check_module(module: module, ast: body)
-
-      try assert_false(type_checker.diagnostics.errors?)
-      try assert_object_instance(node.resolved_type.get, int_type)
-    }
-
-    g.test('Re-throwing an error in a basic closure that has no explicit error type') {
-      let module = new_module('foo')
-      let type_checker = TypeChecker.new
-      let body = parse('{ local try foo }')
-      let block = body.children[0] as BasicClosure
-      let node = block.body.children[0] as Try
-
-      let int_type = type_checker.builtins.integer_type
-      let foo = MethodType.new(
-        name: 'foo',
-        layout: BlockLayout.new(
-          return_type: int_type.new_instance,
-          throw_type: Option.some(int_type.new_instance)
-        )
-      )
-
-      module.define_method(name: foo.name, type: foo)
-
-      type_checker.check_module(module: module, ast: body)
-
-      try assert_false(type_checker.diagnostics.errors?)
-      try assert_object_instance(node.resolved_type.get, int_type)
-      try assert_object_instance(block.resolved_type.get.throw_type.get, int_type)
-    }
-
-    g.test('Re-throwing an error in a closure that has no explicit error type') {
-      let module = new_module('foo')
-      let type_checker = TypeChecker.new
-      let body = parse('do { local try foo }')
-      let block = body.children[0] as Closure
-      let node = block.body.children[0] as Try
-
-      let int_type = type_checker.builtins.integer_type
-      let foo = MethodType.new(
-        name: 'foo',
-        layout: BlockLayout.new(
-          return_type: int_type.new_instance,
-          throw_type: Option.some(int_type.new_instance)
-        )
-      )
-
-      module.define_method(name: foo.name, type: foo)
-
-      type_checker.check_module(module: module, ast: body)
-
-      try assert_false(type_checker.diagnostics.errors?)
-      try assert_object_instance(node.resolved_type.get, int_type)
-      try assert_object_instance(block.resolved_type.get.throw_type.get, int_type)
-    }
-
-    g.test('Re-throwing an error in a lambda using `local try` that has no explicit error type') {
-      let module = new_module('foo')
-      let type_checker = TypeChecker.new
-      let body = parse('fn { local try foo }')
-      let block = body.children[0] as Lambda
-      let node = block.body.children[0] as Try
-
-      let int_type = type_checker.builtins.integer_type
-      let foo = MethodType.new(
-        name: 'foo',
-        layout: BlockLayout.new(
-          return_type: int_type.new_instance,
-          throw_type: Option.some(int_type.new_instance)
-        )
-      )
-
-      module.define_method(name: foo.name, type: foo)
-
-      type_checker.check_module(module: module, ast: body)
-
-      try assert_false(type_checker.diagnostics.errors?)
-      try assert_object_instance(node.resolved_type.get, int_type)
-      try assert_object_instance(block.resolved_type.get.throw_type.get, int_type)
-    }
-
-    g.test('Re-throwing an error in a lambda that has no explicit error type') {
-      let module = new_module('foo')
-      let type_checker = TypeChecker.new
-      let body = parse('fn { try foo }')
-      let block = body.children[0] as Lambda
-      let node = block.body.children[0] as Try
-
-      let int_type = type_checker.builtins.integer_type
-      let foo = MethodType.new(
-        name: 'foo',
-        layout: BlockLayout.new(
-          return_type: int_type.new_instance,
-          throw_type: Option.some(int_type.new_instance)
-        )
-      )
-
-      module.define_method(name: foo.name, type: foo)
-
-      type_checker.check_module(module: module, ast: body)
-
-      try assert_false(type_checker.diagnostics.errors?)
-      try assert_object_instance(node.resolved_type.get, int_type)
-      try assert_object_instance(block.resolved_type.get.throw_type.get, int_type)
-    }
-
-    g.test('Handling an error with an incompatible else type') {
-      let module = new_module('foo')
-      let type_checker = TypeChecker.new
-      let body = parse('{ local try foo else 10.5 }')
-      let block = body.children[0] as BasicClosure
-      let node = block.body.children[0] as Try
-
-      let int_type = type_checker.builtins.integer_type
-      let float_type = type_checker.builtins.float_type
-      let foo = MethodType.new(
-        name: 'foo',
-        layout: BlockLayout.new(
-          return_type: int_type.new_instance,
-          throw_type: Option.some(float_type.new_instance)
-        )
-      )
-
-      module.define_method(name: foo.name, type: foo)
-      module.define_constant(name: int_type.name, type: int_type)
-
-      type_checker.check_module(module: module, ast: body)
-
-      try assert_true(type_checker.diagnostics.errors?)
-      try assert_true(node.resolved_type.get.error?)
-    }
-
-    g.test('Defining a local variable in the else body') {
-      let module = new_module('foo')
-      let type_checker = TypeChecker.new
-      let body = parse('{ local try foo else { let a = 10 } }')
-      let block = body.children[0] as BasicClosure
-      let node = block.body.children[0] as Try
-
-      let int_type = type_checker.builtins.integer_type
-      let float_type = type_checker.builtins.float_type
-      let foo = MethodType.new(
-        name: 'foo',
-        layout: BlockLayout.new(
-          return_type: int_type.new_instance,
-          throw_type: Option.some(float_type.new_instance)
-        )
-      )
-
-      module.define_method(name: foo.name, type: foo)
-
-      type_checker.check_module(module: module, ast: body)
-
-      let else_vars = node.else_body.variable_scope
-
-      try assert_true(body.variable_scope.lookup('a').none?)
-      try assert_true(block.body.variable_scope.lookup('a').none?)
-
-      try assert_object_instance(else_vars.lookup('a').get.type, int_type)
-      try assert_true(else_vars.parent.get.same_object?(block.body.variable_scope))
-    }
-
-    g.test('Defining a variable to store the thrown error in') {
-      let module = new_module('foo')
-      let type_checker = TypeChecker.new
-      let body = parse('{ local try foo else (error) error }')
-      let block = body.children[0] as BasicClosure
-      let node = block.body.children[0] as Try
-
-      let int_type = type_checker.builtins.integer_type
-      let foo = MethodType.new(
-        name: 'foo',
-        layout: BlockLayout.new(
-          return_type: int_type.new_instance,
-          throw_type: Option.some(int_type.new_instance)
-        )
-      )
-
-      module.define_method(name: foo.name, type: foo)
-
-      type_checker.check_module(module: module, ast: body)
-
-      try assert_object_instance(
-        node.else_body.variable_scope.lookup('error').get.type,
-        int_type
-      )
-    }
-
-    g.test('Using a method that throws in a closure inside a `local try`') {
-      let module = new_module('foo')
-      let type_checker = TypeChecker.new
-      let body = parse('{ local try foo({ bar }) }')
-      let int_type = type_checker.builtins.integer_type
-      let foo = MethodType.new(
-        name: 'foo',
-        layout: BlockLayout.new(
-          return_type: int_type.new_instance,
-          throw_type: Option.some(int_type.new_instance)
-        )
-      )
-
-      let val_type = ClosureType.new(
-        BlockLayout.new(
-          return_type: int_type.new_instance,
-          throw_type: Option.some(int_type.new_instance)
-        )
-      )
-
-      foo.define_required_argument(name: 'val', type: val_type)
-
-      let bar = MethodType.new(
-        name: 'bar',
-        layout: BlockLayout.new(
-          return_type: int_type.new_instance,
-          throw_type: Option.some(int_type.new_instance)
-        )
-      )
-
-      module.define_method(name: foo.name, type: foo)
-      module.define_method(name: bar.name, type: bar)
-
-      type_checker.check_module(module: module, ast: body)
-
-      try assert_true(type_checker.diagnostics.errors?)
-      try assert_equal(type_checker.diagnostics.length, 1)
-    }
-
-    g.test('Passing a called closure that throws as an argument in a `local try`') {
-      let module = new_module('foo')
-      let type_checker = TypeChecker.new
-      let body = parse('{ local try foo({ local try bar }.call) }')
-      let int_type = type_checker.builtins.integer_type
-      let float_type = type_checker.builtins.float_type
-      let foo = MethodType.new(
-        name: 'foo',
-        layout: BlockLayout.new(
-          return_type: int_type.new_instance,
-          throw_type: Option.some(int_type.new_instance)
-        )
-      )
-
-      foo.define_required_argument(name: 'val', type: int_type.new_instance)
-
-      let bar = MethodType.new(
-        name: 'bar',
-        layout: BlockLayout.new(
-          return_type: int_type.new_instance,
-          throw_type: Option.some(float_type.new_instance)
-        )
-      )
-
-      module.define_method(name: foo.name, type: foo)
-      module.define_method(name: bar.name, type: bar)
-
-      type_checker.check_module(module: module, ast: body)
-
-      try assert_true(type_checker.diagnostics.errors?)
-      try assert_equal(type_checker.diagnostics.length, 1)
-    }
-  }
-
   t.group('Type-checking the `try` keyword') do (g) {
     g.test('Re-throwing outside of a block using an identifier') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('try foo')
       let node = body.children[0] as Try
       let ident = node.expression as Identifier
@@ -6393,7 +5979,7 @@ def tests(t: Tests) {
 
     g.test('Re-throwing outside of a block using a message send') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('try foo()')
       let node = body.children[0] as Try
       let send = node.expression as Send
@@ -6418,7 +6004,7 @@ def tests(t: Tests) {
 
     g.test("Re-throwing an error with an expression that doesn't throw") {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('def bar { try 10 }')
       let block = body.children[0] as DefineMethod
       let node = block.body.children[0] as Try
@@ -6435,7 +6021,7 @@ def tests(t: Tests) {
 
     g.test("Handling an error with an expression that doesn't throw") {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('def bar { try 10 else 20 }')
       let block = body.children[0] as DefineMethod
       let node = block.body.children[0] as Try
@@ -6451,7 +6037,7 @@ def tests(t: Tests) {
 
     g.test('Re-throwing an error in a method that has no explicit error type') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('def bar { try foo }')
       let block = body.children[0] as DefineMethod
       let node = block.body.children[0] as Try
@@ -6474,8 +6060,8 @@ def tests(t: Tests) {
 
     g.test('Re-throwing an incompatible error type') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
-      let body = parse('def bar !! Integer { try foo }')
+      let type_checker = new_type_checker
+      let body = parse('def bar !! Int { try foo }')
       let block = body.children[0] as DefineMethod
       let node = block.body.children[0] as Try
       let int_type = type_checker.builtins.integer_type
@@ -6499,7 +6085,7 @@ def tests(t: Tests) {
 
     g.test('Handling an error thrown by a method') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('def bar { try foo else 10 }')
       let block = body.children[0] as DefineMethod
       let node = block.body.children[0] as Try
@@ -6525,7 +6111,7 @@ def tests(t: Tests) {
 
     g.test('Handling an error with an incompatible else type') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('def bar { try foo else 10.5 }')
       let block = body.children[0] as DefineMethod
       let node = block.body.children[0] as Try
@@ -6551,7 +6137,7 @@ def tests(t: Tests) {
 
     g.test('Defining a local variable in the else body') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('def bar { try foo else { let a = 10 } }')
       let block = body.children[0] as DefineMethod
       let node = block.body.children[0] as Try
@@ -6581,7 +6167,7 @@ def tests(t: Tests) {
 
     g.test('Defining a variable to store the thrown error in') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('def bar { try foo else (error) error }')
       let block = body.children[0] as DefineMethod
       let node = block.body.children[0] as Try
@@ -6607,8 +6193,8 @@ def tests(t: Tests) {
 
     g.test('Using a method that throws in a closure inside a `try`') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
-      let body = parse('def bla !! Integer { try foo({ bar }) }')
+      let type_checker = new_type_checker
+      let body = parse('def bla !! Int { try foo({ bar }) }')
       let int_type = type_checker.builtins.integer_type
       let foo = MethodType.new(
         name: 'foo',
@@ -6647,8 +6233,8 @@ def tests(t: Tests) {
 
     g.test('Passing a called closure that throws as an argument in a `try`') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
-      let body = parse('def bla !! Integer { try foo({ local try bar }.call) }')
+      let type_checker = new_type_checker
+      let body = parse('def bla !! Int { try foo({ try bar }.call) }')
       let int_type = type_checker.builtins.integer_type
       let float_type = type_checker.builtins.float_type
       let foo = MethodType.new(
@@ -6683,7 +6269,7 @@ def tests(t: Tests) {
   t.group('Type-checking the `try!` keyword') do (g) {
     g.test("Handling an error with an expression that doesn't throw") {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('try! 10')
       let node = body.children[0] as TryPanic
 
@@ -6699,7 +6285,7 @@ def tests(t: Tests) {
 
     g.test('Handling an error with an expression that throws') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('try! foo')
       let node = body.children[0] as TryPanic
       let int_type = type_checker.builtins.integer_type
@@ -6724,7 +6310,7 @@ def tests(t: Tests) {
   t.group('Type-checking an unknown instruction') do (g) {
     g.test('Unknown instructions produce a compiler error') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let int_type = type_checker.builtins.integer_type
       let body = parse('_INKOC.foo')
       let node = body.children[0]
@@ -6740,7 +6326,7 @@ def tests(t: Tests) {
   t.group('Type-checking VM instructions') do (g) {
     g.test('VM instructions can only be used in the standard library') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.get_attribute')
       let node = body.children[0]
 
@@ -6752,7 +6338,7 @@ def tests(t: Tests) {
 
     g.test('Using get_true()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.get_true')
       let node = body.children[0]
 
@@ -6767,7 +6353,7 @@ def tests(t: Tests) {
 
     g.test('Using get_false()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.get_false')
       let node = body.children[0]
 
@@ -6782,7 +6368,7 @@ def tests(t: Tests) {
 
     g.test('Using set_attribute()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.set_attribute')
       let node = body.children[0]
 
@@ -6794,7 +6380,7 @@ def tests(t: Tests) {
 
     g.test('Using get_attribute()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let int_type = type_checker.builtins.integer_type
       let body = parse('_INKOC.get_attribute(a, "foo")')
       let node = body.children[0]
@@ -6810,7 +6396,7 @@ def tests(t: Tests) {
 
     g.test('Using object_equals()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.object_equals(10, 10)')
       let node = body.children[0]
 
@@ -6825,7 +6411,7 @@ def tests(t: Tests) {
 
     g.test('Using copy_blocks()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.copy_blocks(foo, bar)')
       let node = body.children[0]
       let foo_type = ClassType.new('Foo')
@@ -6841,7 +6427,7 @@ def tests(t: Tests) {
 
     g.test('Using integer_add()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.integer_add(10, 10)')
       let node = body.children[0]
 
@@ -6856,7 +6442,7 @@ def tests(t: Tests) {
 
     g.test('Using integer_div()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.integer_div(10, 10)')
       let node = body.children[0]
 
@@ -6871,7 +6457,7 @@ def tests(t: Tests) {
 
     g.test('Using integer_mul()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.integer_mul(10, 10)')
       let node = body.children[0]
 
@@ -6886,7 +6472,7 @@ def tests(t: Tests) {
 
     g.test('Using integer_sub()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.integer_sub(10, 10)')
       let node = body.children[0]
 
@@ -6901,7 +6487,7 @@ def tests(t: Tests) {
 
     g.test('Using integer_mod()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.integer_mod(10, 10)')
       let node = body.children[0]
 
@@ -6916,7 +6502,7 @@ def tests(t: Tests) {
 
     g.test('Using integer_bitwise_and()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.integer_bitwise_and(10, 10)')
       let node = body.children[0]
 
@@ -6931,7 +6517,7 @@ def tests(t: Tests) {
 
     g.test('Using integer_bitwise_or()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.integer_bitwise_or(10, 10)')
       let node = body.children[0]
 
@@ -6946,7 +6532,7 @@ def tests(t: Tests) {
 
     g.test('Using integer_bitwise_xor()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.integer_bitwise_xor(10, 10)')
       let node = body.children[0]
 
@@ -6961,7 +6547,7 @@ def tests(t: Tests) {
 
     g.test('Using integer_shift_left()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.integer_shift_left(10, 10)')
       let node = body.children[0]
 
@@ -6976,7 +6562,7 @@ def tests(t: Tests) {
 
     g.test('Using integer_shift_right()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.integer_shift_right(10, 10)')
       let node = body.children[0]
 
@@ -6991,7 +6577,7 @@ def tests(t: Tests) {
 
     g.test('Using integer_smaller()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.integer_smaller(10, 10)')
       let node = body.children[0]
 
@@ -7006,7 +6592,7 @@ def tests(t: Tests) {
 
     g.test('Using integer_greater()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.integer_greater(10, 10)')
       let node = body.children[0]
 
@@ -7021,7 +6607,7 @@ def tests(t: Tests) {
 
     g.test('Using integer_equals()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.integer_equals(10, 10)')
       let node = body.children[0]
 
@@ -7036,7 +6622,7 @@ def tests(t: Tests) {
 
     g.test('Using integer_greater_or_equal()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.integer_greater_or_equal(10, 10)')
       let node = body.children[0]
 
@@ -7051,7 +6637,7 @@ def tests(t: Tests) {
 
     g.test('Using integer_smaller_or_equal()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.integer_smaller_or_equal(10, 10)')
       let node = body.children[0]
 
@@ -7066,7 +6652,7 @@ def tests(t: Tests) {
 
     g.test('Using float_add()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.float_add(10.5, 10.5)')
       let node = body.children[0]
 
@@ -7081,7 +6667,7 @@ def tests(t: Tests) {
 
     g.test('Using float_div()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.float_div(10.5, 10.5)')
       let node = body.children[0]
 
@@ -7096,7 +6682,7 @@ def tests(t: Tests) {
 
     g.test('Using float_mul()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.float_mul(10.5, 10.5)')
       let node = body.children[0]
 
@@ -7111,7 +6697,7 @@ def tests(t: Tests) {
 
     g.test('Using float_sub()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.float_sub(10.5, 10.5)')
       let node = body.children[0]
 
@@ -7126,7 +6712,7 @@ def tests(t: Tests) {
 
     g.test('Using float_mod()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.float_mod(10.5, 10.5)')
       let node = body.children[0]
 
@@ -7141,7 +6727,7 @@ def tests(t: Tests) {
 
     g.test('Using float_smaller()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.float_smaller(10.5, 10.5)')
       let node = body.children[0]
 
@@ -7156,7 +6742,7 @@ def tests(t: Tests) {
 
     g.test('Using float_greater()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.float_greater(10.5, 10.5)')
       let node = body.children[0]
 
@@ -7171,7 +6757,7 @@ def tests(t: Tests) {
 
     g.test('Using float_equals()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.float_equals(10.5, 10.5)')
       let node = body.children[0]
 
@@ -7186,7 +6772,7 @@ def tests(t: Tests) {
 
     g.test('Using float_greater_or_equal()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.float_greater_or_equal(10.5, 10.5)')
       let node = body.children[0]
 
@@ -7201,7 +6787,7 @@ def tests(t: Tests) {
 
     g.test('Using float_smaller_or_equal()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.float_smaller_or_equal(10.5, 10.5)')
       let node = body.children[0]
 
@@ -7216,7 +6802,7 @@ def tests(t: Tests) {
 
     g.test('Using get_nil()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.get_nil')
       let node = body.children[0]
 
@@ -7231,7 +6817,7 @@ def tests(t: Tests) {
 
     g.test('Using get_nil_prototype()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.get_nil_prototype')
       let node = body.children[0]
 
@@ -7243,7 +6829,7 @@ def tests(t: Tests) {
 
     g.test('Using get_module_prototype()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.get_module_prototype')
       let node = body.children[0]
 
@@ -7255,7 +6841,7 @@ def tests(t: Tests) {
 
     g.test('Using get_string_prototype()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.get_string_prototype')
       let node = body.children[0]
 
@@ -7267,7 +6853,7 @@ def tests(t: Tests) {
 
     g.test('Using get_integer_prototype()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.get_integer_prototype')
       let node = body.children[0]
 
@@ -7279,7 +6865,7 @@ def tests(t: Tests) {
 
     g.test('Using get_float_prototype()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.get_float_prototype')
       let node = body.children[0]
 
@@ -7291,7 +6877,7 @@ def tests(t: Tests) {
 
     g.test('Using get_trait_prototype()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.get_trait_prototype')
       let node = body.children[0]
 
@@ -7303,7 +6889,7 @@ def tests(t: Tests) {
 
     g.test('Using get_hasher_prototype()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.get_hasher_prototype')
       let node = body.children[0]
 
@@ -7315,7 +6901,7 @@ def tests(t: Tests) {
 
     g.test('Using get_array_prototype()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.get_array_prototype')
       let node = body.children[0]
 
@@ -7327,7 +6913,7 @@ def tests(t: Tests) {
 
     g.test('Using get_block_prototype()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.get_block_prototype')
       let node = body.children[0]
 
@@ -7339,7 +6925,7 @@ def tests(t: Tests) {
 
     g.test('Using run_block()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.run_block(block)')
       let node = body.children[0]
       let block = ClosureType
@@ -7354,7 +6940,7 @@ def tests(t: Tests) {
 
     g.test('Using array_length()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.array_length(array)')
       let node = body.children[0]
       let array = type_checker.builtins.array_type.new_instance
@@ -7371,7 +6957,7 @@ def tests(t: Tests) {
 
     g.test('Using array_at()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.array_at')
       let node = body.children[0]
 
@@ -7383,7 +6969,7 @@ def tests(t: Tests) {
 
     g.test('Using array_set()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.array_set')
       let node = body.children[0]
 
@@ -7395,7 +6981,7 @@ def tests(t: Tests) {
 
     g.test('Using array_remove()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.array_remove')
       let node = body.children[0]
 
@@ -7407,7 +6993,7 @@ def tests(t: Tests) {
 
     g.test('Using string_size()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.string_size("foo")')
       let node = body.children[0]
 
@@ -7422,7 +7008,7 @@ def tests(t: Tests) {
 
     g.test('Using string_length()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.string_length("foo")')
       let node = body.children[0]
 
@@ -7437,7 +7023,7 @@ def tests(t: Tests) {
 
     g.test('Using string_equals()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.string_equals("foo", "foo")')
       let node = body.children[0]
 
@@ -7452,7 +7038,7 @@ def tests(t: Tests) {
 
     g.test('Using string_concat()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.string_concat("foo", "foo")')
       let node = body.children[0]
 
@@ -7467,7 +7053,7 @@ def tests(t: Tests) {
 
     g.test('Using string_byte()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.string_byte("foo", 0)')
       let node = body.children[0]
 
@@ -7482,7 +7068,7 @@ def tests(t: Tests) {
 
     g.test('Using process_spawn()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.process_spawn({})')
       let node = body.children[0]
       let proc_type = type_checker.builtins.process_type
@@ -7495,7 +7081,7 @@ def tests(t: Tests) {
 
     g.test('Using process_send_message()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.process_send_message')
       let node = body.children[0]
 
@@ -7507,7 +7093,7 @@ def tests(t: Tests) {
 
     g.test('Using process_receive_message()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.process_receive_message')
       let node = body.children[0]
 
@@ -7519,7 +7105,7 @@ def tests(t: Tests) {
 
     g.test('Using process_current()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.process_current')
       let node = body.children[0]
       let proc_type = type_checker.builtins.process_type
@@ -7532,7 +7118,7 @@ def tests(t: Tests) {
 
     g.test('Using process_suspend_current()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.process_suspend_current')
       let node = body.children[0]
 
@@ -7544,7 +7130,7 @@ def tests(t: Tests) {
 
     g.test('Using process_terminate_current()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.process_terminate_current')
       let node = body.children[0]
 
@@ -7556,7 +7142,7 @@ def tests(t: Tests) {
 
     g.test('Using get_prototype()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.get_prototype')
       let node = body.children[0]
 
@@ -7568,7 +7154,7 @@ def tests(t: Tests) {
 
     g.test('Using close()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.close(10)')
       let node = body.children[0]
 
@@ -7580,7 +7166,7 @@ def tests(t: Tests) {
 
     g.test('Using process_set_blocking()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.process_set_blocking')
       let node = body.children[0]
 
@@ -7595,7 +7181,7 @@ def tests(t: Tests) {
 
     g.test('Using process_panic()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.panic("foo")')
       let node = body.children[0]
 
@@ -7607,7 +7193,7 @@ def tests(t: Tests) {
 
     g.test('Using exit()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.exit')
       let node = body.children[0]
 
@@ -7619,7 +7205,7 @@ def tests(t: Tests) {
 
     g.test('Using byte_array_from_array()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.byte_array_from_array')
       let node = body.children[0]
 
@@ -7634,7 +7220,7 @@ def tests(t: Tests) {
 
     g.test('Using byte_array_set()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.byte_array_set')
       let node = body.children[0]
 
@@ -7649,7 +7235,7 @@ def tests(t: Tests) {
 
     g.test('Using byte_array_at()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.byte_array_at')
       let node = body.children[0]
 
@@ -7664,7 +7250,7 @@ def tests(t: Tests) {
 
     g.test('Using byte_array_remove()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.byte_array_remove')
       let node = body.children[0]
 
@@ -7679,7 +7265,7 @@ def tests(t: Tests) {
 
     g.test('Using byte_array_length()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.byte_array_length')
       let node = body.children[0]
 
@@ -7694,7 +7280,7 @@ def tests(t: Tests) {
 
     g.test('Using byte_array_equals()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.byte_array_equals')
       let node = body.children[0]
 
@@ -7709,7 +7295,7 @@ def tests(t: Tests) {
 
     g.test('Using byte_array_to_string()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.byte_array_to_string')
       let node = body.children[0]
 
@@ -7724,7 +7310,7 @@ def tests(t: Tests) {
 
     g.test('Using get_boolean_prototype()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.get_boolean_prototype')
       let node = body.children[0]
 
@@ -7736,7 +7322,7 @@ def tests(t: Tests) {
 
     g.test('Using get_byte_array_prototype()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.get_byte_array_prototype')
       let node = body.children[0]
 
@@ -7751,7 +7337,7 @@ def tests(t: Tests) {
 
     g.test('Using get_ffi_library_prototype()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.get_ffi_library_prototype')
       let node = body.children[0]
 
@@ -7766,7 +7352,7 @@ def tests(t: Tests) {
 
     g.test('Using get_ffi_function_prototype()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.get_ffi_function_prototype')
       let node = body.children[0]
 
@@ -7781,7 +7367,7 @@ def tests(t: Tests) {
 
     g.test('Using get_ffi_pointer_prototype()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.get_ffi_pointer_prototype')
       let node = body.children[0]
 
@@ -7796,7 +7382,7 @@ def tests(t: Tests) {
 
     g.test('Using get_ip_socket_prototype()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.get_ip_socket_prototype')
       let node = body.children[0]
 
@@ -7811,7 +7397,7 @@ def tests(t: Tests) {
 
     g.test('Using get_unix_socket_prototype()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.get_unix_socket_prototype')
       let node = body.children[0]
 
@@ -7826,7 +7412,7 @@ def tests(t: Tests) {
 
     g.test('Using get_process_prototype()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.get_process_prototype')
       let node = body.children[0]
 
@@ -7838,7 +7424,7 @@ def tests(t: Tests) {
 
     g.test('Using get_read_only_file_prototype()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.get_read_only_file_prototype')
       let node = body.children[0]
 
@@ -7853,7 +7439,7 @@ def tests(t: Tests) {
 
     g.test('Using get_write_only_file_prototype()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.get_write_only_file_prototype')
       let node = body.children[0]
 
@@ -7868,7 +7454,7 @@ def tests(t: Tests) {
 
     g.test('Using get_read_write_file_prototype()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.get_read_write_file_prototype')
       let node = body.children[0]
 
@@ -7883,7 +7469,7 @@ def tests(t: Tests) {
 
     g.test('Using generator_prototype()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.get_generator_prototype')
       let node = body.children[0]
 
@@ -7898,7 +7484,7 @@ def tests(t: Tests) {
 
     g.test('Using child_process_prototype()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.get_child_process_prototype')
       let node = body.children[0]
 
@@ -7913,7 +7499,7 @@ def tests(t: Tests) {
 
     g.test('Using set_object_name()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.set_object_name')
       let node = body.children[0]
 
@@ -7928,7 +7514,7 @@ def tests(t: Tests) {
 
     g.test('Using process_add_defer_to_caller()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.process_add_defer_to_caller')
       let node = body.children[0]
 
@@ -7940,7 +7526,7 @@ def tests(t: Tests) {
 
     g.test('Using process_set_pinned()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.process_set_pinned')
       let node = body.children[0]
 
@@ -7955,7 +7541,7 @@ def tests(t: Tests) {
 
     g.test('Using process_identifier()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.process_identifier')
       let node = body.children[0]
 
@@ -7968,24 +7554,9 @@ def tests(t: Tests) {
       )
     }
 
-    g.test('Using if()') {
-      let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
-      let body = parse('_INKOC.if(1, "foo", 20.5)')
-      let node = body.children[0]
-
-      type_checker.check_module(module: module, ast: body)
-
-      try assert_false(type_checker.diagnostics.errors?)
-      try assert_object_instance(
-        node.resolved_type.get,
-        type_checker.builtins.string_type
-      )
-    }
-
     g.test('Using module_load()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.module_load')
       let node = body.children[0]
 
@@ -8000,7 +7571,7 @@ def tests(t: Tests) {
 
     g.test('Using module_get()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.module_get')
       let node = body.children[0]
 
@@ -8014,7 +7585,7 @@ def tests(t: Tests) {
 
     g.test('Using generator_resume()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.generator_resume')
       let node = body.children[0]
 
@@ -8026,7 +7597,7 @@ def tests(t: Tests) {
 
     g.test('Using generator_value()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.generator_value')
       let node = body.children[0]
 
@@ -8038,7 +7609,7 @@ def tests(t: Tests) {
 
     g.test('Using generator_yielded()') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('_INKOC.generator_yielded')
       let node = body.children[0]
 
@@ -8055,7 +7626,7 @@ def tests(t: Tests) {
   t.group('Type-checking object constructors') do (g) {
     g.test('Creating an instance without attributes') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let obj_type = ClassType.new('A')
       let body = parse('A {}')
       let node = body.children[0]
@@ -8069,7 +7640,7 @@ def tests(t: Tests) {
 
     g.test('Creating an instance with attributes') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let obj_type = ClassType.new('A')
       let builtins = type_checker.builtins
       let int_type = builtins.integer_type
@@ -8093,7 +7664,7 @@ def tests(t: Tests) {
 
     g.test('Creating an instance without setting all attributes') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let obj_type = ClassType.new('A')
       let builtins = type_checker.builtins
 
@@ -8115,7 +7686,7 @@ def tests(t: Tests) {
 
     g.test('Creating an instance while setting the same attribute twice') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let obj_type = ClassType.new('A')
       let builtins = type_checker.builtins
 
@@ -8134,7 +7705,7 @@ def tests(t: Tests) {
 
     g.test('Creating an instance while setting an undefined attribute') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let obj_type = ClassType.new('A')
       let body = parse('A { @a = 10 }')
       let node = body.children[0]
@@ -8148,7 +7719,7 @@ def tests(t: Tests) {
 
     g.test('Creating an instance with a generic attribute') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let obj_type = ClassType.new('A')
       let int_type = type_checker.builtins.integer_type
       let param = TypeParameterType.new('T')
@@ -8170,7 +7741,7 @@ def tests(t: Tests) {
 
     g.test('Creating an instance using a Self type in a module method') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let obj_type = ClassType.new('A')
       let body = parse('def foo { Self {} }')
 
@@ -8182,7 +7753,7 @@ def tests(t: Tests) {
 
     g.test('Creating an instance using a Self type in an instance method') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('class A { def foo { Self {} } }')
 
       type_checker.check_module(module: module, ast: body)
@@ -8192,7 +7763,7 @@ def tests(t: Tests) {
 
     g.test('Creating an instance using a Self type in a static method') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let body = parse('class A { static def foo { Self {} } }')
       let object_node = body.children[0] as DefineClass
       let method_node = object_node.body.children[0] as DefineMethod
@@ -8208,7 +7779,7 @@ def tests(t: Tests) {
 
     g.test('Creating an instance of a built-in type') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let byte_array = type_checker.builtins.byte_array_type
       let body = parse('ByteArray {}')
       let node = body.children[0]
@@ -8224,16 +7795,16 @@ def tests(t: Tests) {
   t.group('Type-checking generators') do (g) {
     g.test('Creating a generator without parentheses') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let int_type = type_checker.builtins.integer_type
       let gen_type = type_checker.builtins.generator_type
       let body = parse(
-        'def gen => Integer { yield 10 }
+        'def gen => Int { yield 10 }
         gen'
       )
       let node = body.children[1] as Identifier
 
-      module.globals.define(name: 'Integer', int_type)
+      module.globals.define(name: 'Int', int_type)
       type_checker.check_module(module: module, ast: body)
 
       let type = node.resolved_type.get
@@ -8253,16 +7824,16 @@ def tests(t: Tests) {
 
     g.test('Creating a generator using parentheses') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let int_type = type_checker.builtins.integer_type
       let gen_type = type_checker.builtins.generator_type
       let body = parse(
-        'def gen => Integer { yield 10 }
+        'def gen => Int { yield 10 }
         gen()'
       )
       let node = body.children[1] as Send
 
-      module.globals.define(name: 'Integer', int_type)
+      module.globals.define(name: 'Int', int_type)
       type_checker.check_module(module: module, ast: body)
 
       let type = node.resolved_type.get
@@ -8282,11 +7853,11 @@ def tests(t: Tests) {
 
     g.test('Creating a generator that throws without parentheses') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let int_type = type_checker.builtins.integer_type
       let gen_type = type_checker.builtins.generator_type
       let body = parse(
-        'def gen !! Integer => Integer {
+        'def gen !! Int => Int {
           yield 10
           throw 20
         }
@@ -8294,7 +7865,7 @@ def tests(t: Tests) {
       )
       let node = body.children[1] as Identifier
 
-      module.globals.define(name: 'Integer', int_type)
+      module.globals.define(name: 'Int', int_type)
       type_checker.check_module(module: module, ast: body)
 
       let type = node.resolved_type.get
@@ -8315,11 +7886,11 @@ def tests(t: Tests) {
 
     g.test('Creating a generator that throws with parentheses') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let int_type = type_checker.builtins.integer_type
       let gen_type = type_checker.builtins.generator_type
       let body = parse(
-        'def gen !! Integer => Integer {
+        'def gen !! Int => Int {
           yield 10
           throw 20
         }
@@ -8328,7 +7899,7 @@ def tests(t: Tests) {
 
       let node = body.children[1] as Send
 
-      module.globals.define(name: 'Integer', int_type)
+      module.globals.define(name: 'Int', int_type)
       type_checker.check_module(module: module, ast: body)
 
       let type = node.resolved_type.get
@@ -8349,11 +7920,11 @@ def tests(t: Tests) {
 
     g.test('Creating a generator using a global') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let int_type = type_checker.builtins.integer_type
       let gen_type = type_checker.builtins.generator_type
       let body = parse(
-        'def gen !! Integer => Integer {
+        'def gen !! Int => Int {
           yield 10
           throw 20
         }
@@ -8362,7 +7933,7 @@ def tests(t: Tests) {
 
       let node = body.children[1] as Global
 
-      module.globals.define(name: 'Integer', int_type)
+      module.globals.define(name: 'Int', int_type)
       type_checker.check_module(module: module, ast: body)
 
       let type = node.resolved_type.get
@@ -8392,9 +7963,9 @@ def tests(t: Tests) {
   t.group('Type-checking Option types created using ?T') do (g) {
     g.test('Creating an Option type when Option is undefined') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let int_type = type_checker.builtins.integer_type
-      let body = parse('def foo(arg: ?Integer) {}')
+      let body = parse('def foo(arg: ?Int) {}')
       let node = body.children[0] as DefineMethod
 
       module.globals.define(name: int_type.name, type: int_type)
@@ -8406,7 +7977,7 @@ def tests(t: Tests) {
 
     g.test('Creating an Option type when Option is defined') {
       let module = new_std_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let opt_mod = ModuleType.new(OPTION_MODULE)
       let opt_type = ClassType.new('Option')
       let opt_param = TypeParameterType.new('T')
@@ -8416,7 +7987,7 @@ def tests(t: Tests) {
       type_checker.add_module(opt_mod)
 
       let int_type = type_checker.builtins.integer_type
-      let body = parse('def foo(arg: ?Integer) {}')
+      let body = parse('def foo(arg: ?Int) {}')
       let node = body.children[0] as DefineMethod
 
       module.globals.define(name: int_type.name, type: int_type)
@@ -8437,13 +8008,13 @@ def tests(t: Tests) {
   t.group('Type-checking external function definitions') do (g) {
     g.test('Defining an external function') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let int_type = type_checker.builtins.integer_type
       let flt_type = type_checker.builtins.float_type
       let str_type = type_checker.builtins.string_type
-      let body = parse('extern def foo(num: Integer) !! Float -> String')
+      let body = parse('extern def foo(num: Int) !! Float -> String')
 
-      module.define_constant(name: 'Integer', type: int_type)
+      module.define_constant(name: 'Int', type: int_type)
       module.define_constant(name: 'Float', type: flt_type)
       module.define_constant(name: 'String', type: str_type)
       type_checker.check_module(module: module, ast: body)
@@ -8460,7 +8031,7 @@ def tests(t: Tests) {
   t.group('Type-checking external function calls') do (g) {
     g.test('Calling an external function without a receiver') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let int_type = type_checker.builtins.integer_type
       let body = parse('foo')
       let node = body.children[0]
@@ -8479,7 +8050,7 @@ def tests(t: Tests) {
 
     g.test('Calling an external function with a receiver') {
       let module = new_module('foo')
-      let type_checker = TypeChecker.new
+      let type_checker = new_type_checker
       let int_type = type_checker.builtins.integer_type
       let body = parse('self.foo')
       let node = body.children[0]

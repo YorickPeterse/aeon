@@ -10,9 +10,9 @@ trait ToString {
   def to_string -> String
 }
 
-trait ToInteger {
-  # Converts `self` to an `Integer`.
-  def to_integer -> Integer
+trait ToInt {
+  # Converts `self` to an `Int`.
+  def to_int -> Int
 }
 
 trait ToArray!(T) {

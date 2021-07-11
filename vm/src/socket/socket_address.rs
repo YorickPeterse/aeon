@@ -17,7 +17,7 @@ const AF_INET: i32 = AddressFamily::Inet as i32;
 const AF_INET6: i32 = AddressFamily::Inet6 as i32;
 
 #[cfg(unix)]
-#[cfg_attr(feature = "cargo-clippy", allow(uninit_assumed_init))]
+#[cfg_attr(feature = "cargo-clippy", allow(clippy::uninit_assumed_init))]
 fn sun_path_offset() -> usize {
     use std::mem::MaybeUninit;
 
@@ -75,22 +75,22 @@ pub enum SocketAddress {
 }
 
 impl SocketAddress {
-    pub fn address(&self) -> Result<(String, i64), String> {
+    pub fn address(&self) -> Result<(String, u64), String> {
         match self {
             SocketAddress::Unix(sockaddr) => {
-                Ok((unix_socket_path(sockaddr), -1))
+                Ok((unix_socket_path(sockaddr), 0))
             }
             SocketAddress::Other(sockaddr) => {
                 match i32::from(sockaddr.family()) {
                     AF_INET => {
                         let addr = sockaddr.as_inet().unwrap();
 
-                        Ok((addr.ip().to_string(), i64::from(addr.port())))
+                        Ok((addr.ip().to_string(), u64::from(addr.port())))
                     }
                     AF_INET6 => {
                         let addr = sockaddr.as_inet6().unwrap();
 
-                        Ok((addr.ip().to_string(), i64::from(addr.port())))
+                        Ok((addr.ip().to_string(), u64::from(addr.port())))
                     }
                     _ => Err(format!(
                         "The address family {} is not supported",

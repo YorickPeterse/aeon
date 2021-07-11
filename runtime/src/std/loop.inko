@@ -1,68 +1,3 @@
-# Methods for creating loops.
-#
-# Inko has no loop statements of any kind. Instead, loops are implemented using
-# methods and tail-recursion. For example, there's no `while` statement; instead
-# there is a `while` method.
-
-# Calls a block as long as a condition is truthy.
-#
-# The `true` block specifies the condition, which is any object that implements
-# `Object`. If the return value is truthy, the `then` block is called.
-#
-# The use of keyword arguments for this method is best avoided when the
-# condition is short, as it can make the code overly verbose. Instead, use the
-# following pattern:
-#
-#     while({ condition }) { body }
-#
-# If the condition spans multiple lines, you _should_ use keyword arguments as
-# this makes it more clear where one block ends and the next one begins. For
-# example:
-#
-#     while(
-#       true: {
-#         ...
-#         ...
-#       },
-#       then: {
-#         ...
-#       }
-#     )
-#
-# # Examples
-#
-# Looping while a condition is true:
-#
-#     import std::loop::(while)
-#
-#     let mut i = 0
-#
-#     while({ i < 4 }) { i += 1 }
-#
-#     i # => 3
-def while(true: do -> Object, then: do) {
-  true.call.if_false { return }
-  then.call
-  while(true, then)
-}
-
-# Calls the block repeatedly.
-#
-# To break out of this infinite loop, use the `return` keyword to return from
-# the surrounding method.
-#
-# # Examples
-#
-#     import std::loop::(loop)
-#
-#     loop {
-#       # This repeats itself infinitely
-#     }
-def loop(block: do) -> Never {
-  block.call
-  loop(block)
-}
-
 # Calls the block a number of times.
 #
 # The `amount` argument specifies how many times the `block` argument is called.
@@ -86,10 +21,10 @@ def loop(block: do) -> Never {
 #     repeat(4) do (_) {
 #       # ...
 #     }
-def repeat(amount: Integer, block: do (Integer)) {
+def repeat(amount: Int, block: do (Int)) {
   let mut index = 0
 
-  while({ index < amount }) {
+  while index < amount {
     block.call(index)
     index += 1
   }

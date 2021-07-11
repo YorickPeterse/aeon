@@ -22,13 +22,17 @@ module Inkoc
     INIT_MODULE = 'init'
     OPERATORS_MODULE = 'std::operators'
     CONVERSION_MODULE = 'std::conversion'
+    CLONE_MODULE = 'std::clone'
+    PAIR_MODULE = 'std::pair'
+    ITER_MODULE = 'std::iterator'
 
     OBJECT_CONST = 'Object'
     OPTION_CONST = 'Option'
     TRAIT_CONST = 'Trait'
     ARRAY_CONST = 'Array'
     BLOCK_CONST = 'Block'
-    INTEGER_CONST = 'Integer'
+    INTEGER_CONST = 'Int'
+    UNSIGNED_INTEGER_TYPE = 'UnsignedInt'
     FLOAT_CONST = 'Float'
     STRING_CONST = 'String'
     TRUE_CONST = 'True'
@@ -41,6 +45,7 @@ module Inkoc
     OPTIONAL_CONST = 'Optional'
     MATCH_CONST = 'Match'
     TO_STRING_CONST = 'ToString'
+    COPY_CONST = 'Copy'
 
     MODULE_TYPE = 'Module'
     FFI_LIBRARY_TYPE = 'Library'
@@ -52,13 +57,16 @@ module Inkoc
     READ_ONLY_FILE_TYPE = 'ReadOnlyFile'
     WRITE_ONLY_FILE_TYPE = 'WriteOnlyFile'
     READ_WRITE_FILE_TYPE = 'ReadWriteFile'
-    HASHER_TYPE = 'DefaultHasher'
+    HASHER_TYPE = 'Hasher'
     GENERATOR_TYPE = 'Generator'
     CHILD_PROCESS_TYPE = 'ChildProcess'
     SELF_TYPE = 'Self'
     NEVER_TYPE = 'Never'
     ANY_TYPE = 'Any'
     MODULES_ATTRIBUTE = 'Modules'
+    PAIR_TYPE = 'Pair'
+    TRIPLE_TYPE = 'Triple'
+    ITER_TYPE = 'Iterator'
 
     # The name of the constant to use as the receiver for raw instructions.
     RAW_INSTRUCTION_RECEIVER = '_INKOC'
@@ -80,6 +88,10 @@ module Inkoc
     IMPLEMENTED_TRAITS_INSTANCE_ATTRIBUTE = '@_implemented_traits'
     INIT_MESSAGE = 'init'
     MATCH_MESSAGE = '=~'
+    TRUTHY_MESSAGE = 'truthy?'
+    ITER_MESSAGE = 'iter'
+    NEXT_MESSAGE = 'next'
+    GET_MESSAGE = 'get'
 
     GENERATOR_YIELD_TYPE_PARAMETER = 'T'
     GENERATOR_THROW_TYPE_PARAMETER = 'E'
@@ -101,7 +113,6 @@ module Inkoc
       'option' => %w[Option],
       'map' => %w[Map],
       'range' => %w[Range],
-      'loop' => %w[loop while]
     }.freeze
 
     attr_reader :source_directories

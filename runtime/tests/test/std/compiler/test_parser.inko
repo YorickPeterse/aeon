@@ -18,11 +18,12 @@ import std::test::*
 import std::test::test::Failure
 
 def parse(input: String) !! ParseError -> Body {
-  try Parser.new(input: input, file: 'test.inko').parse
+  try Parser.new(input: input, file: 'test.inko', parse_comments: False).parse
 }
 
 def parse_as!(T: Node)(input: ToString, type: T) !! Failure -> T {
-  let parser = Parser.new(input: input.to_string, file: 'test.inko')
+  let parser =
+    Parser.new(input: input.to_string, file: 'test.inko', parse_comments: False)
   let nodes = try! parser.parse
   let node = nodes.children[0]
 
@@ -78,7 +79,7 @@ def binary_assign_attribute(operator: String, message: String) !! Failure {
   try assert_equal((send.arguments[0] as IntegerLiteral).value, '10')
 }
 
-def tests(t: Tests) {
+def tests(t: ref Tests) {
   t.group('Parsing import expressions') fn (g) {
     g.test('Importing a module') {
       let node = try parse_as('import foo', type: Import)
@@ -129,11 +130,11 @@ def tests(t: Tests) {
     }
 
     g.test('Importing an identifier aliased as a constant') {
-      try assert_throw { local try parse('import std::foo::(bar as Baz)') }
+      try assert_throw { try parse('import std::foo::(bar as Baz)') }
     }
 
     g.test('Importing a constant aliased as an identifier') {
-      try assert_throw { local try parse('import std::foo::(Baz as baz)') }
+      try assert_throw { try parse('import std::foo::(Baz as baz)') }
     }
 
     g.test('Importing multiple symbols') {
@@ -166,7 +167,7 @@ def tests(t: Tests) {
     }
 
     g.test('Importing a module itself using a constant as the alias') {
-      try assert_throw { local try parse('import std::(self as Bar)') }
+      try assert_throw { try parse('import std::(self as Bar)') }
     }
 
     g.test('Importing a single symbol with a trailing comma') {
@@ -185,20 +186,20 @@ def tests(t: Tests) {
     }
 
     g.test('Importing a wildcard and specific symbols') {
-      try assert_throw { local try parse('import foo::(*, bar)') }
+      try assert_throw { try parse('import foo::(*, bar)') }
     }
 
     g.test('Importing a module using an invalid import path') {
-      try assert_throw { local try parse('import foo::') }
-      try assert_throw { local try parse('import foo::10') }
+      try assert_throw { try parse('import foo::') }
+      try assert_throw { try parse('import foo::10') }
     }
 
     g.test('Importing a module with an invalid symbol list') {
-      try assert_throw { local try parse('import foo::(bar baz)') }
+      try assert_throw { try parse('import foo::(bar baz)') }
     }
 
     g.test('Importing a module with a symbol alias that is missing a name') {
-      try assert_throw { local try parse('import foo::(bar as)') }
+      try assert_throw { try parse('import foo::(bar as)') }
     }
 
     g.test('Obtaining a module name from an import expression') {
@@ -268,19 +269,19 @@ def tests(t: Tests) {
     }
 
     g.test('Parsing an invalid list of type parameters') {
-      try assert_throw { local try parse('class A!(Foo, {}') }
+      try assert_throw { try parse('class A!(Foo, {}') }
     }
 
     g.test('Parsing an object body without a closing curly brace') {
-      try assert_throw { local try parse('class A {') }
+      try assert_throw { try parse('class A {') }
     }
 
     g.test('Parsing an object body with invalid child nodes') {
-      try assert_throw { local try parse('class A { 10 }') }
+      try assert_throw { try parse('class A { 10 }') }
     }
 
     g.test('Parsing an object without a name') {
-      try assert_throw { local try parse('class {}') }
+      try assert_throw { try parse('class {}') }
     }
 
     g.test('Parsing an object containing a method') {
@@ -307,7 +308,7 @@ def tests(t: Tests) {
     }
 
     g.test('Parsing an object defining a required method') {
-      try assert_throw { local try parse('class A { def foo }') }
+      try assert_throw { try parse('class A { def foo }') }
     }
   }
 
@@ -361,19 +362,19 @@ def tests(t: Tests) {
     }
 
     g.test('Parsing an invalid list of type parameters') {
-      try assert_throw { local try parse('trait A!(Foo, {}') }
+      try assert_throw { try parse('trait A!(Foo, {}') }
     }
 
     g.test('Parsing a trait body without a closing curly brace') {
-      try assert_throw { local try parse('trait A {') }
+      try assert_throw { try parse('trait A {') }
     }
 
     g.test('Parsing a trait body with invalid child nodes') {
-      try assert_throw { local try parse('trait A { 10 }') }
+      try assert_throw { try parse('trait A { 10 }') }
     }
 
     g.test('Parsing a trait without a name') {
-      try assert_throw { local try parse('trait {}') }
+      try assert_throw { try parse('trait {}') }
     }
 
     g.test('Parsing a trait containing a method') {
@@ -407,19 +408,19 @@ def tests(t: Tests) {
     }
 
     g.test('Parsing a trait containing a static method') {
-      try assert_throw { local try parse('trait A { static def foo {} }') }
+      try assert_throw { try parse('trait A { static def foo {} }') }
     }
 
     g.test('Parsing a trait containing a static required method') {
-      try assert_throw { local try parse('trait A { static def foo }') }
+      try assert_throw { try parse('trait A { static def foo }') }
     }
 
     g.test('Parsing a required method outside of a trait') {
-      try assert_throw { local try parse('def foo(a: Integer)') }
+      try assert_throw { try parse('def foo(a: Int)') }
     }
 
     g.test('Parsing a trait that defines an attribute') {
-      try assert_throw { local try parse('trait A { @number: A }') }
+      try assert_throw { try parse('trait A { @number: A }') }
     }
   }
 
@@ -467,47 +468,47 @@ def tests(t: Tests) {
     }
 
     g.test('Reopening an object while specifying type parameters') {
-      try assert_throw { local try parse('impl Foo!(A) {}') }
+      try assert_throw { try parse('impl Foo!(A) {}') }
     }
 
     g.test('Specifying object type parameters when implementing a trait') {
-      try assert_throw { local try parse('impl Foo for Bar!(A) {}') }
+      try assert_throw { try parse('impl Foo for Bar!(A) {}') }
     }
 
     g.test('Reopening an object without closing the body') {
-      try assert_throw { local try parse('impl Foo {') }
+      try assert_throw { try parse('impl Foo {') }
     }
 
     g.test('Reopening an object with an invalid name') {
-      try assert_throw { local try parse('impl foo {}') }
+      try assert_throw { try parse('impl foo {}') }
     }
 
     g.test('Implementing a trait without closing the body') {
-      try assert_throw { local try parse('impl A for B {') }
+      try assert_throw { try parse('impl A for B {') }
     }
 
     g.test('Implementing a trait with an invalid name') {
-      try assert_throw { local try parse('impl a for B {}') }
+      try assert_throw { try parse('impl a for B {}') }
     }
 
     g.test('Implementing a trait for an object with an invalid name') {
-      try assert_throw { local try parse('impl A for b {}') }
+      try assert_throw { try parse('impl A for b {}') }
     }
 
     g.test('Implementing a trait with invalid type parameter bounds') {
-      try assert_throw { local try parse('impl A for B when C: {}') }
+      try assert_throw { try parse('impl A for B when C: {}') }
     }
 
     g.test('Implementing a trait while defining an attribute') {
-      try assert_throw { local try parse('impl A for B { @number: A }') }
+      try assert_throw { try parse('impl A for B { @number: A }') }
     }
 
     g.test('Reopening an object while defining an attribute') {
-      try assert_throw { local try parse('impl A { @number: A }') }
+      try assert_throw { try parse('impl A { @number: A }') }
     }
 
     g.test('Implementing a static method for a trait') {
-      try assert_throw { local try parse('impl A for B { static def foo {} }') }
+      try assert_throw { try parse('impl A for B { static def foo {} }') }
     }
 
     g.test('Parsing an implementation block containing a method') {
@@ -520,7 +521,8 @@ def tests(t: Tests) {
 
   t.group('Parsing comments') fn (g) {
     g.test('Parsing comments with the comments option disabled') {
-      let parser = Parser.new(input: '# Foo', file: 'test.inko')
+      let parser =
+        Parser.new(input: '# Foo', file: 'test.inko', parse_comments: False)
       let node = try! parser.parse
 
       try assert_true(node.children.empty?)
@@ -889,19 +891,19 @@ def tests(t: Tests) {
     }
 
     g.test('Parsing a message chain followed by a comma') {
-      try assert_throw { local try parse('10.foo ,') }
+      try assert_throw { try parse('10.foo ,') }
     }
 
     g.test('Running out of input when parsing message names') {
-      try assert_throw { local try parse('10.') }
+      try assert_throw { try parse('10.') }
     }
 
     g.test('Parsing an invalid message name') {
-      try assert_throw { local try parse('10.=') }
+      try assert_throw { try parse('10.=') }
     }
 
     g.test('Passing positional arguments after keyword arguments') {
-      try assert_throw { local try parse('foo(10, bar: 20, 30)') }
+      try assert_throw { try parse('foo(10, bar: 20, 30)') }
     }
   }
 
@@ -945,7 +947,7 @@ def tests(t: Tests) {
     }
 
     g.test('Sending a message followed by a binary operator') {
-      try assert_throw { local try parse('10.foo -') }
+      try assert_throw { try parse('10.foo -') }
     }
   }
 
@@ -958,7 +960,7 @@ def tests(t: Tests) {
     }
 
     g.test('Parsing an invalid group') {
-      try assert_throw { local try parse('(10') }
+      try assert_throw { try parse('(10') }
     }
   }
 
@@ -1277,11 +1279,11 @@ def tests(t: Tests) {
     }
 
     g.test('Defining a mutable constant') {
-      try assert_throw { local try parse('let mut Number = 10') }
+      try assert_throw { try parse('let mut Number = 10') }
     }
 
     g.test('Parsing a constant definition inside another expression') {
-      try assert_throw { local try parse('{ let A = 10 }') }
+      try assert_throw { try parse('{ let A = 10 }') }
     }
 
     g.test('Defining a local variable with an explicit value type') {
@@ -1299,7 +1301,7 @@ def tests(t: Tests) {
     }
 
     g.test('Defining a local variable without a value') {
-      try assert_throw { local try parse('let number =') }
+      try assert_throw { try parse('let number =') }
     }
   }
 
@@ -1397,19 +1399,19 @@ def tests(t: Tests) {
     }
 
     g.test('Parsing a method with an untyped rest argument') {
-      try assert_throw { local try parse('def foo(*a) {}') }
+      try assert_throw { try parse('def foo(*a) {}') }
     }
 
     g.test('Parsing a method without argument types or default values') {
-      try assert_throw { local try parse('def foo(a) {}') }
+      try assert_throw { try parse('def foo(a) {}') }
     }
 
     g.test('Parsing a static module method') {
-      try assert_throw { local try parse('static def foo {}') }
+      try assert_throw { try parse('static def foo {}') }
     }
 
     g.test('Parsing a method with a rest argument with a default value') {
-      try assert_throw { local try parse('def foo(*a = 10) {}') }
+      try assert_throw { try parse('def foo(*a = 10) {}') }
     }
   }
 
@@ -1530,7 +1532,7 @@ def tests(t: Tests) {
     }
 
     g.test('Parsing a return expression that returns a pattern match') {
-      let node = try parse_as('return match(x) {}', type: Return)
+      let node = try parse_as('return match x {}', type: Return)
 
       try assert_instance_of(node.expression.get, Match)
     }
@@ -1554,11 +1556,11 @@ def tests(t: Tests) {
     }
 
     g.test('Parsing a return followed by a dot') {
-      try assert_throw { local try parse('return .') }
+      try assert_throw { try parse('return .') }
     }
 
     g.test('Parsing a return followed by a binary operator') {
-      try assert_throw { local try parse('return +') }
+      try assert_throw { try parse('return +') }
     }
   }
 
@@ -1576,14 +1578,6 @@ def tests(t: Tests) {
 
       try assert_equal((node.expression as IntegerLiteral).value, '10')
       try assert_false(node.local_throw?)
-    }
-
-    g.test('Parsing a local throw expression') {
-      let node = try parse_as('local throw 10', type: Throw)
-
-      try assert_equal((node.expression as IntegerLiteral).value, '10')
-      try assert_true(node.local_throw?)
-      try assert_equal(node.location.column, 1)
     }
   }
 
@@ -1643,13 +1637,13 @@ def tests(t: Tests) {
     }
 
     g.test('Parsing a try with multiple error arguments') {
-      try assert_throw { local try parse('try 10 else (a, b) 20') }
+      try assert_throw { try parse('try 10 else (a, b) 20') }
     }
   }
 
-  t.group('Parsing local try expressions') fn (g) {
-    g.test('Parsing a local try without an else expression') {
-      let node = try parse_as('local try 10', type: Try)
+  t.group('Parsing try expressions') fn (g) {
+    g.test('Parsing a try without an else expression') {
+      let node = try parse_as('try 10', type: Try)
 
       try assert_equal((node.expression as IntegerLiteral).value, '10')
 
@@ -1659,26 +1653,26 @@ def tests(t: Tests) {
       try assert_equal(node.location.column, 1)
     }
 
-    g.test('Parsing a local try with an identifier') {
-      let node = try parse_as('local try foo', type: Try)
+    g.test('Parsing a try with an identifier') {
+      let node = try parse_as('try foo', type: Try)
 
       try assert_true((node.expression as Identifier).inside_try?)
     }
 
-    g.test('Parsing a local try with a global') {
-      let node = try parse_as('local try ::foo', type: Try)
+    g.test('Parsing a try with a global') {
+      let node = try parse_as('try ::foo', type: Try)
 
       try assert_true((node.expression as Global).inside_try?)
     }
 
-    g.test('Parsing a local try with a message') {
-      let node = try parse_as('local try foo()', type: Try)
+    g.test('Parsing a try with a message') {
+      let node = try parse_as('try foo()', type: Try)
 
       try assert_true((node.expression as Send).inside_try?)
     }
 
-    g.test('Parsing a local try with an else expression') {
-      let node = try parse_as('local try 10 else 20', type: Try)
+    g.test('Parsing a try with an else expression') {
+      let node = try parse_as('try 10 else 20', type: Try)
       let else_expr = node.else_body
 
       try assert_equal((node.expression as IntegerLiteral).value, '10')
@@ -1686,8 +1680,8 @@ def tests(t: Tests) {
       try assert_true(node.local_throw?)
     }
 
-    g.test('Parsing a local try with a multi-line else expression') {
-      let node = try parse_as("local try 10 else { 10\n20 }", type: Try)
+    g.test('Parsing a try with a multi-line else expression') {
+      let node = try parse_as("try 10 else { 10\n20 }", type: Try)
       let else_expr = node.else_body
 
       try assert_equal((node.expression as IntegerLiteral).value, '10')
@@ -1696,8 +1690,8 @@ def tests(t: Tests) {
       try assert_true(node.local_throw?)
     }
 
-    g.test('Parsing a local try with an error argument') {
-      let node = try parse_as('local try 10 else (error) 20', type: Try)
+    g.test('Parsing a try with an error argument') {
+      let node = try parse_as('try 10 else (error) 20', type: Try)
       let else_expr = node.else_body
 
       try assert_equal((node.expression as IntegerLiteral).value, '10')
@@ -1706,8 +1700,8 @@ def tests(t: Tests) {
       try assert_true(node.local_throw?)
     }
 
-    g.test('Parsing a local try with multiple error arguments') {
-      try assert_throw { local try parse('local try 10 else (a, b) 20') }
+    g.test('Parsing a try with multiple error arguments') {
+      try assert_throw { try parse('try 10 else (a, b) 20') }
     }
   }
 
@@ -1895,22 +1889,14 @@ def tests(t: Tests) {
 
   t.group('Parsing pattern matching expressions') fn (g) {
     g.test('Parsing an empty pattern matching expressions') {
-      let node = try parse_as('match(10) {}', type: Match)
+      let node = try parse_as('match 10 {}', type: Match)
 
-      try assert_true(node.cases.empty?)
-      try assert_true(node.else_branch.none?)
-    }
-
-    g.test('Parsing a pattern match expression without an argument') {
-      let node = try parse_as('match {}', type: Match)
-
-      try assert_true(node.expression.none?)
       try assert_true(node.cases.empty?)
       try assert_true(node.else_branch.none?)
     }
 
     g.test('Parsing a pattern match expression with a single type case') {
-      let node = try parse_as('match(10) { as A -> { 10 } }', type: Match)
+      let node = try parse_as('match 10 { as A -> { 10 } }', type: Match)
 
       try assert_equal(node.cases.length, 1)
       try assert_instance_of(node.cases[0], MatchType)
@@ -1924,7 +1910,7 @@ def tests(t: Tests) {
 
     g.test('Parsing a pattern match expression with a type guard') {
       let node =
-        try parse_as('match(10) { as A when B -> { 10 } }', type: Match)
+        try parse_as('match 10 { as A when B -> { 10 } }', type: Match)
 
       try assert_equal(node.cases.length, 1)
       try assert_instance_of(node.cases[0], MatchType)
@@ -1938,7 +1924,7 @@ def tests(t: Tests) {
 
     g.test('Parsing a pattern match expression with two type cases') {
       let node = try parse_as(
-        input: 'match(10) { as A -> { 10 } as B -> { 20 } }',
+        input: 'match 10 { as A -> { 10 } as B -> { 20 } }',
         type: Match
       )
 
@@ -1960,7 +1946,7 @@ def tests(t: Tests) {
     }
 
     g.test('Parsing a pattern match expression with an expression case') {
-      let node = try parse_as('match(10) { 10 -> { 10 } }', type: Match)
+      let node = try parse_as('match 10 { 10 -> { 10 } }', type: Match)
 
       try assert_equal(node.cases.length, 1)
       try assert_instance_of(node.cases[0], MatchExpressions)
@@ -1972,7 +1958,7 @@ def tests(t: Tests) {
     }
 
     g.test('Parsing a pattern match expression with an expression case and a guard') {
-      let node = try parse_as('match(10) { 10 when A -> { 10 } }', type: Match)
+      let node = try parse_as('match 10 { 10 when A -> { 10 } }', type: Match)
 
       try assert_equal(node.cases.length, 1)
       try assert_instance_of(node.cases[0], MatchExpressions)
@@ -1985,7 +1971,7 @@ def tests(t: Tests) {
     }
 
     g.test('Parsing a pattern match expression with a multi-expression case') {
-      let node = try parse_as('match(10) { 10, 20 -> { 10 } }', type: Match)
+      let node = try parse_as('match 10 { 10, 20 -> { 10 } }', type: Match)
 
       try assert_equal(node.cases.length, 1)
       try assert_instance_of(node.cases[0], MatchExpressions)
@@ -1997,7 +1983,7 @@ def tests(t: Tests) {
     }
 
     g.test('Parsing a pattern match expression with an "else" branch') {
-      let node = try parse_as('match(10) { else -> { 10 } }', type: Match)
+      let node = try parse_as('match 10 { else -> { 10 } }', type: Match)
 
       try assert_true(node.cases.empty?)
       try assert_false(node.else_branch.none?)
@@ -2005,15 +1991,15 @@ def tests(t: Tests) {
     }
 
     g.test('Parsing a pattern match expression with a variable binding') {
-      let node = try parse_as('match(let number = 10) {}', type: Match)
+      let node = try parse_as('match let number = 10 {}', type: Match)
 
       try assert_equal(node.binding.get.name, 'number')
     }
 
     g.test('Parsing a pattern match expression with all possible cases and a binding') {
       let input = "
-        match(let number = 10) {
-          as Integer when A -> { 10 }
+        match let number = 10 {
+          as Int when A -> { 10 }
           10 -> { 20 }
           else -> { 30 }
         }
@@ -2028,31 +2014,31 @@ def tests(t: Tests) {
     }
 
     g.test('Parsing a pattern match expression with multiple "else" branches') {
-      try assert_throw { local try parse('match(10) { else -> {} else -> {} }') }
+      try assert_throw { try parse('match 10 { else -> {} else -> {} }') }
     }
 
     g.test('Parsing a pattern match expression without parentheses') {
-      try assert_throw { local try parse('match 10 {}') }
+      try assert_throw { try parse('match 10 {}') }
     }
 
     g.test('Parsing a type pattern matching case without an arrow') {
-      try assert_throw { local try parse('match(10) { as Integer {} }') }
+      try assert_throw { try parse('match 10 { as Int {} }') }
     }
 
     g.test('Parsing an expression pattern matching case without an arrow') {
-      try assert_throw { local try parse('match(10) { 10 {} }') }
+      try assert_throw { try parse('match 10 { 10 {} }') }
     }
 
-    g.test('Parsing a match expression with an empty argument list') {
-      try assert_throw { local try parse('match() {}') }
+    g.test('Parsing a match expression with an input') {
+      try assert_throw { try parse('match {}') }
     }
 
     g.test('Parsing a match expression that binds a variable without a value') {
-      try assert_throw { local try parse('match(let a = ) {}') }
+      try assert_throw { try parse('match let a = {}') }
     }
 
     g.test('Parsing a match expression with a generic type pattern') {
-      try assert_throw { local try parse('match(x) { as Array!(Integer) -> {} }') }
+      try assert_throw { try parse('match x { as Array!(Int) -> {} }') }
     }
   }
 
@@ -2103,15 +2089,15 @@ def tests(t: Tests) {
     }
 
     g.test('Parsing an object constructor with an invalid attribute') {
-      try assert_throw { local try parse('A { a = 10 }') }
+      try assert_throw { try parse('A { a = 10 }') }
     }
 
     g.test('Parsing an object constructor with an attribute without a value') {
-      try assert_throw { local try parse('A { @a = }') }
+      try assert_throw { try parse('A { @a = }') }
     }
 
     g.test('Parsing an object constructor without a closing curly brace') {
-      try assert_throw { local try parse('A { @a = 10') }
+      try assert_throw { try parse('A { @a = 10') }
     }
   }
 
@@ -2123,7 +2109,7 @@ def tests(t: Tests) {
     }
 
     g.test('Parsing a yield expression without a value') {
-      try assert_throw { local try parse('yield') }
+      try assert_throw { try parse('yield') }
     }
   }
 }

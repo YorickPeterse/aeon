@@ -88,7 +88,6 @@
 import std::format::(DefaultFormatter, Format, Formatter)
 import std::fs::path::Path
 import std::hash::Hash
-import std::loop::(loop)
 import std::map::Map
 import std::module::Module
 import std::operators::Equal
@@ -105,27 +104,26 @@ let OBJECT_NAME_ATTRIBUTE = '@_object_name'
 # The name of the attribute that stores all the implemented traits.
 let IMPLEMENTED_TRAITS_ATTRIBUTE = '@_implemented_traits'
 
-extern def block_name(block: Block) -> String
-extern def block_file(block: Block) -> String
-extern def block_line(block: Block) -> Integer
-extern def block_arguments(block: Block) -> Array!(String)
-extern def block_required_arguments(block: Block) -> Integer
-extern def module_name(module: Module) -> String
-extern def module_source_path(module: Module) -> String
-extern def object_attribute_names(object: Any) -> Array!(Any)
-extern def string_format_debug(string: String) -> String
+extern def block_name(block: ref Block) -> String
+extern def block_file(block: ref Block) -> String
+extern def block_line(block: ref Block) -> Int
+extern def block_arguments(block: ref Block) -> Array!(String)
+extern def module_name(module: ref Module) -> String
+extern def module_source_path(module: ref Module) -> String
+extern def object_attribute_names(object: ref Any) -> Array!(Any)
+extern def string_format_debug(string: ref String) -> String
 
 # An object for reflecting upon another object.
 trait Mirror: Format {
   # Returns the object reflected upon.
-  def subject -> Any
+  def subject -> ref Any
 
   # Returns `True` if the subject is the exact same object as the given
   # argument.
   #
   # This method works for any two objects, and doesn't depend on the
   # `same_object?` and `==` methods.
-  def subject_same_object?(other: Any) -> Boolean {
+  def subject_same_object?(other: ref Any) -> Boolean {
     _INKOC.object_equals(subject, other)
   }
 
@@ -172,6 +170,7 @@ trait Mirror: Format {
   #
   #     mirror.get_attribute('name') # => 'Alice'
   def get_attribute(name: String) -> Any {
+    # TODO: use get_attribute_by_name()
     _INKOC.get_attribute(subject, name)
   }
 
@@ -210,16 +209,16 @@ trait Mirror: Format {
   #     let string_mirror = ObjectMirror.new('hello')
   #
   #     string_mirror.instance_of?(String) # => True
-  #     string_mirror.instance_of?(Integer) # => False
-  def instance_of?(other: Any) -> Boolean {
+  #     string_mirror.instance_of?(Int) # => False
+  def instance_of?(other: ref Any) -> Boolean {
     let mut proto = _INKOC.get_prototype(subject)
 
     loop {
-      _INKOC.object_equals(proto, other).if_true { return True }
+      if _INKOC.object_equals(proto, other) { return True }
 
       proto = _INKOC.get_prototype(proto) as Object
 
-      _INKOC.object_equals(proto, Nil).if_true { return False }
+      if _INKOC.object_equals(proto, Nil) { return False }
     }
   }
 
@@ -240,16 +239,16 @@ trait Mirror: Format {
   #
   #     mirror.implements_trait?(Trait1) # => True
   #     mirror.implements_trait?(Trait2) # => False
-  def implements_trait?(find: Trait) -> Boolean {
+  def implements_trait?(find: ref Trait) -> Boolean {
     let mut subject = subject
 
     loop {
       let traits = _INKOC.get_attribute(subject, IMPLEMENTED_TRAITS_ATTRIBUTE)
 
-      traits.if_true {
+      if traits {
         let exists = _INKOC.get_attribute(traits, find)
 
-        _INKOC.object_equals(exists, True).if_true { return True }
+        if _INKOC.object_equals(exists, True) { return True }
       }
 
       subject = _INKOC.get_prototype(subject)
@@ -259,7 +258,7 @@ trait Mirror: Format {
       # and "the prototype is Nil", we will just bail out once we hit Nil as the
       # prototype. This works fine for Nil itself, because there is only a
       # single instance of it.
-      _INKOC.object_equals(subject, Nil).if_true { return False }
+      if _INKOC.object_equals(subject, Nil) { return False }
     }
   }
 
@@ -282,7 +281,7 @@ trait Mirror: Format {
   def implemented_traits -> Array!(Trait) {
     let impl_set = get_attribute(IMPLEMENTED_TRAITS_ATTRIBUTE) as Any
 
-    _INKOC.object_equals(impl_set, Nil).if_true { return Array.new }
+    if _INKOC.object_equals(impl_set, Nil) { return Array.new }
 
     object_attribute_names(impl_set) as Array!(Trait)
   }
@@ -307,21 +306,16 @@ trait Mirror: Format {
   #     ObjectMirror.new(person).attributes # => Array.new('@name')
   #     ObjectMirror.new(Person).attributes # => Array.new('@_object_name')
   def instance_attributes -> Array!(String) {
-    let instance_attributes = Array.new
-
-    attributes.each do (attribute) {
-      attribute.starts_with?('@').if_true {
-        instance_attributes.push(attribute)
-      }
-    }
-
-    instance_attributes
+    attributes.into_iter.select do (name) { name.starts_with?('@') }.to_array
   }
 
   # Formats the mirrored object in a human-readable format for debugging
   # purposes.
   def inspect -> String {
-    format(DefaultFormatter.new).to_string
+    let fmt = DefaultFormatter.new
+
+    format(fmt)
+    fmt.to_string
   }
 }
 
@@ -334,11 +328,11 @@ trait Mirrored {
 }
 
 # A generic mirror for a regular object.
-class ObjectMirror {
+class ObjectMirror!(T) {
   # The object that is being mirrored.
-  @subject: Any
+  @subject: ref T
 
-  static def new(subject: Any) -> Self {
+  static def new(subject: ref T) -> Self {
     Self { @subject = subject }
   }
 
@@ -370,7 +364,7 @@ class ObjectMirror {
   #
   #     ObjectMirror.new(Person).name # => 'Person'
   def name -> String {
-    match(let name = get_attribute(OBJECT_NAME_ATTRIBUTE)) {
+    match let name = get_attribute(OBJECT_NAME_ATTRIBUTE) {
       as String -> { name }
       else -> { DEFAULT_OBJECT_NAME }
     }
@@ -378,21 +372,19 @@ class ObjectMirror {
 }
 
 impl Format for ObjectMirror {
-  def format!(F: Formatter)(formatter: F) -> F {
+  def format(formatter: ref Formatter) {
     let attributes = instance_attributes
 
     formatter.push(name)
 
-    attributes.empty?.if_true { return formatter }
+    if attributes.empty? { return }
 
     formatter.push(' {')
 
-    attributes.each_with_index do (attr_name, index) {
-      index.positive?.if_true { formatter.push(',') }
+    for (index, attr_name) in attributes.into_iter.with_index {
+      if index.positive? { formatter.push(',') }
 
-      formatter.push(' ')
-      formatter.push(attr_name)
-      formatter.push(' = ')
+      formatter.push(` {attr_name} = `)
 
       formatter.descend {
         reflect(get_attribute(attr_name)).format(formatter)
@@ -400,12 +392,11 @@ impl Format for ObjectMirror {
     }
 
     formatter.push(' }')
-    formatter
   }
 }
 
 impl Mirror for ObjectMirror {
-  def subject -> Any {
+  def subject -> ref T {
     @subject
   }
 }
@@ -413,9 +404,9 @@ impl Mirror for ObjectMirror {
 # A mirror for a `Block`.
 class BlockMirror {
   # The block that is being mirrored.
-  @subject: Block
+  @subject: ref Block
 
-  static def new(subject: Block) -> Self {
+  static def new(subject: ref Block) -> Self {
     Self { @subject = subject }
   }
 
@@ -447,7 +438,7 @@ class BlockMirror {
   #     let mirror = BlockMirror.new(method)
   #
   #     mirror.line # => 3
-  def line -> Integer {
+  def line -> Int {
     block_line(@subject)
   }
 
@@ -465,22 +456,6 @@ class BlockMirror {
   #     mirror.argument_names # => Array.new('@subject', 'number')
   def argument_names -> Array!(String) {
     block_arguments(@subject)
-  }
-
-  # Returns the number of required arguments.
-  #
-  # # Examples
-  #
-  # Returning the argument names of a method:
-  #
-  #     import std::mirror::BlockMirror
-  #
-  #     let method = def example(number) {}
-  #     let mirror = BlockMirror.new(method)
-  #
-  #     mirror.required_arguments # => 2
-  def required_arguments -> Integer {
-    block_required_arguments(@subject)
   }
 
   # Returns the name of the block.
@@ -501,23 +476,22 @@ class BlockMirror {
 }
 
 impl Format for BlockMirror {
-  def format!(F: Formatter)(formatter: F) -> F {
+  def format(formatter: ref Formatter) {
     formatter.push('Block')
-    formatter
   }
 }
 
 impl Mirror for BlockMirror {
-  def subject -> Block {
+  def subject -> ref Block {
     @subject
   }
 }
 
 # A mirror for a `Module`.
 class ModuleMirror {
-  @subject: Module
+  @subject: ref Module
 
-  static def new(subject: Module) -> Self {
+  static def new(subject: ref Module) -> Self {
     Self { @subject = subject }
   }
 
@@ -533,16 +507,13 @@ class ModuleMirror {
 }
 
 impl Format for ModuleMirror {
-  def format!(F: Formatter)(formatter: F) -> F {
-    formatter.push('Module { ')
-    formatter.push(name)
-    formatter.push(' }')
-    formatter
+  def format(formatter: ref Formatter) {
+    formatter.push(`Module \{ {name} }`)
   }
 }
 
 impl Mirror for ModuleMirror {
-  def subject -> Module {
+  def subject -> ref Module {
     @subject
   }
 }
@@ -550,36 +521,33 @@ impl Mirror for ModuleMirror {
 # A mirror for an `Array`.
 class ArrayMirror!(T) {
   # The `Array` that is mirrored.
-  @subject: Array!(T)
+  @subject: ref Array!(T)
 
-  static def new(subject: Array!(T)) -> Self {
+  static def new(subject: ref Array!(T)) -> Self {
     Self { @subject = subject }
   }
 }
 
 impl Format for ArrayMirror {
-  def format!(F: Formatter)(formatter: F) -> F {
+  def format(formatter: ref Formatter) {
     formatter.push('Array')
 
-    @subject.empty?.if_true { return formatter }
+    if @subject.empty? { return }
 
     formatter.push(' { ')
 
-    @subject.each_with_index do (value, index) {
-      index.positive?.if_true { formatter.push(', ') }
+    for (index, value) in @subject.iter.with_index {
+      if index.positive? { formatter.push(', ') }
 
-      formatter.descend {
-        reflect(value).format(formatter)
-      }
+      formatter.descend { reflect(value).format(formatter) }
     }
 
     formatter.push(' }')
-    formatter
   }
 }
 
 impl Mirror for ArrayMirror {
-  def subject -> Array!(T) {
+  def subject -> ref Array!(T) {
     @subject
   }
 }
@@ -587,24 +555,21 @@ impl Mirror for ArrayMirror {
 # A mirror for a `ByteArray`.
 class ByteArrayMirror {
   # The `ByteArray` that is mirrored.
-  @subject: ByteArray
+  @subject: ref ByteArray
 
-  static def new(subject: ByteArray) -> Self {
+  static def new(subject: ref ByteArray) -> Self {
     Self { @subject = subject }
   }
 }
 
 impl Format for ByteArrayMirror {
-  def format!(F: Formatter)(formatter: F) -> F {
-    formatter.push('ByteArray { ')
-    formatter.push(@subject.length.to_string)
-    formatter.push(' bytes }')
-    formatter
+  def format(formatter: ref Formatter) {
+    formatter.push(`ByteArray \{ {@subject.length} bytes }`)
   }
 }
 
 impl Mirror for ByteArrayMirror {
-  def subject -> ByteArray {
+  def subject -> ref ByteArray {
     @subject
   }
 }
@@ -612,46 +577,41 @@ impl Mirror for ByteArrayMirror {
 # A mirror for a `Map`
 class MapMirror!(K: Hash + Equal, V) {
   # The `Map` that is mirrored.
-  @subject: Map!(K, V)
+  @subject: ref Map!(K, V)
 
-  static def new!(K: Hash + Equal, V)(subject: Map!(K, V)) -> MapMirror!(K, V) {
+  static def new!(K: Hash + Equal, V)(
+    subject: ref Map!(K, V)
+  ) -> MapMirror!(K, V) {
     Self { @subject = subject }
   }
 }
 
 impl Format for MapMirror {
-  def format!(F: Formatter)(formatter: F) -> F {
+  def format(formatter: ref Formatter) {
     let mut index = 0
 
     formatter.push('Map')
 
-    @subject.empty?.if_true { return formatter }
+    if @subject.empty? { return }
 
     formatter.push(' { ')
 
-    @subject.each do (key, value) {
-      index.positive?.if_true { formatter.push(', ') }
+    for (key, value) in @subject {
+      if index.positive? { formatter.push(', ') }
 
-      formatter.descend {
-        reflect(key).format(formatter)
-      }
-
+      formatter.descend { reflect(key).format(formatter) }
       formatter.push(': ')
-
-      formatter.descend {
-        reflect(value).format(formatter)
-      }
+      formatter.descend { reflect(value).format(formatter) }
 
       index += 1
     }
 
     formatter.push(' }')
-    formatter
   }
 }
 
 impl Mirror for MapMirror {
-  def subject -> Map!(K, V) {
+  def subject -> ref Map!(K, V) {
     @subject
   }
 }
@@ -659,40 +619,37 @@ impl Mirror for MapMirror {
 # A mirror for a `Set`.
 class SetMirror!(V: Hash + Equal) {
   # The `Set` that is mirrored.
-  @subject: Set!(V)
+  @subject: ref Set!(V)
 
-  static def new!(V: Hash + Equal)(subject: Set!(V)) -> SetMirror!(V) {
+  static def new!(V: Hash + Equal)(subject: ref Set!(V)) -> SetMirror!(V) {
     Self { @subject = subject }
   }
 }
 
 impl Format for SetMirror {
-  def format!(F: Formatter)(formatter: F) -> F {
+  def format(formatter: ref Formatter) {
     let mut index = 0
 
     formatter.push('Set')
 
-    @subject.empty?.if_true { return formatter }
+    if @subject.empty? { return }
 
     formatter.push(' { ')
 
-    @subject.each do (value) {
-      index.positive?.if_true { formatter.push(', ') }
+    for value in @subject {
+      if index.positive? { formatter.push(', ') }
 
-      formatter.descend {
-        reflect(value).format(formatter)
-      }
+      formatter.descend { reflect(value).format(formatter) }
 
       index += 1
     }
 
     formatter.push(' }')
-    formatter
   }
 }
 
 impl Mirror for SetMirror {
-  def subject -> Set!(V) {
+  def subject -> ref Set!(V) {
     @subject
   }
 }
@@ -700,34 +657,25 @@ impl Mirror for SetMirror {
 # A mirror for a `Pair`.
 class PairMirror!(A, B) {
   # The `Pair` that is mirrored
-  @subject: Pair!(A, B)
+  @subject: ref Pair!(A, B)
 
-  static def new!(A, B)(subject: Pair!(A, B)) -> PairMirror!(A, B) {
+  static def new!(A, B)(subject: ref Pair!(A, B)) -> PairMirror!(A, B) {
     Self { @subject = subject }
   }
 }
 
 impl Format for PairMirror {
-  def format!(F: Formatter)(formatter: F) -> F {
+  def format(formatter: ref Formatter) {
     formatter.push('Pair { ')
-
-    formatter.descend {
-      reflect(@subject.first).format(formatter)
-    }
-
+    formatter.descend { reflect(@subject.0).format(formatter) }
     formatter.push(', ')
-
-    formatter.descend {
-      reflect(@subject.second).format(formatter)
-    }
-
+    formatter.descend { reflect(@subject.1).format(formatter) }
     formatter.push(' }')
-    formatter
   }
 }
 
 impl Mirror for PairMirror {
-  def subject -> Pair!(A, B) {
+  def subject -> ref Pair!(A, B) {
     @subject
   }
 }
@@ -735,65 +683,51 @@ impl Mirror for PairMirror {
 # A mirror for a `Triple`.
 class TripleMirror!(A, B, C) {
   # The `Triple` that is mirrored
-  @subject: Triple!(A, B, C)
+  @subject: ref Triple!(A, B, C)
 
   static def new!(A, B, C)(
-    subject: Triple!(A, B, C)
+    subject: ref Triple!(A, B, C)
   ) -> TripleMirror!(A, B, C) {
     Self { @subject = subject }
   }
 }
 
 impl Format for TripleMirror {
-  def format!(F: Formatter)(formatter: F) -> F {
+  def format(formatter: ref Formatter) {
     formatter.push('Triple { ')
-
-    formatter.descend {
-      reflect(@subject.first).format(formatter)
-    }
-
+    formatter.descend { reflect(@subject.0).format(formatter) }
     formatter.push(', ')
-
-    formatter.descend {
-      reflect(@subject.second).format(formatter)
-    }
-
+    formatter.descend { reflect(@subject.1).format(formatter) }
     formatter.push(', ')
-
-    formatter.descend {
-      reflect(@subject.third).format(formatter)
-    }
-
+    formatter.descend { reflect(@subject.2).format(formatter) }
     formatter.push(' }')
-    formatter
   }
 }
 
 impl Mirror for TripleMirror {
-  def subject -> Triple!(A, B, C) {
+  def subject -> ref Triple!(A, B, C) {
     @subject
   }
 }
 
-# A mirror for an `Integer`.
+# A mirror for an `Int`.
 class IntegerMirror {
-  # The `Integer` that is mirrored.
-  @subject: Integer
+  # The `Int` that is mirrored.
+  @subject: Int
 
-  static def new(subject: Integer) -> Self {
+  static def new(subject: Int) -> Self {
     Self { @subject = subject }
   }
 }
 
 impl Format for IntegerMirror {
-  def format!(F: Formatter)(formatter: F) -> F {
+  def format(formatter: ref Formatter) {
     formatter.push(@subject.to_string)
-    formatter
   }
 }
 
 impl Mirror for IntegerMirror {
-  def subject -> Integer {
+  def subject -> ref Int {
     @subject
   }
 }
@@ -809,14 +743,13 @@ class FloatMirror {
 }
 
 impl Format for FloatMirror {
-  def format!(F: Formatter)(formatter: F) -> F {
+  def format(formatter: ref Formatter) {
     formatter.push(@subject.to_string)
-    formatter
   }
 }
 
 impl Mirror for FloatMirror {
-  def subject -> Float {
+  def subject -> ref Float {
     @subject
   }
 }
@@ -832,14 +765,13 @@ class StringMirror {
 }
 
 impl Format for StringMirror {
-  def format!(F: Formatter)(formatter: F) -> F {
+  def format(formatter: ref Formatter) {
     formatter.push(string_format_debug(@subject))
-    formatter
   }
 }
 
 impl Mirror for StringMirror {
-  def subject -> String {
+  def subject -> ref String {
     @subject
   }
 }
@@ -855,14 +787,13 @@ class BooleanMirror {
 }
 
 impl Format for BooleanMirror {
-  def format!(F: Formatter)(formatter: F) -> F {
+  def format(formatter: ref Formatter) {
     formatter.push(@subject.to_string)
-    formatter
   }
 }
 
 impl Mirror for BooleanMirror {
-  def subject -> Boolean {
+  def subject -> ref Boolean {
     @subject
   }
 }
@@ -878,44 +809,41 @@ class NilMirror {
 }
 
 impl Format for NilMirror {
-  def format!(F: Formatter)(formatter: F) -> F {
+  def format(formatter: ref Formatter) {
     formatter.push('Nil')
-    formatter
   }
 }
 
 impl Mirror for NilMirror {
-  def subject -> Nil {
+  def subject -> ref Nil {
     @subject
   }
 }
 
 # A mirror for an `Option`.
 class OptionMirror!(T) {
-  @subject: ?T
+  @subject: ref ?T
 
-  static def new!(T)(subject: ?T) -> OptionMirror!(T) {
+  static def new!(T)(subject: ref ?T) -> OptionMirror!(T) {
     Self { @subject = subject }
   }
 }
 
 impl Format for OptionMirror {
-  def format!(F: Formatter)(formatter: F) -> F {
-    @subject.some?.if(
-      true: {
-        formatter.push('Some(')
-        formatter.descend { reflect(@subject.get).format(formatter) }
-        formatter.push(')')
-      },
-      false: { formatter.push('None') }
-    )
+  def format(formatter: ref Formatter) {
+    let val = try @subject.get_ref else {
+      formatter.push('None')
+      return
+    }
 
-    formatter
+    formatter.push('Some(')
+    formatter.descend { reflect(val).format(formatter) }
+    formatter.push(')')
   }
 }
 
 impl Mirror for OptionMirror {
-  def subject -> ?T {
+  def subject -> ref ?T {
     @subject
   }
 }
@@ -925,13 +853,13 @@ impl Mirror for OptionMirror {
 # If an object implements the `Mirrored` trait, the implementation is used to
 # determine what mirror to return. If the trait isn't implemented, a mirror is
 # returned based on the `subject` argument type.
-def reflect(subject: Any) -> Mirror {
-  match(let matched = subject) {
-    as Integer -> { IntegerMirror.new(matched) }
-    as Float -> { FloatMirror.new(matched) }
-    as String -> { StringMirror.new(matched) }
-    as Boolean -> { BooleanMirror.new(matched) }
-    as NilType -> { NilMirror.new(matched) }
+def reflect(subject: ref Any) -> Mirror {
+  match let matched = subject {
+    as Int -> { IntegerMirror.new(matched.clone) }
+    as Float -> { FloatMirror.new(matched.clone) }
+    as String -> { StringMirror.new(matched.clone) }
+    as Boolean -> { BooleanMirror.new(matched.clone) }
+    as NilType -> { NilMirror.new(matched.clone) }
     as Array -> { ArrayMirror.new(matched) }
     as ByteArray -> { ByteArrayMirror.new(matched) }
     as Map -> { MapMirror.new(matched) }

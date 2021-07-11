@@ -8,7 +8,7 @@ module Inkoc
       include Inspect
 
       attr_reader :arguments, :returns, :throws, :location
-      attr_accessor :optional
+      attr_accessor :optional, :moving
 
       def initialize(args, returns, throws, location)
         @arguments = args
@@ -16,6 +16,7 @@ module Inkoc
         @throws = throws
         @location = location
         @optional = false
+        @moving = false
       end
 
       def optional?

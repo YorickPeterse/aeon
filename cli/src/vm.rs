@@ -1,15 +1,19 @@
 //! Functions for interacting with the Inko VM.
+use crate::error::Error;
 use libinko::config::Config;
+use libinko::image::Image;
 use libinko::vm::machine::Machine;
-use libinko::vm::state::State;
 
-pub fn start(path: &str, arguments: &[String]) -> i32 {
+pub fn start(path: &str, arguments: &[String]) -> Result<i32, Error> {
     let mut config = Config::new();
 
     config.populate_from_env();
 
-    let machine = Machine::new(State::with_rc(config, arguments));
+    let image = Image::load_file(config, path).map_err(|e| {
+        Error::generic(format!("Failed to parse image {}: {}", path, e))
+    })?;
 
-    machine.start(path);
-    machine.state.current_exit_status()
+    Machine::boot(image, arguments)
+        .map(|state| state.current_exit_status())
+        .map_err(Error::generic)
 }

@@ -77,7 +77,7 @@ impl Process {
   #
   # The identifier is unique for every process, but might be different between
   # program invocations even for processes spawned in the same order.
-  def identifier -> Integer {
+  def identifier -> Int {
     _INKOC.process_identifier(self)
   }
 }
@@ -174,7 +174,7 @@ def current -> Process {
 #     }
 #
 #     result # => 12
-def blocking!(R)(block: do -> R) -> R {
+def blocking!(E, R)(block: do !! E -> R) !! E -> R {
   let moved = _INKOC.process_set_blocking(True)
 
   defer {
@@ -193,32 +193,22 @@ def blocking!(R)(block: do -> R) -> R {
     #
     # Using the `if_true` below, we ensure that we only move the process back
     # once we return from the outer most call to this method.
-    moved.if_true { _INKOC.process_set_blocking(False) }
+    if moved { _INKOC.process_set_blocking(False) }
   }
 
-  block.call
+  try block.call
 }
 
-# Suspends the current process until it is rescheduled.
-#
-# The argument of this method can be used to set a minimum suspension time (in
-# seconds). If no minimum time is specified the process may be rescheduled at
-# any time.
+# Suspends the current process for a given duration.
 #
 # # Examples
-#
-# Suspending a process:
-#
-#     import std::process
-#
-#     process.suspend
 #
 # Suspending a process for a minimum amount of time:
 #
 #     import std::process
 #
 #     process.suspend(5)
-def suspend(minimum: ToFloat = 0.0) {
+def suspend(minimum: ToFloat) {
   _INKOC.process_suspend_current(minimum.to_float)
 }
 
@@ -349,7 +339,7 @@ def pinned!(T)(block: do -> T) -> T {
     #
     # Using the `if_true` below, we ensure that we only unpin the process once
     # we return from the outer most call to this method.
-    pinned.if_true { _INKOC.process_set_pinned(False) }
+    if pinned { _INKOC.process_set_pinned(False) }
   }
 
   block.call
@@ -369,7 +359,7 @@ def pinned!(T)(block: do -> T) -> T {
 #     import std::process
 #
 #     process.panic('Uh-oh, something bad happened!')
-def panic(message: ToString) -> Never {
+def panic(message: ref ToString) -> Never {
   _INKOC.panic(message.to_string)
 }
 

@@ -244,7 +244,7 @@ vm/test:
 
 vm/clippy:
 	touch vm/src/lib.rs cli/src/lib.rs
-	cd cli && ${CARGO_CMD} clippy ${TARGET_OPTION} ${FEATURES_OPTION} -- -Dwarnings
+	cd cli && ${CARGO_CMD} clippy ${TARGET_OPTION} ${FEATURES_OPTION}
 
 vm/rustfmt-check:
 	rustfmt --check vm/src/lib.rs cli/src/main.rs
@@ -255,11 +255,8 @@ vm/rustfmt:
 vm/release:
 	cd cli && ${CARGO_CMD} build --release ${TARGET_OPTION} ${FEATURES_OPTION}
 
-vm/profile:
-	cd cli && ${CARGO_CMD} build --release ${TARGET_OPTION} ${FEATURES_OPTION}
-
 .PHONY: release/source release/manifest release/changelog release/versions
 .PHONY: release/commit release/publish release/tag
 .PHONY: build install uninstall clean
-.PHONY: vm/debug vm/check vm/clippy vm/rustfmt-check vm/rustfmt vm/release vm/profile
+.PHONY: vm/debug vm/check vm/clippy vm/rustfmt-check vm/rustfmt vm/release
 .PHONY: docs/install docs/build docs/server docs/publish

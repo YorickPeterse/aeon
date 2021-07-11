@@ -1,7 +1,76 @@
 # A module for setting up the basic building blocks other modules depend on.
 #
-# This module is the very first module imported and executed. Common constructs
-# such as `object` and `trait` are not yet available at this point.
+# This module is the very first module imported and executed. All constants
+# defined in this module are available to all other modules.
+
+# class Int {}
+# class Float {}
+# class String {}
+# class Array {}
+# class Block {}
+# class Boolean {}
+# class NilType {}
+# class ByteArray {}
+#
+# _INKOC.set_class_id(Int, 0)
+# _INKOC.set_class_id(Float, 1)
+# _INKOC.set_class_id(String, 2)
+# _INKOC.set_class_id(Array, 3)
+# _INKOC.set_class_id(Block, 4)
+# _INKOC.set_class_id(Boolean, 5)
+# _INKOC.set_class_id(NilType, 6)
+# _INKOC.set_class_id(ByteArray, 7)
+#
+# let True = _INKOC.get_true
+# let False = _INKOC.get_false
+# let Nil = _INKOC.get_nil
+#
+# # The Object trait provides basic functionality for all user-defined objects.
+# #
+# # The methods of this trait are _only_ available to instances of classes. Traits
+# # and classes themselves (e.g. the String class) don't have access to these
+# # methods. The are three reasons for this:
+# #
+# # 1. There is no common behaviour between traits and classes, each one is unique
+# #    (e.g. classes may not define a `new` method).
+# # 2. If simplifies method lookups, leading to better method call performance.
+# # 3. It simply isn't useful. For example, what's the point of `Object.truthy?`?
+# #    It's always going to be true anyway.
+# #
+# # This type is defined in `std::bootstrap` as it's needed early on in the
+# # runtime bootstrapping process, and must be available to all modules.
+# trait Object {
+#   # Returns a boolean indicating if this object evaluates to True in a boolean
+#   # context.
+#   #
+#   # # Examples
+#   #
+#   #     10.truthy?    # => True
+#   #     False.truthy? # => False
+#   def truthy? -> Boolean {
+#     True
+#   }
+#
+#   # Returns `True` if `self` and the given object are the exact same objects.
+#   #
+#   # Two objects are considered identical if they reside at the exact same
+#   # memory address. This is also known as referential equality.
+#   #
+#   # This method should not be redefined by other objects, as doing so can break
+#   # various parts of the Inko runtime.
+#   def same_object?(other: ref Self) -> Boolean {
+#     _INKOC.object_equals(self, other)
+#   }
+# }
+#
+# impl Object for Int {}
+# impl Object for Float {}
+# impl Object for String {}
+# impl Object for Array {}
+# impl Object for Block {}
+# impl Object for Boolean {}
+# impl Object for NilType {}
+# impl Object for ByteArray {}
 
 # All these constants will be available as globals to all other modules.
 let Trait = _INKOC.get_trait_prototype
@@ -11,7 +80,7 @@ let False = _INKOC.get_false
 let Nil = _INKOC.get_nil
 let NilType = _INKOC.get_nil_prototype
 let String = _INKOC.get_string_prototype
-let Integer = _INKOC.get_integer_prototype
+let Int = _INKOC.get_integer_prototype
 let Float = _INKOC.get_float_prototype
 let Block = _INKOC.get_block_prototype
 let Array = _INKOC.get_array_prototype
@@ -24,7 +93,7 @@ _INKOC.set_object_name(Trait, 'Trait')
 _INKOC.set_object_name(Boolean, 'Boolean')
 _INKOC.set_object_name(String, 'String')
 _INKOC.set_object_name(NilType, 'NilType')
-_INKOC.set_object_name(Integer, 'Integer')
+_INKOC.set_object_name(Int, 'Int')
 _INKOC.set_object_name(Float, 'Float')
 _INKOC.set_object_name(Array, 'Array')
 _INKOC.set_object_name(Block, 'Block')
@@ -56,25 +125,6 @@ trait Object {
     True
   }
 
-  # Calls the `true` block if the receiver evaluates to `True`, otherwise the
-  # `false` block is called.
-  #
-  # The return value is whatever the block returned. Both the blocks must
-  # return a value of the same type.
-  def if!(R)(true: do -> R, false: do -> R) -> R {
-    _INKOC.if(truthy?, true.call, false.call)
-  }
-
-  # Calls the supplied block if the receiver evaluates to `True`.
-  def if_true!(R)(block: do -> R) {
-    _INKOC.if(truthy?, block.call, Nil)
-  }
-
-  # Calls the supplied block if the receiver evaluates to `False`.
-  def if_false!(R)(block: do -> R) {
-    _INKOC.if(truthy?, Nil, block.call)
-  }
-
   # Returns `True` if `self` and the given object are the exact same objects.
   #
   # Two objects are considered identical if they reside at the exact same
@@ -82,7 +132,7 @@ trait Object {
   #
   # This method should not be redefined by other objects, as doing so can break
   # various parts of the Inko runtime.
-  def same_object?(other: Self) -> Boolean {
+  def same_object?(other: ref Self) -> Boolean {
     _INKOC.object_equals(self, other)
   }
 }
@@ -90,7 +140,7 @@ trait Object {
 impl Object for Boolean {}
 impl Object for NilType {}
 impl Object for String {}
-impl Object for Integer {}
+impl Object for Int {}
 impl Object for Float {}
 impl Object for Block {}
 impl Object for Array {}

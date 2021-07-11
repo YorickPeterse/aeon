@@ -2,14 +2,21 @@
 #
 # Strings are UTF-8 encoded and immutable. A String must _always_ contain valid
 # UTF-8.
-import std::conversion::(ToFloat, ToInteger, ToString)
+import std::clone::(Clone, Copy)
+import std::conversion::(ToFloat, ToInt, ToString)
 import std::hash::Hash
 import std::length::Length
 import std::operators::(Add, Equal, Match)
 
-extern def string_to_lower(string: String) -> String
-extern def string_to_upper(string: String) -> String
-extern def string_slice(string: String, start: Integer, size: Integer) -> String
+extern def string_to_lower(string: ref String) -> String
+extern def string_to_upper(string: ref String) -> String
+extern def string_slice(
+  string: ref String,
+  start: ref Int,
+  size: ref Int
+) -> String
+
+extern def string_clone(string: ref String) -> String
 
 impl String {
   # Returns the uppercase equivalent of the current `String`.
@@ -57,7 +64,7 @@ impl String {
   # Getting the size of a `String`:
   #
   #     'foo'.bytesize # => 3
-  def bytesize -> Integer {
+  def bytesize -> Int {
     _INKOC.string_size(self)
   }
 
@@ -73,7 +80,7 @@ impl String {
   # `String`:
   #
   #     'inko'.byte(-1) # => 111
-  def byte(index: Integer) -> Integer {
+  def byte(index: Int) -> Int {
     _INKOC.string_byte(self, index)
   }
 
@@ -99,8 +106,8 @@ impl String {
   # Similar to indexing an `Array` you can use a negative `start` position:
   #
   #     'hello_world'.slice(start: -1, length: 5) # => 'world'
-  def slice(start: Integer, length: Integer) -> String {
-    length.negative?.if_true {
+  def slice(start: Int, length: Int) -> String {
+    if length.negative? {
       _INKOC.panic('The slice length must be zero or greater')
     }
 
@@ -116,7 +123,7 @@ impl String {
   #     'test_starts_with'.starts_with?('test_') # => True
   #     'hello'.starts_with?('test_')            # => False
   def starts_with?(prefix: String) -> Boolean {
-    (prefix.length > length).if_true { return False }
+    if prefix.length > length { return False }
 
     slice(start: 0, length: prefix.length) == prefix
   }
@@ -135,11 +142,19 @@ impl String {
 
     # if "suffix" is longer than "self" we produce a negative index. In this
     # case "self" will never start with "suffix".
-    start.negative?.if_true { return False }
+    if start.negative? { return False }
 
     slice(start, suffix_len) == suffix
   }
 }
+
+impl Clone for String {
+  def clone -> Self {
+    string_clone(self)
+  }
+}
+
+impl Copy for String {}
 
 impl ToString for String {
   # Returns the current `String`.
@@ -150,7 +165,7 @@ impl ToString for String {
   #
   #     'hello'.to_string # => 'hello'
   def to_string -> String {
-    self
+    clone
   }
 }
 
@@ -166,7 +181,7 @@ impl Length for String {
   # Getting the length of a Unicode `String`:
   #
   #     '쿠키'.length # => 2
-  def length -> Integer {
+  def length -> Int {
     _INKOC.string_length(self)
   }
 }
@@ -183,7 +198,7 @@ impl Equal for String {
   # Returns `False` if two Strings are not equal:
   #
   #     'foo' == 'bar' # => False
-  def ==(other: Self) -> Boolean {
+  def ==(other: ref Self) -> Boolean {
     _INKOC.string_equals(self, other)
   }
 }
@@ -198,14 +213,14 @@ impl Add!(String) for String {
   # Concatenating two `String` objects:
   #
   #     'hello ' + 'world' # => 'hello world'
-  def +(other: String) -> Self {
+  def +(other: ref String) -> Self {
     _INKOC.string_concat(self, other)
   }
 }
 
 impl Match!(String) for String {
   # Returns `True` if `self` and the given `String` are equal to each other.
-  def =~(other: String) -> Boolean {
+  def =~(other: ref String) -> Boolean {
     _INKOC.string_equals(self, other)
   }
 }

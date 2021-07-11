@@ -100,7 +100,8 @@
 #     let errno = libc.variable('errno')
 #
 #     errno.read(types.i32) # => 0
-import std::conversion::ToInteger
+import std::clone::(Clone, Copy)
+import std::conversion::ToInt
 import std::error::StandardError
 import std::hash::Hash
 import std::index::(Index, SetIndex)
@@ -126,41 +127,45 @@ _INKOC.set_object_name(Pointer, 'Pointer')
 # The address used for NULL pointers.
 let NULL_ADDRESS = 0x0
 
-extern def ffi_library_open(names: Array!(String)) !! String -> Library
+extern def ffi_library_open(names: ref Array!(String)) !! String -> Library
 extern def ffi_function_attach(
-  library: Library,
-  name: String,
-  arguments: Array!(Integer),
-  returns: Integer
+  library: ref Library,
+  name: ref String,
+  arguments: ref Array!(Int),
+  returns: ref Int
 ) !! String -> Function
 
-extern def ffi_function_call(function: Function, arguments: Array!(Any)) -> Any
+extern def ffi_function_call(
+  function: ref Function,
+  arguments: ref Array!(ref Any)
+) -> Any
+
 extern def ffi_pointer_attach(
-  library: Library,
-  name: String
+  library: ref Library,
+  name: ref String
 ) !! String -> Pointer
 
 extern def ffi_pointer_read(
-  pointer: Pointer,
-  type: Integer,
-  offset: Integer
+  pointer: ref Pointer,
+  type: ref Int,
+  offset: ref Int
 ) -> Any
 
 extern def ffi_pointer_write(
-  pointer: Pointer,
-  type: Integer,
-  value: Any,
-  offset: Integer
+  pointer: ref Pointer,
+  type: ref Int,
+  value: ref Any,
+  offset: ref Int
 ) -> Any
 
-extern def ffi_pointer_from_address(address: Integer) -> Pointer
-extern def ffi_pointer_address(pointer: Pointer) -> Integer
-extern def ffi_type_size(type: Integer) -> Integer
-extern def ffi_type_alignment(type: Integer) -> Integer
+extern def ffi_pointer_from_address(address: ref Int) -> Pointer
+extern def ffi_pointer_address(pointer: ref Pointer) -> Int
+extern def ffi_type_size(type: ref Int) -> Int
+extern def ffi_type_alignment(type: ref Int) -> Int
 
 impl Pointer {
   # Creates a pointer using the given memory address.
-  static def new(address: Integer) -> Self {
+  static def new(address: Int) -> Self {
     ffi_pointer_from_address(address)
   }
 
@@ -175,17 +180,18 @@ impl Pointer {
   }
 
   # Returns the address of this `Pointer`.
-  def address -> Integer {
+  def address -> Int {
     ffi_pointer_address(self)
   }
 
   # Reads the value of a pointer into a certain type.
   #
-  # The `type` argument specifies the `Type` of data that is being read. The
-  # `offset` argument can be used to specify an offset in bytes (relative to
-  # the pointer) to read from.
-  def read(type: Type, offset = 0) -> Any {
-    ffi_pointer_read(self, type.to_integer, offset)
+  # The `type` argument specifies the `Type` of data that is being read.
+  #
+  # The `offset` argument is used to specify an offset in bytes (relative to the
+  # pointer) to read from.
+  def read(type: ref Type, offset: Int) -> Any {
+    ffi_pointer_read(self, type.to_int, offset)
   }
 
   # Writes a value to the pointer.
@@ -193,8 +199,8 @@ impl Pointer {
   # The `type` argument specifies the `Type` of data that is being written. The
   # `offset` argument can be used to specify an offset in bytes (relative to
   # the pointer) to write to.
-  def write!(T)(type: Type, value: T, offset = 0) -> T {
-    ffi_pointer_write(self, type.to_integer, value, offset)
+  def write(type: ref Type, value: Any, offset: Int) {
+    ffi_pointer_write(self, type.to_int, value, offset)
   }
 }
 
@@ -236,7 +242,7 @@ impl Object for Library {}
 
 impl Close for Library {
   # Disposes of the current library.
-  def close {
+  move def close {
     _INKOC.close(self)
   }
 }
@@ -251,7 +257,7 @@ impl Function {
   # This method will panic if the argument types or return type are invalid
   # values.
   static def new(
-    library: Library,
+    library: ref Library,
     name: String,
     arguments: Array!(Type),
     returns: Type
@@ -260,8 +266,8 @@ impl Function {
       ffi_function_attach(
         library,
         name,
-        arguments.iter.map do (type) { type.to_integer }.to_array,
-        returns.to_integer
+        arguments.iter.map do (type) { type.to_int }.to_array,
+        returns.to_int
       )
     } else (error) {
       throw StandardError.new(error)
@@ -271,7 +277,7 @@ impl Function {
   # Calls the function with the given arguments.
   #
   # This method will panic if any of the arguments are invalid.
-  def call(*arguments: Object) -> Any {
+  def call(*arguments: ref Any) -> Any {
     ffi_function_call(self, arguments)
   }
 }
@@ -303,25 +309,25 @@ class Member {
   @type: Type
 
   # The offset of this `Member`, relative to the start of the struct.
-  @offset: Integer
+  @offset: Int
 
-  static def new(name: String, type: Type, offset: Integer) -> Self {
+  static def new(name: String, type: Type, offset: Int) -> Self {
     Self { @name = name, @type = type, @offset = offset }
   }
 
   # Returns the name of this `Member`.
   def name -> String {
-    @name
+    @name.clone
   }
 
   # Returns the C `Type` of this `Member`.
   def type -> Type {
-    @type
+    @type.clone
   }
 
   # Returns the offset of this `Member`.
-  def offset -> Integer {
-    @offset
+  def offset -> Int {
+    @offset.clone
   }
 }
 
@@ -332,35 +338,37 @@ class Layout {
   @members: Map!(String, Member)
 
   # The size (in bytes) of this layout.
-  @size: Integer
+  @size: Int
 
   # The alignment to use for all fields. This equals the alignment of the
   # largest field.
-  @alignment: Integer
+  @alignment: Int
 
   static def new(
     members: Map!(String, Member),
-    alignment: Integer,
-    size: Integer
+    alignment: Int,
+    size: Int
   ) -> Self {
     Self { @members = members, @size = size, @alignment = alignment }
   }
 
   # Returns the alignment of the members in this `Struct`.
-  def alignment -> Integer {
-    @alignment
+  def alignment -> Int {
+    @alignment.clone
   }
 
   # Returns the size in bytes of this `Layout`.
-  def size -> Integer {
-    @size
+  def size -> Int {
+    @size.clone
   }
+}
 
+impl Index!(String, ref Member) for Layout {
   # Returns the `Member` for the given name.
   #
   # This method will panic if no member is defined for the given name.
-  def [](name: String) -> Member {
-    @members[name]
+  def [](index: String) -> ref Member {
+    @members[index]
   }
 }
 
@@ -377,32 +385,36 @@ class Struct {
   }
 
   # Returns the size in bytes of this `Struct`.
-  def size -> Integer {
+  def size -> Int {
     @layout.size
   }
 
   # Returns the alignment of the members in this `Struct`.
-  def alignment -> Integer {
+  def alignment -> Int {
     @layout.alignment
   }
 
   # Returns the pointer to the C structure.
-  def pointer -> Pointer {
+  def pointer -> ref Pointer {
     @pointer
   }
+}
 
+impl Index!(String, Any) for Struct {
   # Reads the value of the given struct member.
   #
   # This method will panic if the given member does not exist.
-  def [](name: String) -> Any {
-    let member = @layout[name]
+  def [](index: String) -> Any {
+    let member = @layout[index]
 
     @pointer.read(type: member.type, offset: member.offset)
   }
+}
 
+impl SetIndex!(String, Any) for Struct {
   # Writes a value to a struct member.
-  def []=!(T)(name: String, value: T) -> T {
-    let member = @layout[name]
+  def []=(index: String, value: Any) {
+    let member = @layout[index]
 
     @pointer.write(type: member.type, value: value, offset: member.offset)
   }
@@ -414,7 +426,7 @@ impl Layout {
   #
   # The given argument is a `Pointer` pointing to the memory in C that contains
   # the structure's data.
-  def from_pointer(pointer: Pointer) -> Struct {
+  move def from_pointer(pointer: Pointer) -> Struct {
     Struct.new(pointer: pointer, layout: self)
   }
 }
@@ -431,7 +443,7 @@ class LayoutBuilder {
   @existing: Set!(String)
 
   # The alignment of the largest field.
-  @alignment: Integer
+  @alignment: Int
 
   # A boolean indicating if members should be padded or not.
   @padding: Boolean
@@ -454,7 +466,7 @@ class LayoutBuilder {
 
   # Creates a new `Layout` based on the current state of this builder.
   def to_layout -> Layout {
-    @padding.if_true { return layout_with_padding }
+    if @padding { return layout_with_padding }
 
     layout_without_padding
   }
@@ -466,13 +478,13 @@ class LayoutBuilder {
     let mut offset = 0
     let mut remaining_in_hole = @alignment
 
-    @members.each_with_index do (name, index) {
+    for (index, name) in @members.iter.with_index {
       let type = @types[index]
       let type_align = type.alignment
 
       # If the value is too great to fit into the current hole, we need to add
       # padding to the current hole, then start over at the next hole.
-      (type_align > remaining_in_hole).if_true {
+      if type_align > remaining_in_hole {
         let padding = @alignment - remaining_in_hole
 
         size += padding
@@ -481,17 +493,18 @@ class LayoutBuilder {
         remaining_in_hole = @alignment
       }
 
-      members[name] = Member.new(name: name, type: type, offset: offset)
+      members[name.clone] =
+        Member.new(name: name.clone, type: type.clone, offset: offset)
 
       remaining_in_hole -= type_align
 
       size += type_align
       offset += type_align
 
-      remaining_in_hole.zero?.if_true { remaining_in_hole = @alignment }
+      if remaining_in_hole.zero? { remaining_in_hole = @alignment }
     }
 
-    Layout.new(members: members, alignment: @alignment, size: size)
+    Layout.new(members: members, alignment: @alignment.clone, size: size)
   }
 
   # Creates a `Layout` that does not use any padding.
@@ -499,15 +512,16 @@ class LayoutBuilder {
     let members = Map.new
     let mut offset = 0
 
-    @members.each_with_index do (name, index) {
+    for (index, name) in @members.iter.with_index {
       let type = @types[index]
 
-      members[name] = Member.new(name: name, type: type, offset: offset)
+      members[name.clone] =
+        Member.new(name: name.clone, type: type.clone, offset: offset)
 
       offset += type.alignment
     }
 
-    Layout.new(members: members, alignment: @alignment, size: offset)
+    Layout.new(members: members, alignment: @alignment.clone, size: offset)
   }
 }
 
@@ -515,61 +529,67 @@ impl SetIndex!(String, Type) for LayoutBuilder {
   # Defines a new member.
   #
   # Trying to redefine a member will result in a panic.
-  def []=(name: String, type: Type) -> Type {
-    @existing.contains?(name).if_true {
+  def []=(name: String, type: Type) {
+    if @existing.contains?(name) {
       panic(`The member {name} has already been defined`)
     }
 
-    @existing.insert(name)
+    @existing.insert(name.clone)
     @members.push(name)
     @types.push(type)
 
     # If padding is enabled we determine the structure's alignment based on the
     # alignment of the largest field.
-    @padding
-      .and { type.alignment > @alignment }
-      .if_true { @alignment = type.alignment }
-
-    type
+    if @padding and { type.alignment > @alignment } {
+      @alignment = type.alignment
+    }
   }
 }
 
 # An identifier for a C type.
 #
-# A Type is just a simple wrapper around an Integer. The use of a `Type`
-# instead of a regular `Integer` makes it a little more difficult to use
+# A Type is just a simple wrapper around an Int. The use of a `Type`
+# instead of a regular `Int` makes it a little more difficult to use
 # incorrect type identifiers when attaching C functions.
 class Type {
   # The numeric identifier of this type.
-  @id: Integer
+  @id: Int
 
-  static def new(id: Integer) -> Self {
+  static def new(id: Int) -> Self {
     Self { @id = id }
   }
 
   # Returns the size of this type in bytes.
-  def size -> Integer {
+  def size -> Int {
     ffi_type_size(@id)
   }
 
   # Returns the alignment of this type in bytes.
-  def alignment -> Integer {
+  def alignment -> Int {
     ffi_type_alignment(@id)
   }
 }
 
 impl Equal for Type {
   def ==(other: Type) -> Boolean {
-    to_integer == other.to_integer
+    to_int == other.to_int
   }
 }
 
-impl ToInteger for Type {
+impl ToInt for Type {
   # Returns the numeric identifier of this type.
-  def to_integer -> Integer {
-    @id
+  def to_int -> Int {
+    @id.clone
   }
 }
+
+impl Clone for Type {
+  def clone -> Self {
+    Type.new(@id.clone)
+  }
+}
+
+impl Copy for Type {}
 
 # Returns a `Type` for the C type `void`.
 def void -> Type {
@@ -655,7 +675,7 @@ def byte_array -> Type {
 # Despite its name, this method returns a `Layout` and not a `Struct`. The name
 # "struct" was chosen because it leads to a more pleasant AP, compared to
 # calling the method `layout`.
-def struct(block: do (LayoutBuilder)) -> Layout {
+def struct(block: do (ref LayoutBuilder)) -> Layout {
   let builder = LayoutBuilder.new
 
   block.call(builder)

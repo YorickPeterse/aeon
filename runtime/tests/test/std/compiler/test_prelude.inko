@@ -2,7 +2,7 @@ import std::compiler::prelude::(prelude)
 import std::pair::Pair
 import std::test::*
 
-def tests(t: Tests) {
+def tests(t: ref Tests) {
   t.group('std::compiler::prelude.prelude') do (g) {
     g.test('Getting the symbols included in the prelude') {
       let syms = prelude

@@ -1,12 +1,15 @@
 //! Functions for working with OS commands.
 use crate::external_functions::read_into;
-use crate::object_pointer::ObjectPointer;
-use crate::object_value;
-use crate::process::RcProcess;
+use crate::mem::allocator::{BumpAllocator, Pointer};
+use crate::mem::generator::GeneratorPointer;
+use crate::mem::objects::{
+    Array, ByteArray, String as InkoString, UnsignedInt,
+};
+use crate::mem::process::ServerPointer;
 use crate::runtime_error::RuntimeError;
-use crate::vm::state::RcState;
+use crate::vm::state::State;
 use std::io::Write;
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 
 /// Spawns a child process.
 ///
@@ -22,25 +25,29 @@ use std::process::{Command, Stdio};
 /// 7. The working directory to use for the command. If the path is empty, no
 ///    custom directory is set
 pub fn child_process_spawn(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let program = arguments[0].string_value()?;
-    let args = arguments[1].array_value()?;
-    let env = arguments[2].array_value()?;
-    let stdin = arguments[3].integer_value()?;
-    let stdout = arguments[4].integer_value()?;
-    let stderr = arguments[5].integer_value()?;
-    let directory = arguments[6].string_value()?;
+    _: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let program = unsafe { InkoString::read(&arguments[0]) };
+    let args = unsafe { arguments[1].get::<Array>() }.value();
+    let env = unsafe { arguments[2].get::<Array>() }.value();
+    let stdin = unsafe { UnsignedInt::read(arguments[3]) };
+    let stdout = unsafe { UnsignedInt::read(arguments[4]) };
+    let stderr = unsafe { UnsignedInt::read(arguments[5]) };
+    let directory = unsafe { InkoString::read(&arguments[6]) };
     let mut cmd = Command::new(program);
 
     for ptr in args {
-        cmd.arg(ptr.string_value()?);
+        cmd.arg(unsafe { InkoString::read(&*ptr) });
     }
 
     for pair in env.chunks(2) {
-        cmd.env(pair[0].string_value()?, pair[1].string_value()?);
+        unsafe {
+            cmd.env(InkoString::read(&&pair[0]), InkoString::read(&&pair[1]));
+        }
     }
 
     cmd.stdin(stdio_for(stdin));
@@ -51,10 +58,7 @@ pub fn child_process_spawn(
         cmd.current_dir(directory);
     }
 
-    let child = cmd.spawn()?;
-
-    Ok(process
-        .allocate(object_value::command(child), state.child_process_prototype))
+    Ok(Pointer::boxed(cmd.spawn()?))
 }
 
 /// Waits for a command and returns its exit status.
@@ -65,14 +69,17 @@ pub fn child_process_spawn(
 ///
 /// This function closes STDIN before waiting.
 pub fn child_process_wait(
-    _: &RcState,
-    _: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let status = arguments[0].command_value_mut()?.wait()?;
+    _: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let child = unsafe { arguments[0].get_mut::<Child>() };
+    let status = child.wait()?;
     let code = status.code().unwrap_or(0) as i64;
 
-    Ok(ObjectPointer::integer(code))
+    Ok(Pointer::int(code))
 }
 
 /// Waits for a command and returns its exit status, without blocking.
@@ -82,14 +89,17 @@ pub fn child_process_wait(
 ///
 /// This function requires a single argument: the command to wait for.
 pub fn child_process_try_wait(
-    _: &RcState,
-    _: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let status = arguments[0].command_value_mut()?.try_wait()?;
+    _: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let child = unsafe { arguments[0].get_mut::<Child>() };
+    let status = child.try_wait()?;
     let code = status.map(|s| s.code().unwrap_or(0)).unwrap_or(-1) as i64;
 
-    Ok(ObjectPointer::integer(code))
+    Ok(Pointer::int(code))
 }
 
 /// Reads from a child process' STDOUT stream.
@@ -100,20 +110,26 @@ pub fn child_process_try_wait(
 /// 2. The ByteArray to read the data into
 /// 3. The number of bytes to read
 pub fn child_process_stdout_read(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let cmd = arguments[0].command_value_mut()?;
-    let buff = arguments[1].byte_array_value_mut()?;
-    let size = arguments[2].u64_value().ok();
-    let result = cmd
+    state: &State,
+    alloc: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let child = unsafe { arguments[0].get_mut::<Child>() };
+    let buff = unsafe { arguments[1].get_mut::<ByteArray>() }.value_mut();
+    let size = unsafe { UnsignedInt::read(arguments[2]) };
+    let value = child
         .stdout
         .as_mut()
         .map(|stream| read_into(stream, buff, size))
         .unwrap_or(Ok(0))?;
 
-    Ok(process.allocate_usize(result, state.integer_prototype))
+    Ok(UnsignedInt::alloc(
+        alloc,
+        state.permanent_space.unsigned_int_class(),
+        value,
+    ))
 }
 
 /// Reads from a child process' STDERR stream.
@@ -124,20 +140,26 @@ pub fn child_process_stdout_read(
 /// 2. The ByteArray to read the data into
 /// 3. The number of bytes to read
 pub fn child_process_stderr_read(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let cmd = arguments[0].command_value_mut()?;
-    let buff = arguments[1].byte_array_value_mut()?;
-    let size = arguments[2].u64_value().ok();
-    let result = cmd
+    state: &State,
+    alloc: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let child = unsafe { arguments[0].get_mut::<Child>() };
+    let buff = unsafe { arguments[1].get_mut::<ByteArray>() }.value_mut();
+    let size = unsafe { UnsignedInt::read(arguments[2]) };
+    let value = child
         .stderr
         .as_mut()
         .map(|stream| read_into(stream, buff, size))
         .unwrap_or(Ok(0))?;
 
-    Ok(process.allocate_usize(result, state.integer_prototype))
+    Ok(UnsignedInt::alloc(
+        alloc,
+        state.permanent_space.unsigned_int_class(),
+        value,
+    ))
 }
 
 /// Writes a ByteArray to a child process' STDIN stream.
@@ -147,19 +169,25 @@ pub fn child_process_stderr_read(
 /// 1. The command to write to.
 /// 2. The ByteArray to write.
 pub fn child_process_stdin_write_bytes(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let cmd = arguments[0].command_value_mut()?;
-    let input = arguments[1].byte_array_value()?;
-    let size = cmd
+    state: &State,
+    alloc: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let child = unsafe { arguments[0].get_mut::<Child>() };
+    let input = unsafe { arguments[1].get::<ByteArray>() }.value();
+    let value = child
         .stdin
         .as_mut()
         .map(|stream| stream.write(&input))
         .unwrap_or(Ok(0))?;
 
-    Ok(process.allocate_usize(size, state.integer_prototype))
+    Ok(UnsignedInt::alloc(
+        alloc,
+        state.permanent_space.unsigned_int_class(),
+        value as u64,
+    ))
 }
 
 /// Writes a String to a child process' STDIN stream.
@@ -169,19 +197,25 @@ pub fn child_process_stdin_write_bytes(
 /// 1. The command to write to.
 /// 2. The String to write.
 pub fn child_process_stdin_write_string(
-    state: &RcState,
-    process: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let cmd = arguments[0].command_value_mut()?;
-    let input = arguments[1].string_value()?;
-    let size = cmd
+    state: &State,
+    alloc: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let child = unsafe { arguments[0].get_mut::<Child>() };
+    let input = unsafe { InkoString::read(&arguments[1]) };
+    let value = child
         .stdin
         .as_mut()
-        .map(|stream| stream.write(&input.as_bytes()))
+        .map(|stream| stream.write(input.as_bytes()))
         .unwrap_or(Ok(0))?;
 
-    Ok(process.allocate_usize(size, state.integer_prototype))
+    Ok(UnsignedInt::alloc(
+        alloc,
+        state.permanent_space.unsigned_int_class(),
+        value as u64,
+    ))
 }
 
 /// Flushes the child process' STDIN stream.
@@ -190,17 +224,21 @@ pub fn child_process_stdin_write_string(
 ///
 /// 1. The command to flush STDIN for.
 pub fn child_process_stdin_flush(
-    state: &RcState,
-    _: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    let cmd = arguments[0].command_value_mut()?;
+    state: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let child = unsafe { arguments[0].get_mut::<Child>() };
 
-    cmd.stdin
+    child
+        .stdin
         .as_mut()
         .map(|stream| stream.flush())
         .unwrap_or(Ok(()))?;
-    Ok(state.nil_object)
+
+    Ok(state.permanent_space.nil_singleton)
 }
 
 /// Closes the STDOUT stream of a child process.
@@ -208,12 +246,16 @@ pub fn child_process_stdin_flush(
 /// This function requires a single argument: the command to close the stream
 /// for.
 pub fn child_process_stdout_close(
-    state: &RcState,
-    _: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    arguments[0].command_value_mut()?.stdout.take();
-    Ok(state.nil_object)
+    state: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let child = unsafe { arguments[0].get_mut::<Child>() };
+
+    child.stdout.take();
+    Ok(state.permanent_space.nil_singleton)
 }
 
 /// Closes the STDERR stream of a child process.
@@ -221,12 +263,16 @@ pub fn child_process_stdout_close(
 /// This function requires a single argument: the command to close the stream
 /// for.
 pub fn child_process_stderr_close(
-    state: &RcState,
-    _: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    arguments[0].command_value_mut()?.stderr.take();
-    Ok(state.nil_object)
+    state: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let child = unsafe { arguments[0].get_mut::<Child>() };
+
+    child.stderr.take();
+    Ok(state.permanent_space.nil_singleton)
 }
 
 /// Closes the STDIN stream of a child process.
@@ -234,15 +280,36 @@ pub fn child_process_stderr_close(
 /// This function requires a single argument: the command to close the stream
 /// for.
 pub fn child_process_stdin_close(
-    state: &RcState,
-    _: &RcProcess,
-    arguments: &[ObjectPointer],
-) -> Result<ObjectPointer, RuntimeError> {
-    arguments[0].command_value_mut()?.stdin.take();
-    Ok(state.nil_object)
+    state: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    let child = unsafe { arguments[0].get_mut::<Child>() };
+
+    child.stdin.take();
+    Ok(state.permanent_space.nil_singleton)
 }
 
-fn stdio_for(value: i64) -> Stdio {
+/// Drops a child process.
+///
+/// This function requires a single argument: the child process to drop.
+pub fn child_process_drop(
+    state: &State,
+    _: &mut BumpAllocator,
+    _: ServerPointer,
+    _: GeneratorPointer,
+    arguments: &[Pointer],
+) -> Result<Pointer, RuntimeError> {
+    unsafe {
+        arguments[0].drop_boxed::<Child>();
+    }
+
+    Ok(state.permanent_space.nil_singleton)
+}
+
+fn stdio_for(value: u64) -> Stdio {
     match value {
         1 => Stdio::inherit(),
         2 => Stdio::piped(),
@@ -261,5 +328,6 @@ register!(
     child_process_stdin_close,
     child_process_stdin_write_bytes,
     child_process_stdin_write_string,
-    child_process_stdin_flush
+    child_process_stdin_flush,
+    child_process_drop
 );

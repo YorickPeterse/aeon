@@ -2,7 +2,7 @@ import std::env
 import std::fs::path::(Path, SEPARATOR)
 import std::os
 import std::test::*
-import std::time::SystemTime
+import std::time::DateTime
 import test::features
 import test::fixtures::(INVALID_TIME, VALID_DIRECTORY, VALID_FILE)
 
@@ -24,7 +24,7 @@ def windows_drives -> Array!(String) {
   )
 }
 
-def tests(t: Tests) {
+def tests(t: ref Tests) {
   t.group('std::fs::Path.file?') do (g) {
     g.test('Checking if a Path points to a file') {
       try assert_true(VALID_FILE.file?)
@@ -78,7 +78,7 @@ def tests(t: Tests) {
     }
   }
 
-  features.creation_time?.if_true {
+  if features.creation_time? {
     t.group('std::fs::Path.created_at') do (g) {
       g.test('Obtaining the creation time of a Path') {
         try assert_not_equal(try VALID_FILE.created_at else INVALID_TIME, INVALID_TIME)
@@ -86,7 +86,7 @@ def tests(t: Tests) {
     }
   }
 
-  features.modification_time?.if_true {
+  if features.modification_time? {
     t.group('std::fs::Path.modified_at') do (g) {
       g.test('Obtaining the modification time of a Path') {
         try assert_not_equal(try VALID_FILE.modified_at else INVALID_TIME, INVALID_TIME)
@@ -94,7 +94,7 @@ def tests(t: Tests) {
     }
   }
 
-  features.access_time?.if_true {
+  if features.access_time? {
     t.group('std::fs::Path.accessed_at') do (g) {
       g.test('Obtaining the access time of a Path') {
         try assert_not_equal(try VALID_FILE.accessed_at else INVALID_TIME, INVALID_TIME)
@@ -112,9 +112,9 @@ def tests(t: Tests) {
       try assert_true(Path.new('/foo').absolute?)
     }
 
-    os.windows?.if_true {
+    if os.windows? {
       g.test('Checking if a Path with a Windows drive letter is absolute') {
-        windows_drives.each do (drive) {
+        for drive in windows_drives {
           try assert_true(Path.new(drive + 'foo').absolute?)
         }
       }
@@ -128,9 +128,9 @@ def tests(t: Tests) {
       try assert_false(Path.new(SEPARATOR + 'foo').relative?)
     }
 
-    os.windows?.if_true {
+    if os.windows? {
       g.test('Checking if a Path with a Windows drive letter is relative') {
-        windows_drives.each do (drive) {
+        for drive in windows_drives {
           try assert_false(Path.new(drive + 'foo').relative?)
         }
       }
@@ -140,29 +140,24 @@ def tests(t: Tests) {
   t.group('std::fs::path::Path.join') do (g) {
     g.test('Joining a Path with a relative path as a String') {
       let path = Path.new('foo')
-      let expected = os.windows?.if(
-        true: { Path.new('foo\\bar') },
-        false: { Path.new('foo/bar') }
-      )
+      let expected =
+        if os.windows? { Path.new('foo\\bar') } else { Path.new('foo/bar') }
 
       try assert_equal(path.join('bar'), expected)
     }
 
     g.test('Joining a Path with an absolute path as a String') {
       let path = Path.new('foo')
-      let absolute = os.windows?.if(
-        true: { '\\bar' },
-        false: { '/bar' }
-      )
+      let absolute = if os.windows? { '\\bar' } else { '/bar' }
 
       try assert_equal(path.join(absolute), Path.new(absolute))
     }
 
-    os.windows?.if_true {
+    if os.windows? {
       g.test('Joining a Path with an absolute path including a drive letter') {
         let path = Path.new('foo')
 
-        windows_drives.each do (drive) {
+        for drive in windows_drives {
           try assert_equal(path.join(drive + 'foo'), Path.new(drive + 'foo'))
         }
       }
@@ -170,30 +165,24 @@ def tests(t: Tests) {
 
     g.test('Joining a Path with a relative path as a Path') {
       let path = Path.new('foo')
-      let expected = os.windows?.if(
-        true: { Path.new('foo\\bar') },
-        false: { Path.new('foo/bar') }
-      )
+      let expected =
+        if os.windows? { Path.new('foo\\bar') } else { Path.new('foo/bar') }
 
       try assert_equal(path.join(Path.new('bar')), expected)
     }
 
     g.test('Joining a Path with an absolute path as a Path') {
       let path = Path.new('foo')
-      let absolute = os.windows?.if(
-        true: { Path.new('\\bar') },
-        false: { Path.new('/bar') }
-      )
+      let absolute =
+        if os.windows? { Path.new('\\bar') } else { Path.new('/bar') }
 
       try assert_equal(path.join(absolute), absolute)
     }
 
     g.test('Joining a Path with a trailing field separator') {
       let path = Path.new('foo' + SEPARATOR)
-      let expected = os.windows?.if(
-        true: { Path.new('foo\\bar') },
-        false: { Path.new('foo/bar') }
-      )
+      let expected =
+        if os.windows? { Path.new('foo\\bar') } else { Path.new('foo/bar') }
 
       try assert_equal(path.join('bar'), expected)
     }
@@ -201,7 +190,7 @@ def tests(t: Tests) {
 
   t.group('std::path::Path.directory') do (g) {
     g.test('Obtaining the directory of an absolute Path') {
-      os.windows?.if_true {
+      if os.windows? {
         try assert_equal(Path.new('C:/foo/bar').directory, Path.new('C:/foo'))
         try assert_equal(Path.new('C:/foo').directory, Path.new('C:/'))
         try assert_equal(Path.new('C:/').directory, Path.new('C:/'))
@@ -218,7 +207,7 @@ def tests(t: Tests) {
     }
 
     g.test('Obtaining the directory of a Path with trailing separators') {
-      os.windows?.if_true {
+      if os.windows? {
         try assert_equal(Path.new('C:\\foo\\bar\\').directory, Path.new('C:\\foo'))
         try assert_equal(Path.new('C:\\foo\\').directory, Path.new('C:\\'))
 
@@ -231,7 +220,7 @@ def tests(t: Tests) {
     }
 
     g.test('Obtaining the directory of a Path containing multiple separators') {
-      os.windows?.if_true {
+      if os.windows? {
         try assert_equal(
           Path.new('C:\\foo\\\\bar\\\\baz').directory,
           Path.new('C:\\foo\\\\bar')
@@ -243,7 +232,7 @@ def tests(t: Tests) {
     }
 
     g.test('Obtaining the directory of a relative Path') {
-      os.windows?.if_true {
+      if os.windows? {
         try assert_equal(Path.new('foo\\bar').directory, Path.new('foo'))
       }
 
@@ -252,6 +241,15 @@ def tests(t: Tests) {
       try assert_equal(Path.new('.').directory, Path.new('.'))
       try assert_equal(Path.new('./foo').directory, Path.new('.'))
       try assert_equal(Path.new('').directory, Path.new('.'))
+    }
+  }
+
+  t.group('std::fs::path::Path.into_path') do (g) {
+    g.test('Moving a Path into a new Path') {
+      let a = Path.new('foo')
+      let b = a.into_path
+
+      try assert_equal(b.to_string, 'foo')
     }
   }
 }

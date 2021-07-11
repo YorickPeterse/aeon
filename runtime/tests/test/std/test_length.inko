@@ -8,7 +8,7 @@ class EmptyList {
 }
 
 impl Length for EmptyList {
-  def length -> Integer {
+  def length -> Int {
     0
   }
 }
@@ -20,12 +20,12 @@ class NonEmptyList {
 }
 
 impl Length for NonEmptyList {
-  def length -> Integer {
+  def length -> Int {
     1
   }
 }
 
-def tests(t: Tests) {
+def tests(t: ref Tests) {
   t.group('std::length::Length.empty?') do (g) {
     g.test('Checking if an empty object is empty') {
       try assert_true(EmptyList.new.empty?)

@@ -41,7 +41,7 @@ class ImportSymbol {
   static def new(
     name: String,
     location: SourceLocation,
-    alias: ?ImportAlias = Option.none
+    alias: ?ImportAlias
   ) -> Self {
     Self { @name = name, @location = location, @alias = alias }
   }
@@ -64,7 +64,7 @@ class ImportSymbol {
   # Returns `True` if the name of this symbol should be exposed in the module
   # that imports it.
   def expose? -> Boolean {
-    @alias.get_or_else { return True }.name != '_'
+    try @alias.map do (alias) { alias.name != '_' }.get else True
   }
 
   def location -> SourceLocation {

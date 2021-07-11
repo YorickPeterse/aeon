@@ -1,6 +1,6 @@
 //! Polling of non-blocking sockets using the system's polling mechanism.
-use crate::arc_without_weak::ArcWithoutWeak;
-use crate::process::RcProcess;
+use crate::mem::allocator::Pointer;
+use crate::mem::process::ServerPointer;
 use crate::vm::state::RcState;
 use polling::{Event, Poller, Source};
 use std::io;
@@ -36,7 +36,7 @@ impl NetworkPoller {
 
     pub fn add(
         &self,
-        process: &RcProcess,
+        process: ServerPointer,
         source: impl Source,
         interest: Interest,
     ) -> io::Result<()> {
@@ -45,7 +45,7 @@ impl NetworkPoller {
 
     pub fn modify(
         &self,
-        process: &RcProcess,
+        process: ServerPointer,
         source: impl Source,
         interest: Interest,
     ) -> io::Result<()> {
@@ -63,8 +63,8 @@ impl NetworkPoller {
         self.alive.load(Ordering::Acquire)
     }
 
-    fn event(&self, process: &RcProcess, interest: Interest) -> Event {
-        let key = ArcWithoutWeak::into_raw(process.clone()) as usize;
+    fn event(&self, process: ServerPointer, interest: Interest) -> Event {
+        let key = process.identifier();
 
         match interest {
             Interest::Read => Event::readable(key),
@@ -98,8 +98,9 @@ impl Worker {
             }
 
             for event in &events {
-                let process =
-                    unsafe { ArcWithoutWeak::from_raw(event.key as *mut _) };
+                let process = unsafe {
+                    ServerPointer::new(Pointer::new(event.key as *mut u8))
+                };
 
                 self.state.scheduler.schedule(process);
             }
@@ -112,44 +113,41 @@ impl Worker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vm::test::setup;
+    use crate::test::setup;
     use std::net::UdpSocket;
 
     #[test]
     fn test_add() {
+        let (_alloc, _state, process) = setup();
         let output = UdpSocket::bind("0.0.0.0:0").unwrap();
         let poller = NetworkPoller::new();
-        let (_machine, _block, process) = setup();
 
-        assert!(poller.add(&process, &output, Interest::Read).is_ok());
+        assert!(poller.add(*process, &output, Interest::Read).is_ok());
     }
 
     #[test]
-    fn test_modity() {
+    fn test_modify() {
         let output = UdpSocket::bind("0.0.0.0:0").unwrap();
         let poller = NetworkPoller::new();
-        let (_machine, _block, process) = setup();
+        let (_alloc, _state, process) = setup();
 
-        assert!(poller.add(&process, &output, Interest::Read).is_ok());
-        assert!(poller.modify(&process, &output, Interest::Write).is_ok());
+        assert!(poller.add(*process, &output, Interest::Read).is_ok());
+        assert!(poller.modify(*process, &output, Interest::Write).is_ok());
     }
 
     #[test]
     fn test_poll() {
         let output = UdpSocket::bind("0.0.0.0:0").unwrap();
         let poller = NetworkPoller::new();
-        let (_machine, _block, process) = setup();
+        let (_alloc, _state, process) = setup();
         let mut events = Vec::with_capacity(1);
 
-        poller.add(&process, &output, Interest::Write).unwrap();
+        poller.add(*process, &output, Interest::Write).unwrap();
 
         assert!(poller.poll(&mut events).is_ok());
         assert_eq!(events.capacity(), 1);
         assert_eq!(events.len(), 1);
-        assert_eq!(
-            events[0].key,
-            ArcWithoutWeak::into_raw(process.clone()) as usize
-        );
+        assert_eq!(events[0].key, process.identifier());
     }
 
     #[test]
@@ -157,11 +155,11 @@ mod tests {
         let sock1 = UdpSocket::bind("0.0.0.0:0").unwrap();
         let sock2 = UdpSocket::bind("0.0.0.0:0").unwrap();
         let poller = NetworkPoller::new();
-        let (_machine, _block, process) = setup();
+        let (_alloc, _state, process) = setup();
         let mut events = Vec::with_capacity(1);
 
-        poller.add(&process, &sock1, Interest::Write).unwrap();
-        poller.add(&process, &sock2, Interest::Write).unwrap();
+        poller.add(*process, &sock1, Interest::Write).unwrap();
+        poller.add(*process, &sock2, Interest::Write).unwrap();
         poller.poll(&mut events).unwrap();
 
         assert!(events.capacity() >= 2);

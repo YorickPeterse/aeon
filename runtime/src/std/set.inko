@@ -34,7 +34,10 @@ class Set!(V: Hash + Equal) {
   #
   #     set.insert(10)
   def insert(value: V) -> Boolean {
-    @map.get(value).if(true: { False }, false: { @map[value] = True })
+    if @map.get(value) { return False }
+
+    @map[value] = True
+    True
   }
 
   # Removes a value from this `Set`.
@@ -60,30 +63,8 @@ class Set!(V: Hash + Equal) {
   #     let set = Set.new
   #
   #     set.remove(10) # => False
-  def remove(value: V) -> Boolean {
+  def remove(value: ref V) -> Boolean {
     @map.remove(value).some?
-  }
-
-  # Calls the supplied `Block` for every value in this `Set`.
-  #
-  # # Examples
-  #
-  # Iterating over the values in a `Set`:
-  #
-  #     import std::set::Set
-  #
-  #     let set = Set.new
-  #
-  #     set.insert(10)
-  #     set.insert(20)
-  #
-  #     set.each do (value) {
-  #       value # => 10, 20
-  #     }
-  def each(block: do (V)) {
-    @map.each do (key, _) {
-      block.call(key)
-    }
   }
 
   # Returns an `Iterator` over the values in this `Set`.
@@ -100,8 +81,8 @@ class Set!(V: Hash + Equal) {
   #     set.insert(20)
   #
   #     set.iter.next # => 10
-  def iter -> Iterator!(V, Never) {
-    @map.keys
+  def iter => ref V {
+    for key in @map.keys { yield key }
   }
 
   # Returns `True` if this `Set` contains the given value.
@@ -117,7 +98,7 @@ class Set!(V: Hash + Equal) {
   #     set.contains?(10) # => False
   #     set.insert(10)
   #     set.contains?(10) # => True
-  def contains?(value: V) -> Boolean {
+  def contains?(value: ref V) -> Boolean {
     @map.key?(value)
   }
 }
@@ -139,11 +120,11 @@ impl Equal for Set {
   #     set2.insert(10)
   #
   #     set1 == set2 # => True
-  def ==(other: Self) -> Boolean {
-    (length == other.length).if_false { return False }
+  def ==(other: ref Self) -> Boolean {
+    if length != other.length { return False }
 
-    each do (value) {
-      other.contains?(value).if_false { return False }
+    for value in self {
+      if not other.contains?(value) { return False }
     }
 
     True
@@ -168,7 +149,7 @@ impl Length for Set {
   #     set.insert('Alice')
   #
   #     set.length # => 1
-  def length -> Integer {
+  def length -> Int {
     @map.length
   }
 }

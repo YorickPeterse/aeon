@@ -23,20 +23,26 @@ let WRITE_ZERO = 14
 let INTERRUPTED = 15
 let UNEXPECTED_EOF = 16
 
+# The initial number of bytes to read in `Read.read_all`
+let INITIAL_READ_ALL_SIZE = 1024
+
+# The maximum number of bytes to read when using `Read.read_all`.
+let MAX_READ_ALL_SIZE = 1024 * 1024
+
 # An IO error.
 #
 # `Error` is thrown whenever an IO operation resulted in an error, such as when
 # trying to access a non-existing file.
 class Error {
   # The IO error code.
-  @code: Integer
+  @code: Int
 
   # The error message.
   @message: String
 
   # Returns a new `Error` according to the given error code.
-  static def new(code: Integer) -> Self {
-    let message = match(code) {
+  static def new(code: Int) -> Self {
+    let message = match code {
       NOT_FOUND -> { 'The resource could not be found' }
       PERMISSION_DENIED -> {
         'The operation lacked the necessary privileges to complete'
@@ -77,7 +83,7 @@ class Error {
   }
 
   # Returns the error code.
-  def code -> Integer {
+  def code -> ref Int {
     @code
   }
 }
@@ -88,23 +94,20 @@ impl ToString for Error {
   }
 }
 
-impl ErrorTrait for Error {
-  def message -> String {
-    @message
-  }
-}
+impl ErrorTrait for Error {}
 
 # A trait for closing streams, such as files and sockets.
 trait Close {
-  # Closes the stream.
+  # Closes the IO stream.
   #
-  # After a stream is closed, any reads or writes might panic.
-  def close
+  # This method moves the receiver, ensuring it can't be used after the stream
+  # is closed.
+  move def close
 }
 
 # Trait for retrieving the size of an IO object.
 trait Size {
-  def size !! Error -> Integer
+  def size !! Error -> Int
 }
 
 # Trait for reading from a stream.
@@ -113,24 +116,31 @@ trait Read {
   #
   # The return value is the number of bytes read.
   #
-  # If no argument is given, all remaining data is to be read. If the `size`
-  # argument is given, up to `size` bytes will be read from the stream.
-  #
-  # If `size <= 0`, all remaining bytes are read.
-  def read_bytes(bytes: ByteArray, size = 0) !! Error -> Integer
+  # The `size` argument specifies how many bytes are to be read. The actual
+  # number of bytes read may be less than this value.
+  def read(into: ref ByteArray, size: Int) !! Error -> Int
 
-  # Reads data from a stream into a `String`.
+  # Reads all bytes from the stream into the `ByteArray`.
   #
-  # If no argument is given, all remaining data is to be read. If the `size`
-  # argument is given, up to `size` bytes will be read from the stream.
+  # If an error is encountered while reading, this method stops reading any more
+  # bytes and re-throws the error.
   #
-  # If `size <= 0`, all remaining bytes are read.
-  def read_string(size = 0) !! Error -> String {
-    let bytes = ByteArray.new
+  # The return value is the number of bytes read.
+  def read_all(bytes: ref ByteArray) !! Error -> Int {
+    let mut total = 0
+    let mut read_size = INITIAL_READ_ALL_SIZE
 
-    try read_bytes(bytes: bytes, size: size)
+    loop {
+      let bytes_read = try read(into: bytes, size: read_size)
 
-    bytes.drain_to_string
+      if bytes_read == 0 { return total }
+
+      total += bytes_read
+
+      # To reduce the overhead of large buffer reads, we increase the buffer
+      # size as more data is read.
+      if read_size < MAX_READ_ALL_SIZE { read_size *= 2 }
+    }
   }
 }
 
@@ -138,10 +148,10 @@ trait Read {
 trait Write {
   # Writes an `Array` of bytes to the stream, returning the number of bytes
   # written.
-  def write_bytes(bytes: ByteArray) !! Error -> Integer
+  def write_bytes(bytes: ref ByteArray) !! Error -> Int
 
   # Writes a `ToString` to the stream, returning the number of bytes written.
-  def write_string(string: ToString) !! Error -> Integer
+  def write_string(string: ref ToString) !! Error -> Int
 
   # Flushes any pending writes.
   def flush !! Error
@@ -152,8 +162,8 @@ trait Write {
   # This method always uses `\n` as the newline separator.
   #
   # The return value is the number of bytes written to the stream.
-  def print(data: ToString = '') !! Error -> Integer {
-    ( try write_string(data.to_string) ) + ( try write_string("\n") )
+  def print(data: ref ToString) !! Error -> Int {
+    try write_string(`{data}\n`)
   }
 }
 
@@ -163,5 +173,5 @@ trait Seek {
   #
   # If `position` is negative, seeking is performed in reverse order relative to
   # the end.
-  def seek(position: Integer) !! Error -> Integer
+  def seek(position: Int) !! Error -> Int
 }

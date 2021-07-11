@@ -10,7 +10,7 @@ def error -> Diagnostic {
   Diagnostic.new(level: ERROR, message: 'testing', location: location)
 }
 
-def tests(t: Tests) {
+def tests(t: ref Tests) {
   t.group('std::compiler::diagnostics::Diagnostic.level') do (g) {
     g.test('Obtaining the level of a diagnostic') {
       try assert_equal(error.level, 'error')

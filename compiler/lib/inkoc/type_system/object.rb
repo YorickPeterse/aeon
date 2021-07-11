@@ -14,7 +14,8 @@ module Inkoc
       include NewInstance
       include WithoutEmptyTypeParameters
 
-      attr_reader :name, :attributes, :type_parameters, :implemented_traits
+      attr_reader :name, :attributes, :type_parameters, :implemented_traits,
+                  :attribute_names
 
       attr_accessor :prototype, :type_parameter_instances
 
@@ -24,6 +25,7 @@ module Inkoc
         @name = name
         @prototype = prototype
         @attributes = SymbolTable.new
+        @attribute_names = []
         @type_parameters = TypeParameterTable.new
         @type_parameter_instances = TypeParameterInstances.new
         @implemented_traits = {}
@@ -49,8 +51,9 @@ module Inkoc
       # rubocop: disable Metrics/CyclomaticComplexity
       # rubocop: disable Metrics/PerceivedComplexity
       def type_compatible?(other, state)
+        return type_compatible?(other.type, state) if other.reference?
         return true if other.any? || self == other
-        return compatible_with_trait?(other) if other.trait?
+        return compatible_with_trait?(other, state) if other.trait?
 
         if other.type_parameter?
           return compatible_with_type_parameter?(other, state)
@@ -68,8 +71,12 @@ module Inkoc
       # Returns `true` if we are compatible with the given trait.
       #
       # other - A trait to compare with.
-      def compatible_with_trait?(other)
-        implements_trait?(other.base_type || other)
+      def compatible_with_trait?(theirs, state)
+        if (ours = implemented_traits[theirs.unique_id])
+          ours.resolve_type_parameters(self).type_compatible?(theirs, state)
+        else
+          false
+        end
       end
 
       # Initialises any type parameters in self as the given type.

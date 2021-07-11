@@ -1,43 +1,52 @@
 # Cross-platform paths to files and directories.
 #
-# This module provides two types: the `Path` object and the `ToPath` trait. A
-# `Path` is used for file or directory paths while `ToPath` is used for
-# converting an object into a `Path`.
+# This module provides several types: the `Path` class, and the traits `ToPath`
+# and `IntoPath`.
 #
-# # Using ToPath for generic path inputs
+# A `Path` represents a file system path. `ToPath` is used to create a new
+# `Path` from an existing type, without moving it. `IntoPath` also creates a
+# `Path`, but moves its receiver.
 #
-# Sometimes you may have a method that should accept both a `String` and a
-# `Path` as the input. Using `ToPath` we can easily implement this as follows:
+# # Using ToPath and IntoPath for generic path inputs
+#
+# Sometimes you may have a method that should accept multiple types as input
+# paths, such as a `String`, a `Path`, and possibly other types.
+#
+# One approach is to define a method like so:
 #
 #     import std::fs::path::ToPath
 #
-#     def example_method(input: ToPath) {
+#     def example(input: ToPath) {
 #       let path = input.to_path
 #     }
 #
-# Here we specify that the input type should be `ToPath` instead of `Path` or
-# `String`, we then send the `to_path` message to said input object. This
-# allows you to pass any object to this method as long as it implements the
-# `ToPath` trait:
+# This method accepts any type that can be converted to a `Path`. This approach
+# comes with a drawback: `ToPath` always returns a new `Path`, even if the input
+# already is a `Path`. This can be avoided by using `IntoPath` instead:
 #
-#     import std::fs::path::(Path, ToPath)
+#     import std::fs::path::IntoPath
 #
-#     def example_method(input: ToPath) {
-#       let path = input.to_path
+#     def example(input: IntoPath) {
+#       let path = input.into_path
 #     }
 #
-#     example_method('/tmp/hello.txt')
-#     example_method(Path.new('/tmp/hello.txt'))
+# The `IntoPath` trait moves the type its used on, so no extra allocations are
+# necessary if the input already is a `Path`. This allows use of our `example`
+# method like so:
 #
-# A more realistic example would be the `std::fs::file` module which uses this
-# technique to support opening files using either a `String` or a `Path`
-# object:
+#     example('foo')
+#     example(Path.new('foo'))
 #
-#     import std::fs::file::ReadOnlyFile
-#     import std::fs::path::Path
+# If the input `Path` is reused, one can clone it before passing it to the
+# `IntoPath` argument:
 #
-#     try! ReadOnlyFile.new('/dev/urandom')
-#     try! ReadOnlyFile.new(Path.new('/dev/urandom'))
+#     let path = Path.new('foo')
+#
+#     example(path.clone)
+#     example(path.to_path)
+#
+# In general, it's best to use `IntoPath` for arguments instead of `ToPath`.
+import std::clone::Clone
 import std::conversion::ToString
 import std::fs::path::bits::(self, SEPARATOR as _SEPARATOR)
 import std::io::(Error, Size)
@@ -45,15 +54,16 @@ import std::operators::Equal
 import std::os
 import std::process::(blocking)
 import std::string_buffer::StringBuffer
-import std::time::SystemTime
+import std::time::DateTime
 
-extern def file_size(path: String) !! Integer -> Integer
-extern def path_created_at(path: String) !! Integer -> Array!(Any)
-extern def path_modified_at(path: String) !! Integer -> Array!(Any)
-extern def path_accessed_at(path: String) !! Integer -> Array!(Any)
-extern def path_is_file(path: String) -> Boolean
-extern def path_is_directory(path: String) -> Boolean
-extern def path_exists(path: String) -> Boolean
+extern def file_size(path: ref String) !! Int -> Int
+extern def path_created_at(path: ref String) !! Int -> Int
+extern def path_modified_at(path: ref String) !! Int -> Int
+extern def path_accessed_at(path: ref String) !! Int -> Int
+extern def path_is_file(path: ref String) -> Boolean
+extern def path_is_directory(path: ref String) -> Boolean
+extern def path_exists(path: ref String) -> Boolean
+extern def time_offset -> Int
 
 # The primary separator of path components.
 let SEPARATOR = _SEPARATOR
@@ -110,14 +120,13 @@ class Path {
   #
   #     let path = Path.new('README.md')
   #
-  #     try! path.created_at # => SystemTime { ... }
-  def created_at !! Error -> SystemTime {
-    let time = blocking {
+  #     try! path.created_at # => DateTime { ... }
+  def created_at !! Error -> DateTime {
+    let time = try blocking {
       try path_created_at(@path) else (err) throw Error.new(err)
     }
 
-    SystemTime
-      .from_timestamp(time: time[0] as Float, utc_offset: time[1] as Integer)
+    DateTime.from_timestamp(time: time, utc_offset: time_offset)
   }
 
   # Returns the modification time of `self`.
@@ -130,14 +139,13 @@ class Path {
   #
   #     let path = Path.new('README.md')
   #
-  #     try! path.modified_at # => SystemTime { ... }
-  def modified_at !! Error -> SystemTime {
-    let time = blocking {
+  #     try! path.modified_at # => DateTime { ... }
+  def modified_at !! Error -> DateTime {
+    let time = try blocking {
       try path_modified_at(@path) else (err) throw Error.new(err)
     }
 
-    SystemTime
-      .from_timestamp(time: time[0] as Float, utc_offset: time[1] as Integer)
+    DateTime.from_timestamp(time: time, utc_offset: time_offset)
   }
 
   # Returns the access time of `self`.
@@ -150,14 +158,13 @@ class Path {
   #
   #     let path = Path.new('README.md')
   #
-  #     try! path.accessed_at # => SystemTime { ... }
-  def accessed_at !! Error -> SystemTime {
-    let time = blocking {
+  #     try! path.accessed_at # => DateTime { ... }
+  def accessed_at !! Error -> DateTime {
+    let time = try blocking {
       try path_accessed_at(@path) else (err) throw Error.new(err)
     }
 
-    SystemTime
-      .from_timestamp(time: time[0] as Float, utc_offset: time[1] as Integer)
+    DateTime.from_timestamp(time: time, utc_offset: time_offset)
   }
 
   # Returns `True` if this `Path` is an absolute path.
@@ -171,9 +178,7 @@ class Path {
   #     Path.new('foo').absolute?  # => False
   #     Path.new('/foo').absolute? # => True
   def absolute? -> Boolean {
-    bits
-      .path_separator?(@path.byte(index: 0))
-      .or { os.windows?.and { bits.starts_with_windows_drive_name?(@path) } }
+    bits.absolute?(@path.clone)
   }
 
   # Returns `True` if this `Path` is a relative path.
@@ -206,19 +211,17 @@ class Path {
   #     import std::fs::path::Path
   #
   #     Path.new('foo/bar').join(Path.new('bar')).to_string # => 'foo/bar/baz'
-  def join(path: ToString) -> Path {
+  def join(path: ref ToString) -> Path {
     let path_str = path.to_string
-    let join_with = Path.new(path_str)
+    let new_path = if bits.absolute?(path_str) {
+      path_str
+    } else if @path.ends_with?(SEPARATOR) {
+      `{@path}{path_str}`
+    } else {
+      `{@path}{SEPARATOR}{path_str}`
+    }
 
-    join_with.absolute?.if_true { return join_with }
-
-    let buffer = StringBuffer.new(@path)
-
-    @path.ends_with?(SEPARATOR).if_false { buffer.push(SEPARATOR) }
-
-    buffer.push(path_str)
-
-    Path.new(buffer.to_string)
+    Path.new(new_path)
   }
 
   # Returns a `Path` to the directory of the current `Path`.
@@ -240,9 +243,9 @@ class Path {
   #
   #     Path.new('/').directory # Path.new('/')
   def directory -> Path {
-    let length = bits.bytes_before_last_separator(@path)
+    let length = bits.bytes_before_last_separator(@path.clone)
 
-    length.negative?.if_true { return Path.new('.') }
+    if length.negative? { return Path.new('.') }
 
     Path.new(@path.slice_bytes(start: 0, length: length).drain_to_string)
   }
@@ -261,7 +264,7 @@ impl Equal for Path {
   #     let path2 = Path.new('foo')
   #
   #     path1 == path2 # => True
-  def ==(other: Self) -> Boolean {
+  def ==(other: ref Self) -> Boolean {
     to_string == other.to_string
   }
 }
@@ -279,7 +282,7 @@ impl ToString for Path {
   #
   #     path.to_string # => '/dev/null'
   def to_string -> String {
-    @path
+    @path.clone
   }
 }
 
@@ -295,10 +298,16 @@ impl Size for Path {
   #     let path = Path.new('/dev/null')
   #
   #     try! path.size # => 0
-  def size !! Error -> Integer {
-    blocking {
+  def size !! Error -> Int {
+    try blocking {
       try file_size(@path) else (err) throw Error.new(err)
     }
+  }
+}
+
+impl Clone for Path {
+  def clone -> Self {
+    Path.new(@path.clone)
   }
 }
 
@@ -310,12 +319,29 @@ trait ToPath {
 
 impl ToPath for Path {
   def to_path -> Path {
-    self
+    clone
   }
 }
 
 impl ToPath for String {
   def to_path -> Path {
+    Path.new(self.clone)
+  }
+}
+
+# A type that can be moved into a `Path`.
+trait IntoPath {
+  move def into_path -> Path
+}
+
+impl IntoPath for Path {
+  move def into_path -> Path {
+    self
+  }
+}
+
+impl IntoPath for String {
+  move def into_path -> Path {
     Path.new(self)
   }
 }

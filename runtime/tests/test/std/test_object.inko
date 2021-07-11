@@ -9,7 +9,7 @@ class Dummy {
 
 impl Equal for Dummy {}
 
-def tests(t: Tests) {
+def tests(t: ref Tests) {
   t.group('std::object::Object.same_object?') do (g) {
     g.test('Comparing two objects that do not reside at the same address') {
       let obj1 = Dummy.new
@@ -58,37 +58,6 @@ def tests(t: Tests) {
   t.group('std::object::Object.truthy?') do (g) {
     g.test('Checking if an object is truthy') {
       try assert_true(Dummy.new.truthy?)
-    }
-  }
-
-  t.group('std::object::Object.if_true') do (g) {
-    g.test('The supplied block is always executed') {
-      let obj = Dummy.new
-      let mut num = 0
-
-      obj.if_true { num = 10 }
-
-      try assert_equal(num, 10)
-    }
-  }
-
-  t.group('std::object::Object.if_false') do (g) {
-    g.test('The supplied block is never executed') {
-      let obj = Dummy.new
-      let mut num = 0
-
-      obj.if_false { num = 10 }
-
-      try assert_equal(num, 0)
-    }
-  }
-
-  t.group('std::object::Object.if') do (g) {
-    g.test('The block passed to the true: argument is always executed') {
-      let obj = Dummy.new
-      let res = obj.if(true: { 10 }, false: { 20 })
-
-      try assert_equal(res, 10)
     }
   }
 }

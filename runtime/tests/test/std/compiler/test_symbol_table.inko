@@ -27,7 +27,7 @@ impl Type for DummyType {
   }
 }
 
-def tests(t: Tests) {
+def tests(t: ref Tests) {
   t.group('std::compiler::symbol_table::Symbol.name') do (g) {
     g.test('Obtaining the name of a Symbol') {
       let symbol =

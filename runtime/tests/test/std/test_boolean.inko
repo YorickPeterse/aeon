@@ -1,7 +1,7 @@
-import std::hash::DefaultHasher
+import std::hash::Hasher
 import std::test::*
 
-def tests(t: Tests) {
+def tests(t: ref Tests) {
   t.group('std::boolean::Boolean.true?') do (g) {
     g.test('Checking if a Boolean is True') {
       try assert_true(True.true?)
@@ -20,52 +20,6 @@ def tests(t: Tests) {
     g.test('Checking if a Boolean is truthy') {
       try assert_true(True.truthy?)
       try assert_false(False.truthy?)
-    }
-  }
-
-  t.group('std::boolean::Boolean.if_true') do (g) {
-    g.test('Sending "if_true" to True') {
-      let mut num = 0
-
-      True.if_true { num = 10 }
-
-      try assert_equal(num, 10)
-    }
-
-    g.test('Sending "if_true" to False') {
-      let mut num = 0
-
-      False.if_true { num = 10 }
-
-      try assert_equal(num, 0)
-    }
-  }
-
-  t.group('std::boolean::Boolean.if_false') do (g) {
-    g.test('Sending "if_false" to True') {
-      let mut num = 0
-
-      True.if_false { num = 10 }
-
-      try assert_equal(num, 0)
-    }
-
-    g.test('Sending "if_false" to False') {
-      let mut num = 0
-
-      False.if_false { num = 10 }
-
-      try assert_equal(num, 10)
-    }
-  }
-
-  t.group('std::boolean::Boolean.if') do (g) {
-    g.test('Sending "if" to True') {
-      try assert_equal(True.if(true: { 10 }, false: { 20 }), 10)
-    }
-
-    g.test('Sending "if" to False') {
-      try assert_equal(False.if(true: { 10 }, false: { 20 }), 20)
     }
   }
 
@@ -113,11 +67,11 @@ def tests(t: Tests) {
 
   t.group('std::boolean::Boolean.hash') do (g) {
     g.test('Hashing True') {
-      let hasher1 = DefaultHasher.new(1, 2)
-      let hasher2 = DefaultHasher.new(1, 2)
+      let hasher1 = Hasher.new(1, 2)
+      let hasher2 = Hasher.new(1, 2)
 
-      True.hash(hasher1)
-      True.hash(hasher2)
+      True.hash(ref hasher1)
+      True.hash(ref hasher2)
 
       # The exact hash value may change between OS processes or releases, so all
       # we can do is assert that the value is the same every time we send `hash`
@@ -126,11 +80,11 @@ def tests(t: Tests) {
     }
 
     g.test('Hashing False') {
-      let hasher1 = DefaultHasher.new(1, 2)
-      let hasher2 = DefaultHasher.new(1, 2)
+      let hasher1 = Hasher.new(1, 2)
+      let hasher2 = Hasher.new(1, 2)
 
-      False.hash(hasher1)
-      False.hash(hasher2)
+      False.hash(ref hasher1)
+      False.hash(ref hasher2)
 
       # The exact hash value may change between OS processes or releases, so all
       # we can do is assert that the value is the same every time we send `hash`

@@ -2,7 +2,6 @@ import std::compiler::module_name::ModuleName
 import std::compiler::symbol_table::SymbolTable
 import std::compiler::types
 import std::compiler::types::*
-import std::hash::DefaultHasher
 import std::operators::Equal
 import std::test::*
 import std::test::test::Failure
@@ -496,8 +495,8 @@ def tests(t: Tests) {
   }
 
   t.group('std::compiler::types::Builtins.integer_type') do (g) {
-    g.test('Obtaining the built-in Integer type') {
-      try assert_equal(Builtins.new.integer_type.name, 'Integer')
+    g.test('Obtaining the built-in Int type') {
+      try assert_equal(Builtins.new.integer_type.name, 'Int')
     }
   }
 
@@ -782,7 +781,7 @@ def tests(t: Tests) {
         compare: SelfType.new,
         with: ClassType.new('String'),
         builtins: Builtins.new,
-        self_type: ClassType.new('Integer')
+        self_type: ClassType.new('Int')
       )
     }
 
@@ -943,11 +942,11 @@ def tests(t: Tests) {
 
     g.test('Obtaining the type name of a TypeParameterType with multiple required traits') {
       let instance1 = TraitInstance.new(TraitType.new('ToString'))
-      let instance2 = TraitInstance.new(TraitType.new('ToInteger'))
+      let instance2 = TraitInstance.new(TraitType.new('ToInt'))
       let param = TypeParameterType
         .new(name: 'T', required_traits: Array.new(instance1, instance2))
 
-      try assert_equal(param.type_name, 'T: ToString + ToInteger')
+      try assert_equal(param.type_name, 'T: ToString + ToInt')
     }
   }
 
@@ -1221,7 +1220,7 @@ def tests(t: Tests) {
       let bounds = TypeParameterBounds.new
       let param = TypeParameterType.new('T')
       let req1 = Array.new(TraitInstance.new(TraitType.new('ToString')))
-      let req2 = Array.new(TraitInstance.new(TraitType.new('ToInteger')))
+      let req2 = Array.new(TraitInstance.new(TraitType.new('ToInt')))
 
       bounds.define(parameter: param, requirements: req1)
 
@@ -1238,7 +1237,7 @@ def tests(t: Tests) {
       let param1 = TypeParameterType.new('A')
       let param2 = TypeParameterType.new('B')
       let req1 = Array.new(TraitInstance.new(TraitType.new('ToString')))
-      let req2 = Array.new(TraitInstance.new(TraitType.new('ToInteger')))
+      let req2 = Array.new(TraitInstance.new(TraitType.new('ToInt')))
 
       bounds1.define(parameter: param1, requirements: req1)
       bounds2.define(parameter: param2, requirements: req2)
@@ -1679,7 +1678,7 @@ def tests(t: Tests) {
       method.type_parameter_bounds.define(
         parameter: param2,
         requirements: Array.new(
-          TraitInstance.new(TraitType.new('ToInteger')),
+          TraitInstance.new(TraitType.new('ToInt')),
           TraitInstance.new(TraitType.new('ToFloat'))
         )
       )
@@ -1692,7 +1691,7 @@ def tests(t: Tests) {
       try assert_equal(
         method.type_name,
         'def to_string!(A, B)(C, Never) !! Never -> Never' +
-          ' when A: ToString, B: ToInteger + ToFloat, C: ToFoo'
+          ' when A: ToString, B: ToInt + ToFloat, C: ToFoo'
       )
     }
 
@@ -1705,7 +1704,7 @@ def tests(t: Tests) {
 
       method.yield_type = Option.some(builtins.integer_type.new_instance)
 
-      try assert_equal(method.type_name, 'def foo => Integer')
+      try assert_equal(method.type_name, 'def foo => Int')
     }
   }
 
@@ -1765,7 +1764,7 @@ def tests(t: Tests) {
         MethodType.new(name: 'to_string', layout: BlockLayout.new(NeverType.new))
 
       let builtins = Builtins.new
-      let trait1 = TraitType.new('ToInteger')
+      let trait1 = TraitType.new('ToInt')
       let trait2 = TraitType.new('ToFloat')
 
       builtins.block_type.add_trait_implementation(
@@ -1861,7 +1860,7 @@ def tests(t: Tests) {
         MethodType.new(name: 'to_string', layout: BlockLayout.new(NeverType.new))
 
       let method3 =
-        MethodType.new(name: 'to_integer', layout: BlockLayout.new(NeverType.new))
+        MethodType.new(name: 'to_int', layout: BlockLayout.new(NeverType.new))
 
       try assert_compatible(method1, method2)
       try assert_not_compatible(method1, method3)
@@ -1941,7 +1940,7 @@ def tests(t: Tests) {
         MethodType.new(name: 'to_string', layout: BlockLayout.new(NeverType.new))
 
       let trait1 = TraitType.new('ToString')
-      let trait2 = TraitType.new('ToInteger')
+      let trait2 = TraitType.new('ToInt')
 
       method1.type_parameters.define(
         name: 'T',
@@ -2180,7 +2179,7 @@ def tests(t: Tests) {
     g.test('Comparing a ClosureType with a TraitInstance') {
       let block = ClosureType.new(BlockLayout.new(NeverType.new))
       let builtins = Builtins.new
-      let trait1 = TraitType.new('ToInteger')
+      let trait1 = TraitType.new('ToInt')
       let trait2 = TraitType.new('ToFloat')
 
       builtins.block_type.add_trait_implementation(
@@ -2204,7 +2203,7 @@ def tests(t: Tests) {
       let block = ClosureType.new(BlockLayout.new(NeverType.new))
       let builtins = Builtins.new
       let trait1 = TraitType.new('ToString')
-      let trait2 = TraitType.new('ToInteger')
+      let trait2 = TraitType.new('ToInt')
       let param1 = TypeParameterType.new('A')
       let param2 = TypeParameterType
         .new(name: 'B', required_traits: Array.new(TraitInstance.new(trait1)))
@@ -2338,7 +2337,7 @@ def tests(t: Tests) {
       let block4 = ClosureType.new(BlockLayout.new(NeverType.new))
 
       let trait1 = TraitType.new('ToString')
-      let trait2 = TraitType.new('ToInteger')
+      let trait2 = TraitType.new('ToInt')
 
       block1.type_parameters.define(
         name: 'T',
@@ -2527,7 +2526,7 @@ def tests(t: Tests) {
     g.test('Comparing a LambdaType with a TraitInstance') {
       let block = LambdaType.new(BlockLayout.new(NeverType.new))
       let builtins = Builtins.new
-      let trait1 = TraitType.new('ToInteger')
+      let trait1 = TraitType.new('ToInt')
       let trait2 = TraitType.new('ToFloat')
 
       builtins.block_type.add_trait_implementation(
@@ -2551,7 +2550,7 @@ def tests(t: Tests) {
       let block = LambdaType.new(BlockLayout.new(NeverType.new))
       let builtins = Builtins.new
       let trait1 = TraitType.new('ToString')
-      let trait2 = TraitType.new('ToInteger')
+      let trait2 = TraitType.new('ToInt')
       let param1 = TypeParameterType.new('A')
       let param2 = TypeParameterType
         .new(name: 'B', required_traits: Array.new(TraitInstance.new(trait1)))
@@ -2674,7 +2673,7 @@ def tests(t: Tests) {
       let block4 = LambdaType.new(BlockLayout.new(NeverType.new))
 
       let trait1 = TraitType.new('ToString')
-      let trait2 = TraitType.new('ToInteger')
+      let trait2 = TraitType.new('ToInt')
 
       block1.type_parameters.define(
         name: 'T',
@@ -2944,7 +2943,7 @@ def tests(t: Tests) {
 
     g.test('Comparing a TraitType with a TraitType') {
       let trait1 = TraitType.new('ToString')
-      let trait2 = TraitType.new('ToInteger')
+      let trait2 = TraitType.new('ToInt')
 
       try assert_compatible(trait1, trait1)
       try assert_not_compatible(trait1, trait2)
@@ -2962,7 +2961,7 @@ def tests(t: Tests) {
 
     g.test('Comparing a TraitType with a TypeParameterType with required traits') {
       let trait1 = TraitType.new('ToString')
-      let trait2 = TraitType.new('ToInteger')
+      let trait2 = TraitType.new('ToInt')
       let param = TypeParameterType
         .new(name: 'A', required_traits: Array.new(TraitInstance.new(trait2)))
 
@@ -3248,7 +3247,7 @@ def tests(t: Tests) {
 
       let instance1 = TraitInstance.new(trait1)
       let instance2 = TraitInstance.new(trait1)
-      let instance3 = TraitInstance.new(TraitType.new('ToInteger'))
+      let instance3 = TraitInstance.new(TraitType.new('ToInt'))
       let instance4 = TraitInstance.new(trait2)
 
       try assert_compatible(instance1, instance2)
@@ -3287,7 +3286,7 @@ def tests(t: Tests) {
 
     g.test('Comparing a TraitInstance with a TypeParameterType') {
       let trait1 = TraitType.new('ToString')
-      let trait2 = TraitType.new('ToInteger')
+      let trait2 = TraitType.new('ToInt')
 
       let param1 = TypeParameterType.new('T')
       let param2 = TypeParameterType
@@ -3308,7 +3307,7 @@ def tests(t: Tests) {
 
       try assert_not_compatible(TraitInstance.new(trait1), param3)
 
-      # Param C requires both ToString and ToInteger, so ToString and ToInteger
+      # Param C requires both ToString and ToInt, so ToString and ToInt
       # individually are not compatible with C.
       try assert_not_compatible(TraitInstance.new(trait1), param4)
       try assert_not_compatible(TraitInstance.new(trait2), param4)
@@ -3344,7 +3343,7 @@ def tests(t: Tests) {
 
     g.test('Comparing a TraitInstance with a SelfType') {
       let trait1 = TraitType.new('ToString')
-      let trait2 = TraitType.new('ToInteger')
+      let trait2 = TraitType.new('ToInt')
       let builtins = Builtins.new
 
       try assert_compatible(
@@ -3638,7 +3637,7 @@ def tests(t: Tests) {
 
     g.test('Comparing an ClassType with another ClassType') {
       let obj1 = ClassType.new('String')
-      let obj2 = ClassType.new('Integer')
+      let obj2 = ClassType.new('Int')
 
       try assert_not_compatible(obj1, obj2)
       try assert_compatible(obj1, obj1)
@@ -4061,7 +4060,7 @@ def tests(t: Tests) {
     g.test('Comparing an ClassInstance with a TraitInstance') {
       let obj_type = ClassType.new('String')
       let trait1 = TraitType.new('ToString')
-      let trait2 = TraitType.new('ToInteger')
+      let trait2 = TraitType.new('ToInt')
 
       try assert_not_compatible(
         ClassInstance.new(obj_type),
@@ -4086,7 +4085,7 @@ def tests(t: Tests) {
     g.test('Comparing an ClassInstance with a TypeParameterType') {
       let obj_type = ClassType.new('String')
       let trait1 = TraitType.new('ToString')
-      let trait2 = TraitType.new('ToInteger')
+      let trait2 = TraitType.new('ToInt')
       let param1 = TypeParameterType.new('T')
       let param2 = TypeParameterType.new(
         name: 'B',
@@ -4135,7 +4134,7 @@ def tests(t: Tests) {
 
     g.test('Comparing an ClassInstance with a SelfType') {
       let obj1 = ClassType.new('String')
-      let obj2 = ClassType.new('Integer')
+      let obj2 = ClassType.new('Int')
       let builtins = Builtins.new
 
       try assert_compatible(
@@ -4179,7 +4178,7 @@ def tests(t: Tests) {
     g.test('Substituting a generic object with custom type arguments') {
       let list_type = ClassType.new('List')
       let param = TypeParameterType.new('T')
-      let assigned = ClassType.new('Integer').new_instance
+      let assigned = ClassType.new('Int').new_instance
 
       list_type.type_parameters.define(name: param.name, type: param)
 
@@ -4349,7 +4348,7 @@ def tests(t: Tests) {
       let builtins = Builtins.new
       let mod_type = new_module
       let trait1 = TraitType.new('ToString')
-      let trait2 = TraitType.new('ToInteger')
+      let trait2 = TraitType.new('ToInt')
       let param1 = TypeParameterType.new('T')
       let param2 = TypeParameterType.new(
         name: 'B',

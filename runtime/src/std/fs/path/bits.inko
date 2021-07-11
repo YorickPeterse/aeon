@@ -1,7 +1,6 @@
 # Functionality used by `std::fs::path` to implement bits of the `Path` type.
 #
 # This module is not part of the public API and should not be used directly.
-import std::loop::(while)
 import std::os::(windows?)
 
 # The separator to use for Unix path components.
@@ -11,14 +10,13 @@ let UNIX_SEPARATOR = '/'
 let UNIX_SEPARATOR_BYTE = UNIX_SEPARATOR.byte(0)
 
 # The primary separator of path components.
-let SEPARATOR = windows?.if(true: { '\\' }, false: { UNIX_SEPARATOR })
+let SEPARATOR = if windows? { '\\' } else { UNIX_SEPARATOR }
 
 # The primary byte separator to use for path components.
 let SEPARATOR_BYTE = SEPARATOR.byte(0)
 
 # The alternative separator byte of path components, if there is any.
-let ALT_SEPARATOR_BYTE =
-  windows?.if(true: { UNIX_SEPARATOR_BYTE }, false: { -1 })
+let ALT_SEPARATOR_BYTE = if windows? { UNIX_SEPARATOR_BYTE } else { -1 }
 
 # The byte range for lowercase Windows drive letters (a..z)
 let WINDOWS_LOWER_DRIVE_LETTERS = 97..122
@@ -34,60 +32,63 @@ let COLON_BYTE = 58
 def starts_with_windows_drive_name?(path: String) -> Boolean {
   let first_byte = path.byte(index: 0)
 
-  (path.length < 3).if_true { return False }
+  if path.length < 3 { return False }
 
   WINDOWS_LOWER_DRIVE_LETTERS.cover?(first_byte)
-    .or { WINDOWS_UPPER_DRIVE_LETTERS.cover?(first_byte) }
-    .and { path.byte(index: 1) == COLON_BYTE }
-    .and { path_separator?(path.byte(index: 2)) }
+    or WINDOWS_UPPER_DRIVE_LETTERS.cover?(first_byte)
+    and path.byte(index: 1) == COLON_BYTE
+    and path_separator?(path.byte(index: 2))
 }
 
 # Returns `True` if the byte is a valid path separator byte.
-def path_separator?(byte: Integer) -> Boolean {
-  (byte == SEPARATOR_BYTE).or { byte == ALT_SEPARATOR_BYTE }
+def path_separator?(byte: Int) -> Boolean {
+  byte == SEPARATOR_BYTE or byte == ALT_SEPARATOR_BYTE
 }
 
 # Returns the number of bytes leading up to the last path separator.
 #
 # If no separator could be found, `-1` is returned.
-def bytes_before_last_separator(path: String) -> Integer {
-  path.empty?.if_true { return -1 }
+def bytes_before_last_separator(path: String) -> Int {
+  if path.empty? { return -1 }
 
-  let windows_drive_path =
-    windows?.and { starts_with_windows_drive_name?(path) }
+  let windows_drive_path = windows? and starts_with_windows_drive_name?(path)
 
   # If the path starts with a Windows drive name (e.g. "C:\foo") we don't want
   # to trim off the \ in C:\, as it's part of the drive name.
-  let trim_until = windows_drive_path.if(true: { 2 }, false: { 0 })
-
+  let trim_until = if windows_drive_path { 2 } else { 0 }
   let mut index = path.bytesize - 1
 
   # Trailing separators should be ignored, so we'll skip over them until the
   # first non-separator byte.
-  while({ path_separator?(path.byte(index)).and { index > trim_until } }) {
+  while index > trim_until and path_separator?(path.byte(index)) {
     index -= 1
   }
 
   let mut in_separator = False
 
-  while({ index > -1 }) {
+  while index > -1 {
     let byte = path.byte(index)
 
-    path_separator?(byte).if(
-      true: { in_separator = True },
-      false: {
-        in_separator.if_true {
-          # We have reached the ":" in a drive name such as "C:\". In this case
-          # we want to include the "\" since it's part of the drive name.
-          windows_drive_path.and { index == 1 }.if_true { return 3 }
+    if path_separator?(byte) {
+      in_separator = True
+    } else {
+      if in_separator {
+        # We have reached the ":" in a drive name such as "C:\". In this case we
+        # want to include the "\" since it's part of the drive name.
+        if windows_drive_path and index == 1 { return 3 }
 
-          return index + 1
-        }
+        return index + 1
       }
-    )
+    }
 
     index -= 1
   }
 
-  in_separator.if(true: { 1 }, false: { -1 })
+  if in_separator { 1 } else { -1 }
+}
+
+# Returns `True` if the given file path is an absolute path.
+def absolute?(path: String) -> Boolean {
+  path_separator?(path.byte(index: 0))
+    or (windows? and starts_with_windows_drive_name?(path))
 }

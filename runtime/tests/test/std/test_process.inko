@@ -3,7 +3,7 @@ import std::test::*
 import std::time::Instant
 import std::mirror::ObjectMirror
 
-def tests(t: Tests) {
+def tests(t: ref Tests) {
   t.group('std::process.current') do (g) {
     g.test('Obtaining the current Process') {
       try assert_true(ObjectMirror.new(process.current).instance_of?(Process))
@@ -40,15 +40,15 @@ def tests(t: Tests) {
     g.test('Receiving a message when there is a message') {
       process.current.send('testing')
 
-      let received = try process.receive_timeout(0.001) as String else 'nope'
+      let received = try process.receive_timeout(0.001) else 'nope'
 
-      try assert_equal(received, 'testing')
+      try assert_equal(received as String, 'testing')
     }
 
     g.test('Receiving a message when there is no message') {
-      let received = try process.receive_timeout(0.001) as String else 'nope'
+      let received = try process.receive_timeout(0.001) else 'nope'
 
-      try assert_equal(received, 'nope')
+      try assert_equal(received as String, 'nope')
     }
   }
 
@@ -67,10 +67,6 @@ def tests(t: Tests) {
   }
 
   t.group('std::process.suspend') do (g) {
-    g.test('Suspending a process') {
-      try assert_equal(process.suspend, Nil)
-    }
-
     g.test('Suspending a process for a minimum amount of time') {
       let start = Instant.new
       let wait = 0.01
@@ -102,9 +98,9 @@ def tests(t: Tests) {
 
       # Only if `process.terminate` _does not_ terminate the process will we
       # receive a message.
-      let message = try process.receive_timeout(0.01) as Boolean else False
+      let message = try process.receive_timeout(0.01) else False
 
-      try assert_true(message.false?)
+      try assert_true((message as Boolean).false?)
     }
   }
 

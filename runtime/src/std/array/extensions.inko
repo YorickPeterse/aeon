@@ -5,7 +5,7 @@
 # would depend on `std::array` while `std::array` would depend on
 # `std::iterator`.
 import std::conversion::ToString
-import std::loop::(while)
+import std::loop::(repeat)
 
 impl Array {
   # Returns an `Iterator` that iterates over all values in `self`.
@@ -17,12 +17,36 @@ impl Array {
   #     let numbers = Array.new(10, 20, 30)
   #     let iter = numbers.iter
   #
+  #     iter.next # => Option.some(ref 10)
+  #     iter.next # => Option.some(ref 20)
+  #     iter.next # => Option.some(ref 30)
+  #     iter.next # => Option.none
+  def iter => ref T {
+    let mut index = 0
+    let max = length
+
+    while index < max {
+      yield self[index]
+      index += 1
+    }
+  }
+
+  # Returns an `Iterator` that iterates over all values in `self`, yielding them
+  # by value.
+  #
+  # # Examples
+  #
+  #     let numbers = Array.new(10, 20, 30)
+  #     let iter = numbers.into_iter
+  #
   #     iter.next # => Option.some(10)
   #     iter.next # => Option.some(20)
   #     iter.next # => Option.some(30)
   #     iter.next # => Option.none
-  def iter => T {
-    each do (value) { yield value }
+  move def into_iter => T {
+    # TODO: don't run the destructor of `self`
+    # TODO: manually deallocate `self`
+    repeat(length) do (index) { yield _INKOC.array_at(self, index) }
   }
 
   # Returns an `Iterator` that iterates over all values in `self` in reverse
@@ -39,12 +63,27 @@ impl Array {
   #     iter.next # => Option.some(20)
   #     iter.next # => Option.some(10)
   #     iter.next # => Option.none
-  def reverse_iter => T {
+  def reverse_iter => ref T {
     let mut index = length - 1
 
-    while({ index > -1 }) {
+    while index > -1 {
       yield self[index]
       index -= 1
     }
+  }
+
+  # Appends the values of the given `Array` to `self`.
+  #
+  # # Examples
+  #
+  # Appending one `Array` to another:
+  #
+  #     let numbers = Array.new(10, 20, 30)
+  #
+  #     numbers.append(Array.new(40, 50))
+  #
+  #     numbers.length # => 5
+  def append(other: Self) {
+    for value in other.into_iter { push(value) }
   }
 }

@@ -12,11 +12,11 @@ trait Index!(K, R) {
 
 # Trait for setting values in an object using an index.
 trait SetIndex!(K, V) {
-  # Sets the given index to the given value, returning the value set.
+  # Sets the given index to the given value.
   #
   # # Panics
   #
   # This method may panic if the index is out of bounds, though this depends on
   # the type that implements this method.
-  def []=(index: K, value: V) -> V
+  def []=(index: K, value: V)
 }
